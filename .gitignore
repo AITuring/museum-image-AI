@@ -14,3 +14,16 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/thumbnails/*
 !data/thumbnails/.gitkeep
+
+# Sensitive: web-bridge login sessions and Chrome profiles (contain auth cookies)
+data/*_web_state.json
+data/web_chrome_profile/
+data/login_chrome_profile/
+data/chrome_profile*/
+
+# Local batch import images (mounted into the container)
+import/*
+!import/.gitkeep
+
+# Python bytecode in scripts
+backend/scripts/__pycache__
