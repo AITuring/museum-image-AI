@@ -1,27 +1,52 @@
 #!/bin/sh
-# Pre-commit hook
-# 1) 防止 .env 被提交到 GitHub（.env 本地保留，不删除）
-# 2) 检测 .env.example 中的 API key 字段是否含有 sk 相关密钥，有则清空对应值
+# Pre-commit hook：防止密钥 / 登录会话被提交到 GitHub。
+# 1) .env 不入库（本地保留）
+# 2) .env.example 中疑似 sk 密钥自动清空
+# 3) 敏感文件（登录会话 / Chrome profile / storage_state）自动移出暂存区
+# 4) 扫描暂存内容里的密钥串（sk-、阿里云 AK、私钥），命中则阻断提交
 
 staged="$(git diff --cached --name-only)"
 
-# --- 1. 确保 .env 不会被上传到 GitHub ---
+# --- 1. 确保 .env 不会被上传 ---
 if printf '%s\n' "$staged" | grep -qx ".env"; then
-  echo "[pre-commit] .env 不应提交到 GitHub，已从暂存区移除（本地文件保留）。"
+  echo "[pre-commit] .env 不应提交，已从暂存区移除（本地文件保留）。"
   git rm --cached --quiet .env
 fi
 
 # --- 2. 清理 .env.example 中疑似 sk 密钥 ---
 if printf '%s\n' "$staged" | grep -qx ".env.example"; then
   if grep -nEi '=[^=]*sk[-_][A-Za-z0-9]' .env.example >/dev/null 2>&1; then
-    echo "[pre-commit] 检测到 .env.example 含有疑似密钥(sk-...)，已自动清空对应值："
+    echo "[pre-commit] 检测到 .env.example 含疑似密钥(sk-...)，已清空对应值："
     grep -nEi '=[^=]*sk[-_][A-Za-z0-9]' .env.example | sed 's/^/    /'
-    # 仅清空 KEY= 行中含 sk 的值，保留键名
     sed -i.bak -E 's/^([A-Za-z0-9_]+=)[^=]*sk[-_][A-Za-z0-9].*$/\1/I' .env.example
     rm -f .env.example.bak
     git add .env.example
     echo "[pre-commit] .env.example 已更新并重新加入暂存区。"
   fi
+fi
+
+# --- 3. 敏感文件自动移出暂存区 ---
+sensitive="$(printf '%s\n' "$staged" | grep -E '(_web_state\.json$|storage_state.*\.json$|chrome_profile)')"
+if [ -n "$sensitive" ]; then
+  echo "[pre-commit] 检测到敏感文件（登录会话/浏览器配置），已移出暂存区（本地保留）："
+  printf '%s\n' "$sensitive" | while IFS= read -r f; do
+    [ -n "$f" ] && git rm --cached --quiet -- "$f" && echo "    $f"
+  done
+fi
+
+# --- 4. 扫描暂存内容里的密钥串（排除文档与 hook 自身）---
+added="$(git diff --cached --diff-filter=ACM -U0 \
+  -- . ':(exclude).env.example' ':(exclude)*.md' ':(exclude).githooks/*' 2>/dev/null \
+  | grep '^+' | grep -v '^+++')"
+
+secret_hits="$(printf '%s\n' "$added" | grep -nE \
+  'sk-[A-Za-z0-9_-]{16,}|LTAI[0-9A-Za-z]{12,}|-----BEGIN[ A-Z]*PRIVATE KEY-----|AccessKeySecret["'\'' :=]+[A-Za-z0-9/+]{20,}')"
+
+if [ -n "$secret_hits" ]; then
+  echo "[pre-commit] 检测到疑似密钥，已阻断提交。请移除后再提交："
+  printf '%s\n' "$secret_hits" | sed 's/^/    /'
+  echo "[pre-commit] 如确为误报，可用  git commit --no-verify  跳过（不建议）。"
+  exit 1
 fi
 
 exit 0
