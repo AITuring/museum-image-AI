@@ -32,6 +32,7 @@ from app.vision import (
     request_provider_analysis,
     stream_provider_analysis,
 )
+from app.web_bridge import enabled_sites, request_web_candidate
 
 logger = logging.getLogger("app.vision")
 
@@ -148,29 +149,34 @@ async def analyze_artifact_images(payload: VisionAnalyzeRequest) -> VisionAnalyz
         raise HTTPException(status_code=400, detail="No image urls provided")
 
     providers, unavailable_providers = get_enabled_providers()
-    if not providers:
+    web_sites = enabled_sites()
+    if not providers and not web_sites:
         raise HTTPException(
             status_code=400,
             detail="No vision provider configured. Please set DASHSCOPE_API_KEY or VOLCENGINE_API_KEY.",
         )
 
-    results = await asyncio.gather(
-        *(
-            request_provider_analysis(provider, payload.image_urls, DATA_DIR, payload.image_name)
-            for provider in providers
-        ),
-        return_exceptions=True,
-    )
+    tasks = [
+        request_provider_analysis(provider, payload.image_urls, DATA_DIR, payload.image_name)
+        for provider in providers
+    ]
+    task_names = [provider.name for provider in providers]
+    for site in web_sites:
+        tasks.append(
+            request_web_candidate(site, payload.image_urls, DATA_DIR, payload.image_name)
+        )
+        task_names.append(site.key)
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     candidates = []
     failed_providers = []
-    for provider, result in zip(providers, results, strict=False):
+    for name, result in zip(task_names, results, strict=False):
         if isinstance(result, Exception):
-            failed_providers.append(provider.name)
+            failed_providers.append(name)
             logger.warning(
-                "Vision provider %s (%s) failed: %s",
-                provider.name,
-                provider.model,
+                "Vision provider %s failed: %s",
+                name,
                 result,
                 exc_info=result,
             )
@@ -198,7 +204,8 @@ async def analyze_artifact_images_stream(payload: VisionAnalyzeRequest) -> Strea
         raise HTTPException(status_code=400, detail="No image urls provided")
 
     providers, unavailable_providers = get_enabled_providers()
-    if not providers:
+    web_sites = enabled_sites()
+    if not providers and not web_sites:
         raise HTTPException(
             status_code=400,
             detail="No vision provider configured. Please set DASHSCOPE_API_KEY or VOLCENGINE_API_KEY.",
@@ -232,7 +239,21 @@ async def analyze_artifact_images_stream(payload: VisionAnalyzeRequest) -> Strea
                     }
                 )
 
+        async def run_web_site(site) -> None:
+            meta = {"provider": site.key, "model": site.label}
+            try:
+                await emit({**meta, "stage": "analyzing"})
+                candidate = await request_web_candidate(
+                    site, payload.image_urls, DATA_DIR, payload.image_name
+                )
+                await emit({**meta, "stage": "result", "candidate": candidate.model_dump()})
+                await emit({**meta, "stage": "done"})
+            except Exception as exc:  # noqa: BLE001 - surface failure to the client stream
+                logger.warning("Vision provider %s failed: %s", site.key, exc, exc_info=exc)
+                await emit({**meta, "stage": "error", "message": str(exc) or "网页端识图失败"})
+
         tasks = [asyncio.create_task(run_provider(provider)) for provider in providers]
+        tasks += [asyncio.create_task(run_web_site(site)) for site in web_sites]
 
         async def finalize() -> None:
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -243,7 +264,8 @@ async def analyze_artifact_images_stream(payload: VisionAnalyzeRequest) -> Strea
         await queue.put(
             {
                 "stage": "meta",
-                "providers": [provider.name for provider in providers],
+                "providers": [provider.name for provider in providers]
+                + [site.key for site in web_sites],
                 "unavailable_providers": unavailable_providers,
             }
         )
