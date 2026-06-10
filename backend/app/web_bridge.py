@@ -150,6 +150,12 @@ def _resolve_local_image_path(image_url: str, data_dir: Path) -> Path | None:
     if image_url.startswith("/files/"):
         relative_path = image_url.removeprefix("/files/").lstrip("/")
         return data_dir / relative_path
+    # Absolute local filesystem path (batch scan passes raw paths from any directory).
+    if image_url.startswith("file://"):
+        return Path(image_url.removeprefix("file://"))
+    candidate = Path(image_url)
+    if candidate.is_absolute():
+        return candidate
     return None
 
 

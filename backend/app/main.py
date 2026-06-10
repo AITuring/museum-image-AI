@@ -1,28 +1,37 @@
 import asyncio
+import hashlib
 import json
 import logging
+import mimetypes
 from pathlib import Path
 from uuid import uuid4
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
+import httpx
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, select, text
+from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
-from app.db import Base, engine, get_db
-from app.models import Artifact, ArtifactImage, ArtifactTag, Museum
+from app.db import Base, SessionLocal, engine, get_db
+from app.models import Artifact, ArtifactImage, ArtifactTag, Museum, PendingArtifact
+from app.oss import upload_image
 from app.schemas import (
     ArtifactCreate,
     ArtifactImageAttach,
     ArtifactImageRead,
     ArtifactRead,
+    BatchIdentifyRequest,
+    BatchScanRequest,
+    BatchScanResponse,
     HealthRead,
     MuseumCreate,
     MuseumRead,
+    PendingArtifactRead,
+    PendingArtifactUpdate,
     UploadedImageRead,
     VisionAnalyzeRequest,
     VisionAnalyzeResponse,
@@ -33,6 +42,8 @@ from app.vision import (
     stream_provider_analysis,
 )
 from app.web_bridge import enabled_sites, request_web_candidate
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff"}
 
 logger = logging.getLogger("app.vision")
 
@@ -133,6 +144,51 @@ def artifact_image_query():
 
 def build_uploaded_file_url(filename: str) -> str:
     return f"/files/uploads/{filename}"
+
+
+def ensure_museum(db: Session, museum_name: str) -> Museum:
+    name = museum_name.strip()
+    museum = db.scalar(select(Museum).where(Museum.name == name))
+    if museum is not None:
+        return museum
+    museum = Museum(name=name, description="云端入库自动创建")
+    db.add(museum)
+    db.commit()
+    db.refresh(museum)
+    return museum
+
+
+def parse_tags(raw: str | None) -> list[str]:
+    text_value = (raw or "").strip()
+    if not text_value:
+        return []
+    try:
+        parsed = json.loads(text_value)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    except (ValueError, TypeError):
+        pass
+    return [tag.strip() for tag in text_value.split(",") if tag.strip()]
+
+
+def require_ingest_token(authorization: str | None) -> None:
+    expected = settings.ingest_token
+    if not expected:
+        raise HTTPException(status_code=503, detail="云端未配置 INGEST_TOKEN，拒绝写入。")
+    if authorization != f"Bearer {expected}":
+        raise HTTPException(status_code=401, detail="无效的鉴权令牌。")
+
+
+def hash_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def sse(event: dict) -> str:
+    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
 @app.get(f"{settings.api_prefix}/health", response_model=HealthRead)
@@ -308,6 +364,266 @@ async def upload_images(files: list[UploadFile] = File(...)) -> list[UploadedIma
     return uploaded_images
 
 
+# ── Cloud ingest (Alibaba Cloud server): receive a reviewed record + image ────────
+
+
+@app.post(
+    f"{settings.api_prefix}/ingest/artifacts",
+    response_model=ArtifactRead,
+    status_code=201,
+)
+async def ingest_artifact(
+    image: UploadFile = File(...),
+    museum_name: str = Form(...),
+    name: str = Form(...),
+    era: str | None = Form(None),
+    description: str | None = Form(None),
+    tags: str = Form(""),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> Artifact:
+    """Store the image in OSS and the metadata in the cloud DB. Bearer-token protected."""
+    require_ingest_token(authorization)
+
+    contents = await image.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="图片内容为空。")
+
+    image_url = upload_image(
+        contents, image.filename or "image.jpg", image.content_type
+    )
+
+    museum = ensure_museum(db, museum_name)
+    artifact = Artifact(
+        museum_id=museum.id,
+        name=name.strip(),
+        era=(era or None),
+        description=(description or None),
+        ai_status="reviewed",
+    )
+    artifact.tags = [
+        ArtifactTag(name=tag) for tag in dict.fromkeys(parse_tags(tags))
+    ]
+    artifact.images = [ArtifactImage(url=image_url)]
+    db.add(artifact)
+    db.commit()
+    return db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
+
+
+# ── Batch identification (local operator machine) ─────────────────────────────────
+
+
+@app.post(f"{settings.api_prefix}/batch/scan", response_model=BatchScanResponse)
+def batch_scan(payload: BatchScanRequest, db: Session = Depends(get_db)) -> BatchScanResponse:
+    root = Path(payload.directory).expanduser()
+    if not root.exists() or not root.is_dir():
+        raise HTTPException(status_code=400, detail=f"目录不存在或不是文件夹：{root}")
+
+    extensions = {ext.lower() for ext in payload.extensions} or IMAGE_EXTENSIONS
+    scanned = added = skipped = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in extensions:
+            continue
+        scanned += 1
+        file_hash = hash_file(path)
+        existing = db.scalar(
+            select(PendingArtifact).where(PendingArtifact.file_hash == file_hash)
+        )
+        if existing is not None:
+            skipped += 1
+            continue
+        db.add(
+            PendingArtifact(
+                source_path=str(path),
+                file_hash=file_hash,
+                file_name=path.name,
+                status="pending",
+                tags=[],
+            )
+        )
+        added += 1
+    db.commit()
+
+    items = list(
+        db.scalars(select(PendingArtifact).order_by(PendingArtifact.created_at.desc()))
+    )
+    return BatchScanResponse(scanned=scanned, added=added, skipped=skipped, items=items)
+
+
+@app.get(f"{settings.api_prefix}/batch/pending", response_model=list[PendingArtifactRead])
+def list_pending(
+    status: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> list[PendingArtifact]:
+    query = select(PendingArtifact).order_by(PendingArtifact.created_at.desc())
+    if status is not None:
+        query = query.where(PendingArtifact.status == status)
+    return list(db.scalars(query))
+
+
+@app.get(f"{settings.api_prefix}/batch/pending/{{pending_id}}/image")
+def pending_image(pending_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    row = db.get(PendingArtifact, pending_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="记录不存在。")
+    path = Path(row.source_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="原图文件已不存在。")
+    return FileResponse(str(path))
+
+
+@app.patch(
+    f"{settings.api_prefix}/batch/pending/{{pending_id}}",
+    response_model=PendingArtifactRead,
+)
+def update_pending(
+    pending_id: int,
+    payload: PendingArtifactUpdate,
+    db: Session = Depends(get_db),
+) -> PendingArtifact:
+    row = db.get(PendingArtifact, pending_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="记录不存在。")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(row, key, value)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@app.delete(f"{settings.api_prefix}/batch/pending/{{pending_id}}", status_code=204)
+def delete_pending(pending_id: int, db: Session = Depends(get_db)) -> None:
+    row = db.get(PendingArtifact, pending_id)
+    if row is not None:
+        db.delete(row)
+        db.commit()
+
+
+@app.post(f"{settings.api_prefix}/batch/identify/stream")
+async def batch_identify_stream(payload: BatchIdentifyRequest) -> StreamingResponse:
+    sites = enabled_sites()
+    if not sites:
+        raise HTTPException(
+            status_code=400,
+            detail="未启用网页桥（请设置 QWEN_WEB_ENABLED=true 并完成登录）。",
+        )
+    site = sites[0]
+
+    async def event_generator():
+        db = SessionLocal()
+        try:
+            query = select(PendingArtifact)
+            if payload.ids:
+                query = query.where(PendingArtifact.id.in_(payload.ids))
+            else:
+                query = query.where(PendingArtifact.status.in_(["pending", "failed"]))
+            rows = list(db.scalars(query.order_by(PendingArtifact.created_at)))
+
+            yield sse({"stage": "meta", "total": len(rows), "provider": site.key})
+
+            for row in rows:
+                yield sse({"stage": "start", "id": row.id, "file_name": row.file_name})
+                row.status = "identifying"
+                row.error = None
+                db.commit()
+                try:
+                    candidate = await request_web_candidate(
+                        site, [row.source_path], DATA_DIR, row.file_name
+                    )
+                    row.museum_name = candidate.museum_name
+                    row.name = candidate.artifact_name
+                    row.era = candidate.era
+                    row.description = candidate.description
+                    row.tags = candidate.tags or []
+                    row.confidence = candidate.confidence
+                    row.provider = candidate.provider
+                    row.analysis = candidate.analysis
+                    row.status = "identified"
+                    db.commit()
+                    db.refresh(row)
+                    yield sse(
+                        {
+                            "stage": "item",
+                            "id": row.id,
+                            "item": PendingArtifactRead.model_validate(row).model_dump(
+                                mode="json"
+                            ),
+                        }
+                    )
+                except Exception as exc:  # noqa: BLE001 - surface per-item failure
+                    logger.warning("batch identify %s failed: %s", row.id, exc, exc_info=exc)
+                    row.status = "failed"
+                    row.error = str(exc) or "识别失败"
+                    db.commit()
+                    yield sse({"stage": "item_error", "id": row.id, "message": row.error})
+
+            yield sse({"stage": "done"})
+        finally:
+            db.close()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post(
+    f"{settings.api_prefix}/batch/pending/{{pending_id}}/submit",
+    response_model=PendingArtifactRead,
+)
+async def submit_pending(
+    pending_id: int, db: Session = Depends(get_db)
+) -> PendingArtifact:
+    if not settings.cloud_api_base_url:
+        raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
+
+    row = db.get(PendingArtifact, pending_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="记录不存在。")
+    if not (row.name and row.name.strip()) or not (row.museum_name and row.museum_name.strip()):
+        raise HTTPException(status_code=400, detail="请先填写文物名称和博物馆名称。")
+
+    path = Path(row.source_path)
+    if not path.exists():
+        raise HTTPException(status_code=400, detail="原图文件已不存在，无法提交。")
+
+    row.status = "submitting"
+    row.error = None
+    db.commit()
+
+    content_type = mimetypes.guess_type(path.name)[0] or "image/jpeg"
+    base = settings.cloud_api_base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                f"{base}{settings.api_prefix}/ingest/artifacts",
+                files={"image": (row.file_name, path.read_bytes(), content_type)},
+                data={
+                    "museum_name": row.museum_name,
+                    "name": row.name,
+                    "era": row.era or "",
+                    "description": row.description or "",
+                    "tags": json.dumps(row.tags or [], ensure_ascii=False),
+                },
+                headers={"Authorization": f"Bearer {settings.ingest_token}"},
+            )
+            response.raise_for_status()
+            created = response.json()
+    except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
+        logger.warning("submit pending %s failed: %s", pending_id, exc, exc_info=exc)
+        row.status = "failed"
+        row.error = f"提交云端失败：{exc}"
+        db.commit()
+        raise HTTPException(status_code=502, detail=row.error) from exc
+
+    row.cloud_artifact_id = created.get("id")
+    row.status = "submitted"
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])
 def list_museums(db: Session = Depends(get_db)) -> list[Museum]:
     return list(db.scalars(select(Museum).order_by(Museum.created_at.desc())))
@@ -331,6 +647,7 @@ def list_artifacts(
     museum_id: int | None = Query(default=None),
     era: str | None = Query(default=None),
     tag: str | None = Query(default=None),
+    q: str | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[Artifact]:
     query = artifact_detail_query().order_by(Artifact.created_at.desc())
@@ -340,6 +657,16 @@ def list_artifacts(
         query = query.where(Artifact.era == era)
     if tag is not None:
         query = query.join(Artifact.tags).where(ArtifactTag.name == tag).distinct()
+    if q is not None and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.join(Artifact.museum).where(
+            or_(
+                Artifact.name.ilike(like),
+                Artifact.description.ilike(like),
+                Artifact.era.ilike(like),
+                Museum.name.ilike(like),
+            )
+        )
     return list(db.scalars(query))
 
 

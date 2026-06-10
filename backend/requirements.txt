@@ -7,3 +7,4 @@ pydantic-settings==2.10.1
 httpx==0.28.1
 pillow==11.3.0
 playwright==1.49.1
+oss2==2.19.1

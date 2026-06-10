@@ -100,3 +100,53 @@ class HealthRead(BaseModel):
     status: str
     environment: str
     database: str
+
+
+# ── Batch identification (local side) ────────────────────────────────────────────
+
+
+class BatchScanRequest(BaseModel):
+    directory: str
+    # Optional override of recognized extensions (lowercase, with dot).
+    extensions: list[str] = Field(default_factory=list)
+
+
+class PendingArtifactRead(BaseModel):
+    id: int
+    source_path: str
+    file_name: str
+    status: str
+    error: str | None = None
+    museum_name: str | None = None
+    name: str | None = None
+    era: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+    provider: str | None = None
+    analysis: str | None = None
+    cloud_artifact_id: int | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BatchScanResponse(BaseModel):
+    scanned: int
+    added: int
+    skipped: int
+    items: list[PendingArtifactRead] = Field(default_factory=list)
+
+
+class PendingArtifactUpdate(BaseModel):
+    museum_name: str | None = None
+    name: str | None = None
+    era: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
+
+
+class BatchIdentifyRequest(BaseModel):
+    # Specific pending ids to (re)identify; empty = all rows in pending/failed state.
+    ids: list[int] = Field(default_factory=list)

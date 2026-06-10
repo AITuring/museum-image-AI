@@ -1,0 +1,54 @@
+# Cloud deployment (Alibaba Cloud server): database + backend (cloud role) only.
+# The frontend is deployed separately to Vercel (see README "云端部署"). No Chrome /
+# qwen bridge here — that runs on the local machine.
+#
+#   git pull && docker compose -f docker-compose.cloud.yml up -d --build
+#
+# Configure .env first (APP_ROLE=cloud, INGEST_TOKEN, OSS_*, POSTGRES_*, CORS_ORIGINS).
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: museum-cloud-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-museum_image_db}
+      POSTGRES_USER: ${POSTGRES_USER:-museum}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-museum123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-museum} -d ${POSTGRES_DB:-museum_image_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      args:
+        # Cloud role needs no browser — skip Chrome/Xvfb for a lean, fast build.
+        INSTALL_BROWSER: "false"
+    container_name: museum-cloud-backend
+    env_file:
+      - .env
+    environment:
+      APP_ROLE: cloud
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://museum:museum123@postgres:5432/museum_image_db}
+      APP_ENV: ${APP_ENV:-production}
+    # Cloud role does not need Chrome/Xvfb — run uvicorn directly.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - backend_data:/data
+    ports:
+      # Exposed for the Vercel frontend (via rewrites proxy or direct CORS). Put behind
+      # an HTTPS reverse proxy in production.
+      - "${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  backend_data:

@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -63,6 +73,46 @@ class ArtifactTag(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
 
     artifact: Mapped[Artifact] = relationship(back_populates="tags")
+
+
+class PendingArtifact(Base):
+    """Local-only staging table for the batch identification workflow.
+
+    One row per scanned image. The qwen bridge fills the identification fields; the
+    operator edits them and submits each row to the cloud. Deduplicated by file hash so
+    re-scanning a directory is idempotent and runs can resume.
+    """
+
+    __tablename__ = "pending_artifacts"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+
+    # pending -> identifying -> identified -> submitting -> submitted ; or failed
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Editable identification fields (seeded by the qwen bridge).
+    museum_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    era: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    cloud_artifact_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class ArtifactImage(Base):

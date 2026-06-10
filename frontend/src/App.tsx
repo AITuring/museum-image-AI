@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import "./App.css"
+import BatchConsole from "./BatchConsole"
+import Gallery from "./Gallery"
 
 type HealthResponse = {
   status: string
@@ -86,6 +88,10 @@ type StreamEvent = {
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
+// On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
+const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
+
+type View = "single" | "batch" | "gallery"
 
 const PIPELINE_STEPS = [
   { key: "analyze", label: "看图分析", hint: "多模态模型读取图像与展签文字" },
@@ -165,6 +171,7 @@ function App() {
   const [artifactSubmitting, setArtifactSubmitting] = useState(false)
   const [artifactMessage, setArtifactMessage] = useState<string | null>(null)
   const [artifactError, setArtifactError] = useState<string | null>(null)
+  const [view, setView] = useState<View>(cloudOnly ? "gallery" : "single")
   const [providerOrder, setProviderOrder] = useState<string[]>([])
   const [providerStreams, setProviderStreams] = useState<Record<string, ProviderStream>>({})
   const [unavailableProviders, setUnavailableProviders] = useState<string[]>([])
@@ -557,6 +564,40 @@ function App() {
         </div>
       </header>
 
+      <nav className="view-tabs">
+        {!cloudOnly ? (
+          <>
+            <button
+              type="button"
+              className={view === "single" ? "active" : ""}
+              onClick={() => setView("single")}
+            >
+              单图识别
+            </button>
+            <button
+              type="button"
+              className={view === "batch" ? "active" : ""}
+              onClick={() => setView("batch")}
+            >
+              批量入库
+            </button>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className={view === "gallery" ? "active" : ""}
+          onClick={() => setView("gallery")}
+        >
+          图库检索
+        </button>
+      </nav>
+
+      {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
+
+      {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
+
+      {view === "single" && !cloudOnly ? (
+      <>
       <ol className="flow-bar">
         {flowSteps.map((step, index) => (
           <li
@@ -900,6 +941,8 @@ function App() {
           </button>
         </div>
       </form>
+      </>
+      ) : null}
     </main>
   )
 }

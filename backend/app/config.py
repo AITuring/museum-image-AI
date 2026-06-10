@@ -54,15 +54,35 @@ class Settings(BaseSettings):
     # Accessible name of the attach/upload control (file inputs are created lazily).
     qwen_web_attach_name: str = "添加附件"
 
-    # 豆包 (doubao.com)
-    doubao_web_enabled: bool = False
-    doubao_web_url: str = "https://www.doubao.com/chat/"
-    doubao_web_storage_state: str = "/data/doubao_web_state.json"
-    doubao_web_answer_selector: str = "[class*='markdown']"
-    doubao_web_attach_name: str = ""
     # Downscale local images before sending to the model (longest side, px). 0 disables.
     vision_max_image_dimension: int = 1280
     vision_image_jpeg_quality: int = 85
+
+    # ── Deployment role ──────────────────────────────────────────────────────────
+    # "local"  = operator machine: scans directories, runs the qwen bridge, stages
+    #            results, then pushes each reviewed record to the cloud.
+    # "cloud"  = Alibaba Cloud server: receives submissions, stores images in OSS and
+    #            metadata in the cloud DB, and serves query/search.
+    app_role: str = "local"
+
+    # ── Cloud ingest (used by the LOCAL side to push reviewed records) ────────────
+    # Base URL of the cloud API, e.g. https://your-server.example.com
+    cloud_api_base_url: str = ""
+    # Shared secret sent as `Authorization: Bearer <token>`. The cloud side validates
+    # it; the local side sends it. Keep both in sync.
+    ingest_token: str = ""
+
+    # ── Alibaba Cloud OSS (used by the CLOUD side to store images) ────────────────
+    oss_access_key_id: str = ""
+    oss_access_key_secret: str = ""
+    # e.g. https://oss-cn-hangzhou.aliyuncs.com
+    oss_endpoint: str = ""
+    oss_bucket: str = ""
+    # Object key prefix for uploaded artifact images.
+    oss_key_prefix: str = "artifacts/"
+    # Public base URL for stored objects. Leave empty to derive from bucket+endpoint;
+    # set to a custom domain / CDN if configured.
+    oss_public_base_url: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

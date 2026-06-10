@@ -26,10 +26,19 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://museum:museum123@postgres:5432/museum_image_db}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       APP_ENV: ${APP_ENV:-development}
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Run behind Xvfb so the 通义 web bridge can launch real Chrome headful (local role).
+    # The cloud role doesn't need Chrome, but the same command is harmless there.
+    command: >
+      xvfb-run -a --server-args="-screen 0 1920x1080x24"
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # Chrome needs more shared memory than the Docker default (we also pass
+    # --disable-dev-shm-usage as a belt-and-braces fallback in web_bridge.py).
+    shm_size: "1gb"
     volumes:
       - ./backend:/app
       - ./data:/data
+      # Mount the directory of local images to import; scan it as /data/import in the UI.
+      - ${IMPORT_DIR:-./import}:/data/import:ro
     ports:
       - "8000:8000"
     depends_on:
