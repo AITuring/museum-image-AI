@@ -1,0 +1,27 @@
+#!/bin/sh
+# Pre-commit hook
+# 1) 防止 .env 被提交到 GitHub（.env 本地保留，不删除）
+# 2) 检测 .env.example 中的 API key 字段是否含有 sk 相关密钥，有则清空对应值
+
+staged="$(git diff --cached --name-only)"
+
+# --- 1. 确保 .env 不会被上传到 GitHub ---
+if printf '%s\n' "$staged" | grep -qx ".env"; then
+  echo "[pre-commit] .env 不应提交到 GitHub，已从暂存区移除（本地文件保留）。"
+  git rm --cached --quiet .env
+fi
+
+# --- 2. 清理 .env.example 中疑似 sk 密钥 ---
+if printf '%s\n' "$staged" | grep -qx ".env.example"; then
+  if grep -nEi '=[^=]*sk[-_][A-Za-z0-9]' .env.example >/dev/null 2>&1; then
+    echo "[pre-commit] 检测到 .env.example 含有疑似密钥(sk-...)，已自动清空对应值："
+    grep -nEi '=[^=]*sk[-_][A-Za-z0-9]' .env.example | sed 's/^/    /'
+    # 仅清空 KEY= 行中含 sk 的值，保留键名
+    sed -i.bak -E 's/^([A-Za-z0-9_]+=)[^=]*sk[-_][A-Za-z0-9].*$/\1/I' .env.example
+    rm -f .env.example.bak
+    git add .env.example
+    echo "[pre-commit] .env.example 已更新并重新加入暂存区。"
+  fi
+fi
+
+exit 0
