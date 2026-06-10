@@ -16,11 +16,55 @@
 
 ### 1. 安装 Docker（一次性）
 
+国内阿里云服务器走官方脚本 `get.docker.com` 常被重置（`curl: (35) Connection reset by peer`），直接用阿里云 apt 源安装最稳：
+
 ```bash
-curl -fsSL https://get.docker.com | bash -s docker --mirror Aliyun
+# 依赖
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+
+# 阿里云 Docker GPG key
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# 阿里云 Docker 源（VERSION_CODENAME 自动取系统代号，如 jammy）
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://mirrors.aliyun.com/docker-ce/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# 安装 Docker + compose 插件
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 启动并验证
 sudo systemctl enable --now docker
 docker compose version
 ```
+
+> 镜像加速器（构建时从 Docker Hub 拉 `python`/`postgres` 等基础镜像会快很多）：
+>
+> ```bash
+> sudo mkdir -p /etc/docker
+> sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
+> {
+>   "registry-mirrors": ["https://docker.1ms.run", "https://docker.mirrors.ustc.edu.cn"]
+> }
+> EOF
+> sudo systemctl daemon-reload && sudo systemctl restart docker
+> ```
+
+> **故障排查：`apt-get update` 报 GPG / 仓库未签名错误**
+> 多为服务器上残留的无关第三方源（如 MongoDB）公钥缺失导致。先定位并清理：
+>
+> ```bash
+> grep -rl mongodb /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null
+> sudo rm /etc/apt/sources.list.d/mongodb-org-7.0.list   # 用实际输出的文件名
+> sudo apt-get update
+> ```
 
 ### 2. 开放端口
 
