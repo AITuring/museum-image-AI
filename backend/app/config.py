@@ -39,8 +39,10 @@ class Settings(BaseSettings):
     web_user_data_dir: str = "/data/web_chrome_profile"
     web_timeout_seconds: int = 150
     web_prompt: str = (
-        "请识别这件文物：用相似图检索确认它的身份，然后告诉我它的名称、年代、"
-        "所属博物馆或出土地、用途和历史背景。"
+        "请识别这件文物：优先用相似图检索确认它的身份，然后告诉我它的名称、时代、"
+        "所属博物馆或出土地，并补充器型、材质、纹饰、工艺、用途、出土信息、墓葬情况、"
+        "遗址情况、流传与历史背景等细节；同时提取适合入库的中文标签，但不要把名称、"
+        "时代、馆藏/收藏机构这些已单独存在的字段再重复当作标签。"
     )
     # Text model used to structure the web answer prose into DB JSON.
     web_structuring_model: str = "qwen-plus"

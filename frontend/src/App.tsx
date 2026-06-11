@@ -12,6 +12,38 @@ type HealthResponse = {
 type UploadedImage = {
   filename: string
   url: string
+  uploaded_at: string
+  camera_model: string | null
+  lens_model: string | null
+  capture_museum_name: string | null
+  exhibition_name: string | null
+  latitude: number | null
+  longitude: number | null
+  captured_at: string | null
+  shutter_speed: string | null
+  aperture: string | null
+  iso: number | null
+  edit_method: string | null
+}
+
+type ArtifactFormState = {
+  museumName: string
+  name: string
+  era: string
+  description: string
+  tags: string
+  cameraModel: string
+  lensModel: string
+  captureMuseumName: string
+  exhibitionName: string
+  latitude: string
+  longitude: string
+  capturedAt: string
+  uploadedAt: string
+  shutterSpeed: string
+  aperture: string
+  iso: string
+  editMethod: string
 }
 
 type SearchHit = {
@@ -80,6 +112,20 @@ type StreamEvent = {
   cached?: boolean
 }
 
+type MuseumOption = {
+  id: number
+  name: string
+}
+
+type ExhibitionOption = {
+  id: number
+  museum_id: number
+  museum_name: string
+  name: string
+  start_at: string | null
+  end_at: string | null
+}
+
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? "" : "http://localhost:8000")).replace(/\/$/, "")
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
@@ -144,6 +190,47 @@ function formatConfidence(confidence: number | null | undefined) {
   return `${Math.round(confidence * 100)}%`
 }
 
+const EMPTY_ARTIFACT_FORM: ArtifactFormState = {
+  museumName: "",
+  name: "",
+  era: "",
+  description: "",
+  tags: "",
+  cameraModel: "",
+  lensModel: "",
+  captureMuseumName: "",
+  exhibitionName: "常设",
+  latitude: "",
+  longitude: "",
+  capturedAt: "",
+  uploadedAt: "",
+  shutterSpeed: "",
+  aperture: "",
+  iso: "",
+  editMethod: "",
+}
+
+function buildArtifactFormFromImage(image?: UploadedImage | null): ArtifactFormState {
+  if (!image) {
+    return { ...EMPTY_ARTIFACT_FORM }
+  }
+  return {
+    ...EMPTY_ARTIFACT_FORM,
+    cameraModel: image.camera_model ?? "",
+    lensModel: image.lens_model ?? "",
+    captureMuseumName: image.capture_museum_name ?? "",
+    exhibitionName: image.exhibition_name ?? "常设",
+    latitude: image.latitude?.toString() ?? "",
+    longitude: image.longitude?.toString() ?? "",
+    capturedAt: image.captured_at ?? "",
+    uploadedAt: image.uploaded_at ?? "",
+    shutterSpeed: image.shutter_speed ?? "",
+    aperture: image.aperture ?? "",
+    iso: image.iso?.toString() ?? "",
+    editMethod: image.edit_method ?? "",
+  }
+}
+
 function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(true)
@@ -151,13 +238,7 @@ function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null)
   const [dragging, setDragging] = useState(false)
-  const [artifactForm, setArtifactForm] = useState({
-    museumName: "",
-    name: "",
-    era: "",
-    description: "",
-    tags: "",
-  })
+  const [artifactForm, setArtifactForm] = useState<ArtifactFormState>({ ...EMPTY_ARTIFACT_FORM })
   const [uploading, setUploading] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [artifactSubmitting, setArtifactSubmitting] = useState(false)
@@ -168,6 +249,9 @@ function App() {
   const [providerStreams, setProviderStreams] = useState<Record<string, ProviderStream>>({})
   const [unavailableProviders, setUnavailableProviders] = useState<string[]>([])
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
+  const [museumSuggestions, setMuseumSuggestions] = useState<MuseumOption[]>([])
+  const [selectedCaptureMuseum, setSelectedCaptureMuseum] = useState<MuseumOption | null>(null)
+  const [exhibitionSuggestions, setExhibitionSuggestions] = useState<ExhibitionOption[]>([])
   const streamAbortRef = useRef<AbortController | null>(null)
 
   const orderedStreams = useMemo(
@@ -370,13 +454,14 @@ function App() {
   }
 
   function handleApplyCandidate(candidate: VisionCandidate) {
-    setArtifactForm({
+    setArtifactForm((current) => ({
+      ...current,
       museumName: candidate.museum_name ?? "",
       name: candidate.artifact_name,
       era: candidate.era ?? "",
       description: candidate.description,
       tags: candidate.tags.join(", "),
-    })
+    }))
     setSelectedCandidateKey(candidate.provider)
     setArtifactMessage(`已采用 ${candidate.provider} 的识图结果，可在下方微调后入库`)
     setArtifactError(null)
@@ -398,6 +483,67 @@ function App() {
       streamAbortRef.current?.abort()
     }
   }, [])
+
+  useEffect(() => {
+    const rawQuery = artifactForm.captureMuseumName.trim()
+    if (!rawQuery.startsWith("@")) {
+      setMuseumSuggestions([])
+      return
+    }
+    const q = rawQuery.slice(1).trim()
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ limit: "8" })
+        if (q) params.set("q", q)
+        const data = await fetchJson<MuseumOption[]>(
+          `${apiBaseUrl}/api/museums?${params.toString()}`,
+          { signal: controller.signal },
+        )
+        setMuseumSuggestions(data)
+      } catch {
+        if (!controller.signal.aborted) {
+          setMuseumSuggestions([])
+        }
+      }
+    }, 180)
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [artifactForm.captureMuseumName])
+
+  useEffect(() => {
+    const rawQuery = artifactForm.exhibitionName.trim()
+    if (!selectedCaptureMuseum || !rawQuery.startsWith("@")) {
+      setExhibitionSuggestions([])
+      return
+    }
+    const q = rawQuery.slice(1).trim()
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({
+          museum_id: String(selectedCaptureMuseum.id),
+          limit: "8",
+        })
+        if (q) params.set("q", q)
+        const data = await fetchJson<ExhibitionOption[]>(
+          `${apiBaseUrl}/api/exhibitions?${params.toString()}`,
+          { signal: controller.signal },
+        )
+        setExhibitionSuggestions(data)
+      } catch {
+        if (!controller.signal.aborted) {
+          setExhibitionSuggestions([])
+        }
+      }
+    }, 180)
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [apiBaseUrl, artifactForm.exhibitionName, selectedCaptureMuseum])
 
   function selectFile(file: File | null) {
     setSelectedFile(file)
@@ -430,6 +576,10 @@ function App() {
 
       const image = data[0]
       setUploadedImage(image)
+      setArtifactForm(buildArtifactFormFromImage(image))
+      setSelectedCaptureMuseum(null)
+      setMuseumSuggestions([])
+      setExhibitionSuggestions([])
       await analyzeImageStream(image)
     } catch (err) {
       setArtifactError(err instanceof Error ? err.message : "上传图片失败")
@@ -442,10 +592,14 @@ function App() {
     streamAbortRef.current?.abort()
     selectFile(null)
     setUploadedImage(null)
+    setArtifactForm({ ...EMPTY_ARTIFACT_FORM })
     setProviderOrder([])
     setProviderStreams({})
     setUnavailableProviders([])
     setSelectedCandidateKey(null)
+    setSelectedCaptureMuseum(null)
+    setMuseumSuggestions([])
+    setExhibitionSuggestions([])
     setArtifactMessage(null)
   }
 
@@ -465,6 +619,12 @@ function App() {
       if (!uploadedImage) {
         throw new Error("请先上传并识别图片")
       }
+      if (!artifactForm.captureMuseumName.trim() || artifactForm.captureMuseumName.trim().startsWith("@")) {
+        throw new Error("请填写或选择拍摄时所在博物馆")
+      }
+      if (!artifactForm.exhibitionName.trim() || artifactForm.exhibitionName.trim().startsWith("@")) {
+        throw new Error("请填写或选择展览名称")
+      }
 
       await fetchJson<unknown>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
         method: "POST",
@@ -479,10 +639,24 @@ function App() {
             .split(",")
             .map((tag) => tag.trim())
             .filter(Boolean),
+          camera_model: artifactForm.cameraModel.trim() || null,
+          lens_model: artifactForm.lensModel.trim() || null,
+          capture_museum_name: artifactForm.captureMuseumName.trim(),
+          exhibition_name: artifactForm.exhibitionName.trim() || "常设",
+          latitude: artifactForm.latitude.trim() ? Number(artifactForm.latitude) : null,
+          longitude: artifactForm.longitude.trim() ? Number(artifactForm.longitude) : null,
+          captured_at: artifactForm.capturedAt.trim() || null,
+          shutter_speed: artifactForm.shutterSpeed.trim() || null,
+          aperture: artifactForm.aperture.trim() || null,
+          iso: artifactForm.iso.trim() ? Number(artifactForm.iso) : null,
+          edit_method: artifactForm.editMethod || null,
         }),
       })
 
-      setArtifactForm({ museumName: "", name: "", era: "", description: "", tags: "" })
+      setArtifactForm({ ...EMPTY_ARTIFACT_FORM })
+      setSelectedCaptureMuseum(null)
+      setMuseumSuggestions([])
+      setExhibitionSuggestions([])
       setArtifactMessage("已提交云端，图片已上传 OSS")
       resetCurrentImage()
     } catch (err) {
@@ -884,6 +1058,199 @@ function App() {
                 }
                 placeholder="逗号分隔"
               />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span>机型</span>
+              <input
+                value={artifactForm.cameraModel}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, cameraModel: event.target.value }))
+                }
+                placeholder="自动读取，可手动补充"
+              />
+            </label>
+            <label className="field">
+              <span>镜头</span>
+              <input
+                value={artifactForm.lensModel}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, lensModel: event.target.value }))
+                }
+                placeholder="自动读取，可手动补充"
+              />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span>拍摄时博物馆</span>
+              <input
+                value={artifactForm.captureMuseumName}
+                onChange={(event) => {
+                  const value = event.target.value
+                  setArtifactForm((current) => ({ ...current, captureMuseumName: value }))
+                  if (selectedCaptureMuseum?.name !== value) {
+                    setSelectedCaptureMuseum(null)
+                  }
+                }}
+                placeholder="输入 @ 后联想检索，例如：@南博"
+              />
+              {artifactForm.captureMuseumName.trim().startsWith("@") ? (
+                <span className="field-help">输入 `@关键词` 后，从下方结果选择拍摄时所在博物馆。</span>
+              ) : null}
+              {museumSuggestions.length > 0 ? (
+                <div className="suggestion-list">
+                  {museumSuggestions.map((museum) => (
+                    <button
+                      key={museum.id}
+                      type="button"
+                      className="suggestion-item"
+                      onClick={() => {
+                        setSelectedCaptureMuseum(museum)
+                        setMuseumSuggestions([])
+                        setArtifactForm((current) => ({
+                          ...current,
+                          captureMuseumName: museum.name,
+                          exhibitionName:
+                            current.exhibitionName.trim().startsWith("@") || !current.exhibitionName.trim()
+                              ? "常设"
+                              : current.exhibitionName,
+                        }))
+                      }}
+                    >
+                      {museum.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </label>
+            <label className="field">
+              <span>展览</span>
+              <input
+                value={artifactForm.exhibitionName}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, exhibitionName: event.target.value }))
+                }
+                placeholder={
+                  selectedCaptureMuseum
+                    ? "默认常设，输入 @ 后联想检索该馆展览"
+                    : "默认常设，可直接填写"
+                }
+              />
+              {artifactForm.exhibitionName.trim().startsWith("@") && selectedCaptureMuseum ? (
+                <span className="field-help">当前按 `{selectedCaptureMuseum.name}` 的展览库联想检索。</span>
+              ) : null}
+              {exhibitionSuggestions.length > 0 ? (
+                <div className="suggestion-list">
+                  {exhibitionSuggestions.map((exhibition) => (
+                    <button
+                      key={exhibition.id}
+                      type="button"
+                      className="suggestion-item"
+                      onClick={() => {
+                        setExhibitionSuggestions([])
+                        setArtifactForm((current) => ({
+                          ...current,
+                          exhibitionName: exhibition.name,
+                        }))
+                      }}
+                    >
+                      <span>{exhibition.name}</span>
+                      {exhibition.start_at || exhibition.end_at ? (
+                        <em>
+                          {exhibition.start_at?.slice(0, 10) ?? "未知"} - {exhibition.end_at?.slice(0, 10) ?? "至今"}
+                        </em>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span>纬度</span>
+              <input
+                value={artifactForm.latitude}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, latitude: event.target.value }))
+                }
+                placeholder="例如：32.060255"
+              />
+            </label>
+            <label className="field">
+              <span>经度</span>
+              <input
+                value={artifactForm.longitude}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, longitude: event.target.value }))
+                }
+                placeholder="例如：118.796877"
+              />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span>拍摄时间</span>
+              <input
+                value={artifactForm.capturedAt}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, capturedAt: event.target.value }))
+                }
+                placeholder="例如：2024-05-01T14:30:00"
+              />
+            </label>
+            <label className="field">
+              <span>上传时间</span>
+              <input value={artifactForm.uploadedAt} readOnly placeholder="上传后自动生成" />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span>快门</span>
+              <input
+                value={artifactForm.shutterSpeed}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, shutterSpeed: event.target.value }))
+                }
+                placeholder="例如：1/125s"
+              />
+            </label>
+            <label className="field">
+              <span>光圈</span>
+              <input
+                value={artifactForm.aperture}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, aperture: event.target.value }))
+                }
+                placeholder="例如：f/2.8"
+              />
+            </label>
+          </div>
+          <div className="field-row">
+            <label className="field">
+              <span>感光度</span>
+              <input
+                value={artifactForm.iso}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, iso: event.target.value }))
+                }
+                placeholder="例如：400"
+              />
+            </label>
+            <label className="field">
+              <span>修图方式</span>
+              <select
+                value={artifactForm.editMethod}
+                onChange={(event) =>
+                  setArtifactForm((current) => ({ ...current, editMethod: event.target.value }))
+                }
+              >
+                <option value="">未填写</option>
+                <option value="简单调整">简单调整</option>
+                <option value="堆栈合成">堆栈合成</option>
+              </select>
             </label>
           </div>
           <label className="field">

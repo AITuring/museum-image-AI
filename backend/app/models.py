@@ -30,6 +30,12 @@ class Museum(Base):
     artifacts: Mapped[list["Artifact"]] = relationship(
         back_populates="museum", cascade="all, delete-orphan"
     )
+    exhibitions: Mapped[list["Exhibition"]] = relationship(
+        back_populates="museum", cascade="all, delete-orphan"
+    )
+    captured_images: Mapped[list["ArtifactImage"]] = relationship(
+        back_populates="capture_museum"
+    )
 
 
 class Artifact(Base):
@@ -52,6 +58,9 @@ class Artifact(Base):
     images: Mapped[list["ArtifactImage"]] = relationship(
         back_populates="artifact", cascade="all, delete-orphan"
     )
+    exhibition_links: Mapped[list["ArtifactExhibition"]] = relationship(
+        back_populates="artifact", cascade="all, delete-orphan"
+    )
 
     @property
     def museum_name(self) -> str:
@@ -60,6 +69,10 @@ class Artifact(Base):
     @property
     def tag_names(self) -> list[str]:
         return [tag.name for tag in self.tags]
+
+    @property
+    def exhibition_records(self) -> list["Exhibition"]:
+        return [link.exhibition for link in self.exhibition_links]
 
 
 class ArtifactTag(Base):
@@ -73,6 +86,51 @@ class ArtifactTag(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
 
     artifact: Mapped[Artifact] = relationship(back_populates="tags")
+
+
+class Exhibition(Base):
+    __tablename__ = "exhibitions"
+    __table_args__ = (UniqueConstraint("museum_id", "name", name="uq_exhibition_museum_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    museum_id: Mapped[int] = mapped_column(ForeignKey("museums.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    museum: Mapped[Museum] = relationship(back_populates="exhibitions")
+    artifact_links: Mapped[list["ArtifactExhibition"]] = relationship(
+        back_populates="exhibition", cascade="all, delete-orphan"
+    )
+    images: Mapped[list["ArtifactImage"]] = relationship(back_populates="exhibition")
+
+    @property
+    def museum_name(self) -> str:
+        return self.museum.name
+
+
+class ArtifactExhibition(Base):
+    __tablename__ = "artifact_exhibitions"
+    __table_args__ = (
+        UniqueConstraint("artifact_id", "exhibition_id", name="uq_artifact_exhibition"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    artifact_id: Mapped[int] = mapped_column(
+        ForeignKey("artifacts.id"), nullable=False, index=True
+    )
+    exhibition_id: Mapped[int] = mapped_column(
+        ForeignKey("exhibitions.id"), nullable=False, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    artifact: Mapped[Artifact] = relationship(back_populates="exhibition_links")
+    exhibition: Mapped[Exhibition] = relationship(back_populates="artifact_links")
 
 
 class PendingArtifact(Base):
@@ -123,11 +181,28 @@ class ArtifactImage(Base):
         ForeignKey("artifacts.id"), nullable=False, index=True
     )
     url: Mapped[str] = mapped_column(String(512), nullable=False)
+    camera_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lens_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    capture_museum_id: Mapped[int | None] = mapped_column(
+        ForeignKey("museums.id"), nullable=True, index=True
+    )
+    exhibition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("exhibitions.id"), nullable=True, index=True
+    )
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    shutter_speed: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    aperture: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    iso: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edit_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     artifact: Mapped[Artifact] = relationship(back_populates="images")
+    capture_museum: Mapped[Museum | None] = relationship(back_populates="captured_images")
+    exhibition: Mapped[Exhibition | None] = relationship(back_populates="images")
 
     @property
     def artifact_name(self) -> str:
@@ -140,3 +215,15 @@ class ArtifactImage(Base):
     @property
     def era(self) -> str | None:
         return self.artifact.era
+
+    @property
+    def uploaded_at(self) -> datetime:
+        return self.created_at
+
+    @property
+    def capture_museum_name(self) -> str | None:
+        return self.capture_museum.name if self.capture_museum is not None else None
+
+    @property
+    def exhibition_name(self) -> str | None:
+        return self.exhibition.name if self.exhibition is not None else None

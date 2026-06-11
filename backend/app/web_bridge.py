@@ -32,6 +32,7 @@ from app.vision import (
     extract_message_text,
     parse_json_response,
     request_chat_completion,
+    sanitize_generated_tags,
 )
 
 logger = logging.getLogger("app.web_bridge")
@@ -45,14 +46,15 @@ WEB_STRUCTURING_SYSTEM_PROMPT = """
   "era": "时代",
   "museum_name": "博物馆或收藏机构/出土地",
   "tags": ["标签1", "标签2"],
-  "description": "50-120字描述",
+  "description": "120-260字详细描述",
   "confidence": 0.0,
   "reasoning": "判断依据（摘自原回答）"
 }
 要求：
 1. 只使用原回答中出现的信息，不要自行编造馆藏、年代或名称。
 2. 原回答不确定或给了多个候选时，artifact_name 取最可能的一个，并在 reasoning 中说明其它候选。
-3. tags 返回 3-6 个中文标签，confidence 取 0 到 1（依据原回答语气的确定程度）。
+3. tags 返回 3-8 个中文标签，优先提取器类、材质、纹饰、工艺、用途、题材、出土背景、墓葬/遗址背景等信息点；不要把 artifact_name、era、museum_name，或它们的近义改写/重复表达，放进 tags。
+4. description 尽量写详细，优先整合形制、材质、纹饰、工艺、用途、时代背景、馆藏或出土地、出土情况、墓葬情况、遗址情况、流传与研究信息；原回答没提到的不要编造。
 """.strip()
 
 
@@ -373,21 +375,12 @@ def _build_summary(answer_text: str) -> str:
 
 def _derive_tags(answer_text: str, artifact_name: str, era: str, museum_name: str) -> list[str]:
     tags: list[str] = []
-    candidates = [
-        era,
-        museum_name if museum_name.endswith(("馆", "院")) else "",
-        artifact_name,
-    ]
     for keyword in ["青铜器", "礼器", "铭文", "龙纹", "簋", "鼎", "尊", "陶器", "瓷器", "佛像"]:
-        if keyword in answer_text:
-            candidates.append(keyword)
-    for item in candidates:
-        cleaned = item.strip()
-        if cleaned and cleaned not in tags:
-            tags.append(cleaned)
+        if keyword in answer_text and keyword not in tags:
+            tags.append(keyword)
         if len(tags) >= 6:
             break
-    return tags
+    return sanitize_generated_tags(tags, artifact_name, era, museum_name)
 
 
 def _merge_structured_answer(answer_text: str, structured: dict[str, object] | None) -> dict[str, object]:
@@ -410,7 +403,9 @@ def _merge_structured_answer(answer_text: str, structured: dict[str, object] | N
         description = _build_summary(answer_text)
 
     raw_tags = [str(tag).strip() for tag in data.get("tags", []) if str(tag).strip()]
-    tags = raw_tags or _derive_tags(answer_text, artifact_name, era, museum_name)
+    tags = sanitize_generated_tags(raw_tags, artifact_name, era, museum_name)
+    if not tags:
+        tags = _derive_tags(answer_text, artifact_name, era, museum_name)
 
     reasoning = str(data.get("reasoning", "")).strip() or answer_text
 

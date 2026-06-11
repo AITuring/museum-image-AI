@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from datetime import datetime
+from fractions import Fraction
+from io import BytesIO
+
+from PIL import Image
+
+TAG_MODEL = 272
+TAG_EXIF_IFD = 34665
+TAG_GPS_IFD = 34853
+
+EXIF_EXPOSURE_TIME = 33434
+EXIF_FNUMBER = 33437
+EXIF_ISO = 34855
+EXIF_DATETIME_DIGITIZED = 36868
+EXIF_DATETIME_ORIGINAL = 36867
+EXIF_LENS_MODEL = 42036
+
+GPS_LATITUDE_REF = 1
+GPS_LATITUDE = 2
+GPS_LONGITUDE_REF = 3
+GPS_LONGITUDE = 4
+
+
+@dataclass
+class ImageExifData:
+    camera_model: str | None = None
+    lens_model: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    captured_at: datetime | None = None
+    shutter_speed: str | None = None
+    aperture: str | None = None
+    iso: int | None = None
+    edit_method: str | None = None
+
+    def as_dict(self) -> dict[str, object | None]:
+        return asdict(self)
+
+
+def _clean_text(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="ignore")
+    text = str(value).strip()
+    return text or None
+
+
+def _to_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        numerator, denominator = value
+        try:
+            denominator_value = float(denominator)
+            if denominator_value == 0:
+                return None
+            return float(numerator) / denominator_value
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+    return None
+
+
+def _format_shutter_speed(value: object) -> str | None:
+    seconds = _to_float(value)
+    if seconds is None or seconds <= 0:
+        return None
+    if seconds >= 1:
+        rounded = round(seconds, 2)
+        text = f"{rounded:.2f}".rstrip("0").rstrip(".")
+        return f"{text}s"
+    fraction = Fraction(seconds).limit_denominator(8000)
+    if fraction.numerator == 1:
+        return f"1/{fraction.denominator}s"
+    return f"{fraction.numerator}/{fraction.denominator}s"
+
+
+def _format_aperture(value: object) -> str | None:
+    aperture_value = _to_float(value)
+    if aperture_value is None or aperture_value <= 0:
+        return None
+    text = f"{aperture_value:.1f}".rstrip("0").rstrip(".")
+    return f"f/{text}"
+
+
+def _gps_to_decimal(coords: object, ref: object) -> float | None:
+    if not isinstance(coords, (tuple, list)) or len(coords) != 3:
+        return None
+    degrees = _to_float(coords[0])
+    minutes = _to_float(coords[1])
+    seconds = _to_float(coords[2])
+    if degrees is None or minutes is None or seconds is None:
+        return None
+    decimal = degrees + (minutes / 60.0) + (seconds / 3600.0)
+    ref_text = (_clean_text(ref) or "").upper()
+    if ref_text in {"S", "W"}:
+        decimal *= -1
+    return round(decimal, 6)
+
+
+def _parse_exif_datetime(value: object) -> datetime | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    for fmt in ("%Y:%m:%d %H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def extract_exif_metadata(image_bytes: bytes) -> ImageExifData:
+    if not image_bytes:
+        return ImageExifData()
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            exif = image.getexif()
+            if not exif:
+                return ImageExifData()
+
+            try:
+                exif_ifd = exif.get_ifd(TAG_EXIF_IFD)
+            except Exception:
+                exif_ifd = {}
+
+            try:
+                gps_ifd = exif.get_ifd(TAG_GPS_IFD)
+            except Exception:
+                gps_ifd = {}
+
+            iso_value = exif_ifd.get(EXIF_ISO) if isinstance(exif_ifd, dict) else None
+            if iso_value is None:
+                iso_value = exif.get(EXIF_ISO)
+
+            return ImageExifData(
+                camera_model=_clean_text(exif.get(TAG_MODEL)),
+                lens_model=_clean_text(
+                    exif_ifd.get(EXIF_LENS_MODEL) if isinstance(exif_ifd, dict) else None
+                ),
+                latitude=_gps_to_decimal(
+                    gps_ifd.get(GPS_LATITUDE) if isinstance(gps_ifd, dict) else None,
+                    gps_ifd.get(GPS_LATITUDE_REF) if isinstance(gps_ifd, dict) else None,
+                ),
+                longitude=_gps_to_decimal(
+                    gps_ifd.get(GPS_LONGITUDE) if isinstance(gps_ifd, dict) else None,
+                    gps_ifd.get(GPS_LONGITUDE_REF) if isinstance(gps_ifd, dict) else None,
+                ),
+                captured_at=_parse_exif_datetime(
+                    (exif_ifd.get(EXIF_DATETIME_ORIGINAL) if isinstance(exif_ifd, dict) else None)
+                    or (exif_ifd.get(EXIF_DATETIME_DIGITIZED) if isinstance(exif_ifd, dict) else None)
+                    or exif.get(EXIF_DATETIME_ORIGINAL)
+                    or exif.get(EXIF_DATETIME_DIGITIZED)
+                ),
+                shutter_speed=_format_shutter_speed(
+                    exif_ifd.get(EXIF_EXPOSURE_TIME) if isinstance(exif_ifd, dict) else None
+                ),
+                aperture=_format_aperture(
+                    exif_ifd.get(EXIF_FNUMBER) if isinstance(exif_ifd, dict) else None
+                ),
+                iso=int(iso_value) if iso_value is not None else None,
+            )
+    except Exception:
+        return ImageExifData()

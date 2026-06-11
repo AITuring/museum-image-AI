@@ -381,7 +381,8 @@ button:disabled {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 12px;
@@ -392,7 +393,8 @@ button:disabled {
 }
 
 .field input:focus,
-.field textarea:focus {
+.field textarea:focus,
+.field select:focus {
   outline: none;
   border-color: #7c3aed;
   box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
@@ -400,6 +402,44 @@ button:disabled {
 
 .field textarea {
   resize: vertical;
+}
+
+.field-help {
+  font-size: 0.78rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.suggestion-list {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: rgba(248, 250, 252, 0.92);
+}
+
+.suggestion-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #0f172a;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.suggestion-item em {
+  color: #64748b;
+  font-style: normal;
+  font-size: 0.78rem;
 }
 
 /* ---------- Empty state ---------- */
@@ -1047,10 +1087,21 @@ button:disabled {
   gap: 10px;
   margin-bottom: 14px;
 }
+.gallery-image-link {
+  display: inline-flex;
+}
 .gallery-modal-images img {
   max-width: 100%;
   max-height: 360px;
   border-radius: 10px;
+}
+.gallery-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+.gallery-actions a {
+  text-decoration: none;
 }
 .gallery-close {
   position: absolute;

@@ -3,9 +3,10 @@ import hashlib
 import json
 import logging
 import mimetypes
-from pathlib import Path
+from datetime import datetime, timezone
 from uuid import uuid4
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
@@ -17,7 +18,16 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.db import Base, SessionLocal, engine, get_db
-from app.models import Artifact, ArtifactImage, ArtifactTag, Museum, PendingArtifact
+from app.exif_utils import extract_exif_metadata
+from app.models import (
+    Artifact,
+    ArtifactExhibition,
+    ArtifactImage,
+    ArtifactTag,
+    Exhibition,
+    Museum,
+    PendingArtifact,
+)
 from app.oss import upload_image
 from app.schemas import (
     ArtifactCreate,
@@ -28,6 +38,8 @@ from app.schemas import (
     BatchScanRequest,
     BatchScanResponse,
     CloudArtifactSubmitRequest,
+    ExhibitionCreate,
+    ExhibitionRead,
     HealthRead,
     MuseumCreate,
     MuseumRead,
@@ -45,6 +57,7 @@ from app.vision import (
 from app.web_bridge import enabled_sites, request_web_candidate
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff"}
+EDIT_METHOD_OPTIONS = {"简单调整", "堆栈合成"}
 
 logger = logging.getLogger("app.vision")
 
@@ -104,6 +117,31 @@ def run_startup_migrations(connection) -> None:
             )
         )
 
+    if "artifact_images" not in table_names:
+        return
+
+    artifact_image_columns = {
+        column["name"] for column in inspect(connection).get_columns("artifact_images")
+    }
+    image_column_definitions = {
+        "camera_model": "VARCHAR(255)",
+        "lens_model": "VARCHAR(255)",
+        "capture_museum_id": "INTEGER",
+        "exhibition_id": "INTEGER",
+        "latitude": "DOUBLE PRECISION",
+        "longitude": "DOUBLE PRECISION",
+        "captured_at": "TIMESTAMP",
+        "shutter_speed": "VARCHAR(64)",
+        "aperture": "VARCHAR(64)",
+        "iso": "INTEGER",
+        "edit_method": "VARCHAR(32)",
+    }
+    for column_name, column_type in image_column_definitions.items():
+        if column_name not in artifact_image_columns:
+            connection.execute(
+                text(f"ALTER TABLE artifact_images ADD COLUMN {column_name} {column_type}")
+            )
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -134,12 +172,21 @@ def artifact_detail_query():
         selectinload(Artifact.museum),
         selectinload(Artifact.tags),
         selectinload(Artifact.images),
+        selectinload(Artifact.images).selectinload(ArtifactImage.capture_museum),
+        selectinload(Artifact.images)
+        .selectinload(ArtifactImage.exhibition)
+        .selectinload(Exhibition.museum),
+        selectinload(Artifact.exhibition_links)
+        .selectinload(ArtifactExhibition.exhibition)
+        .selectinload(Exhibition.museum),
     )
 
 
 def artifact_image_query():
     return select(ArtifactImage).options(
-        selectinload(ArtifactImage.artifact).selectinload(Artifact.museum)
+        selectinload(ArtifactImage.artifact).selectinload(Artifact.museum),
+        selectinload(ArtifactImage.capture_museum),
+        selectinload(ArtifactImage.exhibition).selectinload(Exhibition.museum),
     )
 
 
@@ -169,6 +216,39 @@ def ensure_museum(db: Session, museum_name: str) -> Museum:
     return museum
 
 
+def ensure_exhibition(
+    db: Session,
+    museum: Museum,
+    exhibition_name: str | None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+) -> Exhibition:
+    name = optional_text(exhibition_name) or "常设"
+    exhibition = db.scalar(
+        select(Exhibition).where(
+            Exhibition.museum_id == museum.id,
+            Exhibition.name == name,
+        )
+    )
+    if exhibition is not None:
+        if exhibition.start_at is None and start_at is not None:
+            exhibition.start_at = start_at
+        if exhibition.end_at is None and end_at is not None:
+            exhibition.end_at = end_at
+        db.flush()
+        return exhibition
+
+    exhibition = Exhibition(
+        museum_id=museum.id,
+        name=name,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    db.add(exhibition)
+    db.flush()
+    return exhibition
+
+
 def parse_tags(raw: str | None) -> list[str]:
     text_value = (raw or "").strip()
     if not text_value:
@@ -180,6 +260,150 @@ def parse_tags(raw: str | None) -> list[str]:
     except (ValueError, TypeError):
         pass
     return [tag.strip() for tag in text_value.split(",") if tag.strip()]
+
+
+def merge_unique_tags(*tag_groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in tag_groups:
+        for tag in group:
+            cleaned = str(tag).strip()
+            if cleaned and cleaned not in merged:
+                merged.append(cleaned)
+    return merged
+
+
+def build_capture_tags(camera_model: str | None, lens_model: str | None) -> list[str]:
+    tags: list[str] = []
+    if camera_model and camera_model.strip():
+        tags.append(f"机型:{camera_model.strip()}")
+    if lens_model and lens_model.strip():
+        tags.append(f"镜头:{lens_model.strip()}")
+    return tags
+
+
+def optional_text(value: str | None) -> str | None:
+    text_value = (value or "").strip()
+    return text_value or None
+
+
+def optional_float(value: str | float | None, field_name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return value
+    text_value = value.strip()
+    if not text_value:
+        return None
+    try:
+        return float(text_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} 格式不正确。") from exc
+
+
+def optional_int(value: str | int | None, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text_value = value.strip()
+    if not text_value:
+        return None
+    try:
+        return int(text_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} 格式不正确。") from exc
+
+
+def optional_datetime(value: str | datetime | None, field_name: str) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text_value = value.strip()
+    if not text_value:
+        return None
+    for normalizer in (lambda item: item, lambda item: item.replace("Z", "+00:00")):
+        try:
+            parsed = datetime.fromisoformat(normalizer(text_value))
+            return parsed.replace(tzinfo=None) if parsed.tzinfo is not None else parsed
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail=f"{field_name} 格式不正确。")
+
+
+def normalize_edit_method(value: str | None) -> str | None:
+    text_value = optional_text(value)
+    if text_value is None:
+        return None
+    if text_value not in EDIT_METHOD_OPTIONS:
+        raise HTTPException(status_code=400, detail="修图方式仅支持：简单调整、堆栈合成。")
+    return text_value
+
+
+def normalize_exhibition_name(value: str | None) -> str:
+    return optional_text(value) or "常设"
+
+
+def resolve_capture_context(
+    db: Session,
+    capture_museum_name: str | None,
+    exhibition_name: str | None,
+) -> tuple[Museum | None, Exhibition | None]:
+    capture_museum = (
+        ensure_museum(db, capture_museum_name)
+        if optional_text(capture_museum_name)
+        else None
+    )
+    exhibition = (
+        ensure_exhibition(db, capture_museum, exhibition_name)
+        if capture_museum is not None
+        else None
+    )
+    return capture_museum, exhibition
+
+
+def build_image_metadata(
+    *,
+    image_bytes: bytes | None = None,
+    camera_model: str | None = None,
+    lens_model: str | None = None,
+    latitude: str | float | None = None,
+    longitude: str | float | None = None,
+    captured_at: str | datetime | None = None,
+    shutter_speed: str | None = None,
+    aperture: str | None = None,
+    iso: str | int | None = None,
+    edit_method: str | None = None,
+) -> dict[str, object | None]:
+    exif = extract_exif_metadata(image_bytes or b"")
+    resolved_camera_model = optional_text(camera_model) or exif.camera_model
+    resolved_lens_model = optional_text(lens_model) or exif.lens_model
+    resolved_latitude = optional_float(latitude, "纬度")
+    if resolved_latitude is None:
+        resolved_latitude = exif.latitude
+    resolved_longitude = optional_float(longitude, "经度")
+    if resolved_longitude is None:
+        resolved_longitude = exif.longitude
+    resolved_captured_at = optional_datetime(captured_at, "拍摄时间")
+    if resolved_captured_at is None:
+        resolved_captured_at = exif.captured_at
+    resolved_shutter_speed = optional_text(shutter_speed) or exif.shutter_speed
+    resolved_aperture = optional_text(aperture) or exif.aperture
+    resolved_iso = optional_int(iso, "感光度")
+    if resolved_iso is None:
+        resolved_iso = exif.iso
+
+    return {
+        "camera_model": resolved_camera_model,
+        "lens_model": resolved_lens_model,
+        "latitude": resolved_latitude,
+        "longitude": resolved_longitude,
+        "captured_at": resolved_captured_at,
+        "shutter_speed": resolved_shutter_speed,
+        "aperture": resolved_aperture,
+        "iso": resolved_iso,
+        "edit_method": normalize_edit_method(edit_method),
+    }
 
 
 def require_ingest_token(authorization: str | None) -> None:
@@ -364,11 +588,16 @@ async def upload_images(files: list[UploadFile] = File(...)) -> list[UploadedIma
 
         contents = await file.read()
         target_path.write_bytes(contents)
+        image_metadata = build_image_metadata(image_bytes=contents)
 
         uploaded_images.append(
             UploadedImageRead(
                 filename=file.filename or generated_name,
                 url=build_uploaded_file_url(generated_name),
+                uploaded_at=datetime.now(timezone.utc),
+                capture_museum_name=None,
+                exhibition_name=None,
+                **image_metadata,
             )
         )
 
@@ -390,6 +619,17 @@ async def ingest_artifact(
     era: str | None = Form(None),
     description: str | None = Form(None),
     tags: str = Form(""),
+    camera_model: str | None = Form(None),
+    lens_model: str | None = Form(None),
+    capture_museum_name: str | None = Form(None),
+    exhibition_name: str | None = Form("常设"),
+    latitude: str | None = Form(None),
+    longitude: str | None = Form(None),
+    captured_at: str | None = Form(None),
+    shutter_speed: str | None = Form(None),
+    aperture: str | None = Form(None),
+    iso: str | None = Form(None),
+    edit_method: str | None = Form(None),
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> Artifact:
@@ -403,8 +643,21 @@ async def ingest_artifact(
     image_url = upload_image(
         contents, image.filename or "image.jpg", image.content_type
     )
+    image_metadata = build_image_metadata(
+        image_bytes=contents,
+        camera_model=camera_model,
+        lens_model=lens_model,
+        latitude=latitude,
+        longitude=longitude,
+        captured_at=captured_at,
+        shutter_speed=shutter_speed,
+        aperture=aperture,
+        iso=iso,
+        edit_method=edit_method,
+    )
 
     museum = ensure_museum(db, museum_name)
+    capture_museum, exhibition = resolve_capture_context(db, capture_museum_name, exhibition_name)
     artifact = Artifact(
         museum_id=museum.id,
         name=name.strip(),
@@ -413,10 +666,27 @@ async def ingest_artifact(
         ai_status="reviewed",
     )
     artifact.tags = [
-        ArtifactTag(name=tag) for tag in dict.fromkeys(parse_tags(tags))
+        ArtifactTag(name=tag)
+        for tag in merge_unique_tags(
+            parse_tags(tags),
+            build_capture_tags(
+                image_metadata.get("camera_model"),
+                image_metadata.get("lens_model"),
+            ),
+        )
     ]
-    artifact.images = [ArtifactImage(url=image_url)]
     db.add(artifact)
+    db.flush()
+    if exhibition is not None:
+        db.add(ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition.id))
+    artifact.images = [
+        ArtifactImage(
+            url=image_url,
+            capture_museum_id=capture_museum.id if capture_museum is not None else None,
+            exhibition_id=exhibition.id if exhibition is not None else None,
+            **image_metadata,
+        )
+    ]
     db.commit()
     return db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
 
@@ -451,6 +721,17 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
                     "era": payload.era or "",
                     "description": payload.description or "",
                     "tags": json.dumps(payload.tags, ensure_ascii=False),
+                    "camera_model": payload.camera_model or "",
+                    "lens_model": payload.lens_model or "",
+                    "capture_museum_name": payload.capture_museum_name or "",
+                    "exhibition_name": normalize_exhibition_name(payload.exhibition_name),
+                    "latitude": "" if payload.latitude is None else str(payload.latitude),
+                    "longitude": "" if payload.longitude is None else str(payload.longitude),
+                    "captured_at": payload.captured_at.isoformat() if payload.captured_at else "",
+                    "shutter_speed": payload.shutter_speed or "",
+                    "aperture": payload.aperture or "",
+                    "iso": "" if payload.iso is None else str(payload.iso),
+                    "edit_method": payload.edit_method or "",
                 },
                 headers={"Authorization": f"Bearer {settings.ingest_token}"},
             )
@@ -676,8 +957,16 @@ async def submit_pending(
 
 
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])
-def list_museums(db: Session = Depends(get_db)) -> list[Museum]:
-    return list(db.scalars(select(Museum).order_by(Museum.created_at.desc())))
+def list_museums(
+    q: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[Museum]:
+    query = select(Museum).options(selectinload(Museum.exhibitions)).order_by(Museum.name.asc())
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.where(Museum.name.ilike(like))
+    return list(db.scalars(query.limit(limit)))
 
 
 @app.post(f"{settings.api_prefix}/museums", response_model=MuseumRead, status_code=201)
@@ -693,12 +982,47 @@ def create_museum(payload: MuseumCreate, db: Session = Depends(get_db)) -> Museu
     return museum
 
 
+@app.get(f"{settings.api_prefix}/exhibitions", response_model=list[ExhibitionRead])
+def list_exhibitions(
+    museum_id: int | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[Exhibition]:
+    query = (
+        select(Exhibition)
+        .options(selectinload(Exhibition.museum))
+        .order_by(Exhibition.created_at.desc())
+    )
+    if museum_id is not None:
+        query = query.where(Exhibition.museum_id == museum_id)
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        query = query.where(Exhibition.name.ilike(like))
+    return list(db.scalars(query.limit(limit)))
+
+
+@app.post(f"{settings.api_prefix}/exhibitions", response_model=ExhibitionRead, status_code=201)
+def create_exhibition(payload: ExhibitionCreate, db: Session = Depends(get_db)) -> Exhibition:
+    museum = db.get(Museum, payload.museum_id)
+    if museum is None:
+        raise HTTPException(status_code=404, detail="Museum not found")
+    exhibition = ensure_exhibition(db, museum, payload.name, payload.start_at, payload.end_at)
+    db.commit()
+    db.refresh(exhibition)
+    return exhibition
+
+
 @app.get(f"{settings.api_prefix}/artifacts", response_model=list[ArtifactRead])
 def list_artifacts(
     museum_id: int | None = Query(default=None),
     era: str | None = Query(default=None),
     tag: str | None = Query(default=None),
     q: str | None = Query(default=None),
+    captured_after: datetime | None = Query(default=None),
+    captured_before: datetime | None = Query(default=None),
+    uploaded_after: datetime | None = Query(default=None),
+    uploaded_before: datetime | None = Query(default=None),
     db: Session = Depends(get_db),
 ) -> list[Artifact]:
     query = artifact_detail_query().order_by(Artifact.created_at.desc())
@@ -708,15 +1032,34 @@ def list_artifacts(
         query = query.where(Artifact.era == era)
     if tag is not None:
         query = query.join(Artifact.tags).where(ArtifactTag.name == tag).distinct()
+    if captured_after is not None:
+        query = query.join(Artifact.images).where(ArtifactImage.captured_at >= captured_after).distinct()
+    if captured_before is not None:
+        query = query.join(Artifact.images).where(ArtifactImage.captured_at <= captured_before).distinct()
+    if uploaded_after is not None:
+        query = query.join(Artifact.images).where(ArtifactImage.created_at >= uploaded_after).distinct()
+    if uploaded_before is not None:
+        query = query.join(Artifact.images).where(ArtifactImage.created_at <= uploaded_before).distinct()
     if q is not None and q.strip():
         like = f"%{q.strip()}%"
-        query = query.join(Artifact.museum).where(
+        query = (
+            query.join(Artifact.museum)
+            .outerjoin(Artifact.images)
+            .outerjoin(Artifact.exhibition_links)
+            .outerjoin(ArtifactExhibition.exhibition)
+            .where(
             or_(
                 Artifact.name.ilike(like),
                 Artifact.description.ilike(like),
                 Artifact.era.ilike(like),
                 Museum.name.ilike(like),
+                ArtifactImage.camera_model.ilike(like),
+                ArtifactImage.lens_model.ilike(like),
+                ArtifactImage.capture_museum.has(Museum.name.ilike(like)),
+                Exhibition.name.ilike(like),
             )
+            )
+            .distinct()
         )
     return list(db.scalars(query))
 
@@ -733,12 +1076,46 @@ def create_artifact(payload: ArtifactCreate, db: Session = Depends(get_db)) -> A
         era=payload.era,
         description=payload.description,
     )
+    db.add(artifact)
+    db.flush()
+    capture_tags: list[str] = []
+    linked_exhibition_ids: set[int] = set()
+    prepared_images: list[ArtifactImage] = []
+    for image in payload.images:
+        capture_tags = merge_unique_tags(
+            capture_tags,
+            build_capture_tags(image.camera_model, image.lens_model),
+        )
+        capture_museum, exhibition = resolve_capture_context(
+            db, image.capture_museum_name, image.exhibition_name
+        )
+        if exhibition is not None and exhibition.id not in linked_exhibition_ids:
+            db.add(ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition.id))
+            linked_exhibition_ids.add(exhibition.id)
+        prepared_images.append(
+            ArtifactImage(
+                url=image.url,
+                camera_model=image.camera_model,
+                lens_model=image.lens_model,
+                capture_museum_id=capture_museum.id if capture_museum is not None else None,
+                exhibition_id=exhibition.id if exhibition is not None else None,
+                latitude=image.latitude,
+                longitude=image.longitude,
+                captured_at=image.captured_at,
+                shutter_speed=image.shutter_speed,
+                aperture=image.aperture,
+                iso=image.iso,
+                edit_method=normalize_edit_method(image.edit_method),
+            )
+        )
     artifact.tags = [
         ArtifactTag(name=tag)
-        for tag in dict.fromkeys(tag.strip() for tag in payload.tags if tag.strip())
+        for tag in merge_unique_tags(
+            [tag.strip() for tag in payload.tags if tag.strip()],
+            capture_tags,
+        )
     ]
-    artifact.images = [ArtifactImage(url=image.url) for image in payload.images]
-    db.add(artifact)
+    artifact.images = prepared_images
     db.commit()
     return db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
 
@@ -769,7 +1146,34 @@ def create_artifact_image(
     if artifact is None:
         raise HTTPException(status_code=404, detail="Artifact not found")
 
-    image = ArtifactImage(artifact_id=payload.artifact_id, url=payload.url)
+    capture_museum, exhibition = resolve_capture_context(
+        db, payload.capture_museum_name, payload.exhibition_name
+    )
+    image = ArtifactImage(
+        artifact_id=payload.artifact_id,
+        url=payload.url,
+        camera_model=payload.camera_model,
+        lens_model=payload.lens_model,
+        capture_museum_id=capture_museum.id if capture_museum is not None else None,
+        exhibition_id=exhibition.id if exhibition is not None else None,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        captured_at=payload.captured_at,
+        shutter_speed=payload.shutter_speed,
+        aperture=payload.aperture,
+        iso=payload.iso,
+        edit_method=normalize_edit_method(payload.edit_method),
+    )
+    if image.exhibition_id is not None and not db.scalar(
+        select(ArtifactExhibition).where(
+            ArtifactExhibition.artifact_id == artifact.id,
+            ArtifactExhibition.exhibition_id == image.exhibition_id,
+        )
+    ):
+        db.add(ArtifactExhibition(artifact_id=artifact.id, exhibition_id=image.exhibition_id))
+    for tag in build_capture_tags(payload.camera_model, payload.lens_model):
+        if not any(existing.name == tag for existing in artifact.tags):
+            artifact.tags.append(ArtifactTag(name=tag))
     db.add(image)
     db.commit()
     return db.scalar(artifact_image_query().where(ArtifactImage.id == image.id))

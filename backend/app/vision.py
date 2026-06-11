@@ -62,7 +62,7 @@ VISION_MATCHING_SYSTEM_PROMPT = """
   "era": "时代",
   "museum_name": "博物馆名称或收藏机构",
   "tags": ["标签1", "标签2"],
-  "description": "50-120字描述",
+  "description": "120-500字详细描述",
   "confidence": 0.0,
   "reasoning": "判断依据"
 }
@@ -79,7 +79,8 @@ VISION_MATCHING_SYSTEM_PROMPT = """
 3. 如果各来源彼此冲突且无法判断，宁可保守，不要编造馆藏、出土地或藏品编号。
 4. museum_name、era、artifact_name 的确定性必须一致。
 5. reasoning 需要明确说明：哪些来自相似图检索，哪些来自图像，哪些来自 OCR/文字，哪些来自文字检索。
-6. tags 返回 3-6 个中文标签，confidence 取值 0 到 1。
+6. tags 返回 3-8 个中文标签，优先输出器类、材质、纹饰、工艺、用途、题材、出土背景、墓葬/遗址背景等信息点；不要把 artifact_name、era、museum_name，或它们的近义改写/重复表达，放进 tags。
+7. description 需尽量详细，优先整合以下可证实信息：器物形制、材质、纹饰、工艺、用途、时代背景、馆藏或出土地、出土情况、墓葬情况、遗址情况、流传与研究信息；证据不足的部分可以省略，但不要编造。
 """.strip()
 
 @dataclass
@@ -402,6 +403,70 @@ def extract_message_text(data: dict[str, object]) -> str:
             part.get("text", "") for part in message_content if isinstance(part, dict)
         )
     return str(message_content)
+
+
+def _normalize_tag_value(value: str) -> str:
+    return re.sub(r"[\s,，。；;：:、/（）()\[\]【】《》“”\"'·-]+", "", value).lower()
+
+
+def sanitize_generated_tags(
+    tags: list[str],
+    artifact_name: str | None,
+    era: str | None,
+    museum_name: str | None,
+) -> list[str]:
+    blocked_values = [
+        artifact_name or "",
+        era or "",
+        museum_name or "",
+    ]
+    blocked_values.extend(
+        [
+            value.removesuffix("馆藏")
+            for value in blocked_values
+            if value.endswith("馆藏")
+        ]
+    )
+    blocked_values.extend(
+        [
+            value.removesuffix("收藏")
+            for value in blocked_values
+            if value.endswith("收藏")
+        ]
+    )
+    blocked_values.extend(
+        [
+            value.removesuffix("博物馆")
+            for value in blocked_values
+            if value.endswith("博物馆")
+        ]
+    )
+    blocked_values.extend(
+        [
+            value.removesuffix(" museum")
+            for value in blocked_values
+            if value.lower().endswith(" museum")
+        ]
+    )
+    blocked_normalized = {
+        normalized
+        for value in blocked_values
+        if (normalized := _normalize_tag_value(value))
+    }
+
+    cleaned_tags: list[str] = []
+    for raw_tag in tags:
+        tag = str(raw_tag).strip()
+        if not tag:
+            continue
+        normalized_tag = _normalize_tag_value(tag)
+        if not normalized_tag or normalized_tag in blocked_normalized:
+            continue
+        if any(normalized_tag == blocked or normalized_tag in blocked or blocked in normalized_tag for blocked in blocked_normalized):
+            continue
+        if tag not in cleaned_tags:
+            cleaned_tags.append(tag)
+    return cleaned_tags
 
 
 async def request_chat_completion(
@@ -864,16 +929,24 @@ def build_vision_candidate(
     analysis_text: str,
     search_hits: list[SearchHit],
 ) -> VisionCandidateRead:
-    tags = [str(tag).strip() for tag in result.get("tags", []) if str(tag).strip()]
+    artifact_name = str(result.get("artifact_name", "")).strip() or "待确认文物"
+    era = str(result.get("era", "")).strip() or None
+    museum_name = str(result.get("museum_name", "")).strip() or None
+    tags = sanitize_generated_tags(
+        [str(tag).strip() for tag in result.get("tags", []) if str(tag).strip()],
+        artifact_name,
+        era,
+        museum_name,
+    )
     confidence_value = result.get("confidence")
     reasoning = str(result.get("reasoning", "")).strip()
 
     return VisionCandidateRead(
         provider=provider.name,
         model=provider.model,
-        artifact_name=str(result.get("artifact_name", "")).strip() or "待确认文物",
-        era=str(result.get("era", "")).strip() or None,
-        museum_name=str(result.get("museum_name", "")).strip() or None,
+        artifact_name=artifact_name,
+        era=era,
+        museum_name=museum_name,
         tags=tags,
         description=str(result.get("description", "")).strip(),
         confidence=float(confidence_value) if confidence_value is not None else None,
