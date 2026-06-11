@@ -129,6 +129,7 @@ type ExistingArtifactMatch = {
     era: string | null
     description: string | null
     museum_name: string
+    tags: string[]
     images: ExistingArtifactImage[]
   }
   match_score: number
@@ -1132,6 +1133,13 @@ function App() {
                 <span>时代：{matchedArtifact.artifact.era || "待确认"}</span>
                 <span>馆藏：{matchedArtifact.artifact.museum_name}</span>
               </div>
+              {matchedArtifact.artifact.tags.length > 0 ? (
+                <div className="tag-row">
+                  {matchedArtifact.artifact.tags.map((tag) => (
+                    <span key={`backend-match-tag-${tag}`}>{tag}</span>
+                  ))}
+                </div>
+              ) : null}
               {matchedArtifact.artifact.description ? (
                 <p className="result-desc">{matchedArtifact.artifact.description}</p>
               ) : (
@@ -1157,8 +1165,19 @@ function App() {
                   type="button"
                   className={`primary small ${sameArtifactDecision === "yes" ? "selected-action" : ""}`}
                   onClick={() => {
+                    setArtifactForm((current) => ({
+                      ...current,
+                      museumName: matchedArtifact.artifact.museum_name,
+                      name: matchedArtifact.artifact.name,
+                      era: matchedArtifact.artifact.era ?? "",
+                      description: matchedArtifact.artifact.description ?? "",
+                      tags: normalizeTags(matchedArtifact.artifact.tags),
+                    }))
+                    setTagInput("")
                     setSameArtifactDecision("yes")
-                    setArtifactMessage(`已确认与「${matchedArtifact.artifact.name}」是同一件，提交时将更新库内原记录`)
+                    setArtifactMessage(
+                      `已确认与「${matchedArtifact.artifact.name}」是同一件，并已将库内名称、时代、描述、标签同步到表单`,
+                    )
                     setArtifactError(null)
                   }}
                 >
