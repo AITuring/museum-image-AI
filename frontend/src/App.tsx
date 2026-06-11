@@ -87,7 +87,7 @@ type StreamEvent = {
   cached?: boolean
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000").replace(/\/$/, "")
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? "" : "http://localhost:8000")).replace(/\/$/, "")
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
 
