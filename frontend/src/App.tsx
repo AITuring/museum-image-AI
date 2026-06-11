@@ -166,9 +166,9 @@ function toAbsoluteUrl(url: string) {
   return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
 }
 
-function normalizeName(value: string) {
-  return value.trim().toLowerCase()
-}
+// function normalizeName(value: string) {
+//   return value.trim().toLowerCase()
+// }
 
 function stepStatus(stage: Stage, stepIndex: number): "done" | "active" | "pending" {
   const rank = STAGE_RANK[stage]
