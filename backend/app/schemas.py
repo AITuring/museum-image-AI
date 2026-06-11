@@ -184,6 +184,17 @@ class PendingArtifactRead(BaseModel):
     era: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
+    camera_model: str | None = None
+    lens_model: str | None = None
+    capture_museum_name: str | None = None
+    exhibition_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    captured_at: datetime | None = None
+    shutter_speed: str | None = None
+    aperture: str | None = None
+    iso: int | None = None
+    edit_method: str | None = None
     confidence: float | None = None
     provider: str | None = None
     analysis: str | None = None
@@ -207,6 +218,17 @@ class PendingArtifactUpdate(BaseModel):
     era: str | None = None
     description: str | None = None
     tags: list[str] | None = None
+    camera_model: str | None = None
+    lens_model: str | None = None
+    capture_museum_name: str | None = None
+    exhibition_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    captured_at: datetime | None = None
+    shutter_speed: str | None = None
+    aperture: str | None = None
+    iso: int | None = None
+    edit_method: str | None = None
 
 
 class BatchIdentifyRequest(BaseModel):

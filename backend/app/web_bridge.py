@@ -37,7 +37,17 @@ from app.vision import (
 
 logger = logging.getLogger("app.web_bridge")
 
-PLACEHOLDER_VALUES = {"", "见描述", "待确认", "待识别", "未知", "不详", "未提及"}
+PLACEHOLDER_VALUES = {
+    "",
+    "见描述",
+    "待确认",
+    "待识别",
+    "待确认文物",
+    "待识别文物",
+    "未知",
+    "不详",
+    "未提及",
+}
 
 WEB_STRUCTURING_SYSTEM_PROMPT = """
 你会收到一段「AI 网页端对一件文物图片的鉴定回答」。请把它抽取为数据库录入 JSON，只输出 JSON：
@@ -46,7 +56,7 @@ WEB_STRUCTURING_SYSTEM_PROMPT = """
   "era": "时代",
   "museum_name": "博物馆或收藏机构/出土地",
   "tags": ["标签1", "标签2"],
-  "description": "120-260字详细描述",
+  "description": "尽量完整的详细描述",
   "confidence": 0.0,
   "reasoning": "判断依据（摘自原回答）"
 }
@@ -335,7 +345,7 @@ def _extract_artifact_name(answer_text: str) -> str:
     return _extract_with_patterns(
         answer_text,
         [
-            r"(?:这件文物|该文物|此文物|这件器物|该器物|此器|它)(?:是|为)“?([^，。；\n]{1,40})”?",
+            r"(?:这(?:[一二两三四五六七八九十\d]+)?(?:件|尊|组|对)?文物|该文物|此文物|这(?:[一二两三四五六七八九十\d]+)?(?:件|尊|组|对)?器物|该器物|此器|它)(?:是|为)“?([^，。；\n]{1,40})”?",
             r"^“?([^，。；\n]{1,40})”?[，,。；;]\s*(?:为|是)",
         ],
     )
@@ -363,14 +373,53 @@ def _extract_museum_name(answer_text: str) -> str:
     )
 
 
-def _build_summary(answer_text: str) -> str:
-    paragraphs = [chunk.strip() for chunk in re.split(r"\n+", answer_text) if chunk.strip()]
-    if not paragraphs:
-        return answer_text.strip()
-    if len(paragraphs) == 1:
-        return paragraphs[0]
-    # Keep the first two logical paragraphs instead of a hard character cut.
-    return "\n".join(paragraphs[:2])
+def _normalize_answer_text(answer_text: str) -> str:
+    lines = [line.strip() for line in answer_text.replace("\r\n", "\n").split("\n")]
+    normalized: list[str] = []
+    previous_blank = False
+    for line in lines:
+        if not line:
+            if not previous_blank and normalized:
+                normalized.append("")
+            previous_blank = True
+            continue
+        normalized.append(line)
+        previous_blank = False
+    return "\n".join(normalized).strip()
+
+
+def _parse_tag_tokens(value: str) -> list[str]:
+    cleaned = re.sub(r"[（(][^）)]*[）)]", "", value)
+    parts = re.split(r"[，,、；;|/\n]+", cleaned)
+    tags: list[str] = []
+    for part in parts:
+        token = re.sub(r"^\d+[.)、]\s*", "", part).strip().strip("[]【】<>《》\"'")
+        if token and token not in tags:
+            tags.append(token)
+    return tags
+
+
+def _extract_tag_block(answer_text: str) -> tuple[list[str], str]:
+    marker = re.compile(r"^(?:适合入库的)?(?:推荐)?标签(?:如下)?\s*[:：]\s*(.*)$")
+    lines = answer_text.split("\n")
+    for index, line in enumerate(lines):
+        match = marker.match(line.strip())
+        if not match:
+            continue
+        tag_lines = [match.group(1).strip()] if match.group(1).strip() else []
+        remainder_lines = lines[index + 1 :]
+        for remainder in remainder_lines:
+            stripped = remainder.strip()
+            if not stripped:
+                break
+            if re.match(r"^(?:说明|备注|理由|依据|补充)[:：]", stripped):
+                break
+            tag_lines.append(stripped)
+        description_lines = lines[:index]
+        description = "\n".join(description_lines).strip()
+        tags = _parse_tag_tokens("\n".join(tag_lines))
+        return tags, description
+    return [], answer_text
 
 
 def _derive_tags(answer_text: str, artifact_name: str, era: str, museum_name: str) -> list[str]:
@@ -385,6 +434,8 @@ def _derive_tags(answer_text: str, artifact_name: str, era: str, museum_name: st
 
 def _merge_structured_answer(answer_text: str, structured: dict[str, object] | None) -> dict[str, object]:
     data = dict(structured or {})
+    normalized_answer = _normalize_answer_text(answer_text)
+    extracted_tags, description_source = _extract_tag_block(normalized_answer)
 
     artifact_name = str(data.get("artifact_name", "")).strip()
     if artifact_name in PLACEHOLDER_VALUES:
@@ -398,12 +449,12 @@ def _merge_structured_answer(answer_text: str, structured: dict[str, object] | N
     if museum_name in PLACEHOLDER_VALUES:
         museum_name = _extract_museum_name(answer_text)
 
-    description = str(data.get("description", "")).strip()
+    description = _normalize_answer_text(description_source) or str(data.get("description", "")).strip()
     if description in PLACEHOLDER_VALUES:
-        description = _build_summary(answer_text)
+        description = str(data.get("description", "")).strip()
 
     raw_tags = [str(tag).strip() for tag in data.get("tags", []) if str(tag).strip()]
-    tags = sanitize_generated_tags(raw_tags, artifact_name, era, museum_name)
+    tags = sanitize_generated_tags([*extracted_tags, *raw_tags], artifact_name, era, museum_name)
     if not tags:
         tags = _derive_tags(answer_text, artifact_name, era, museum_name)
 
@@ -413,7 +464,7 @@ def _merge_structured_answer(answer_text: str, structured: dict[str, object] | N
         artifact_name=artifact_name or "待确认文物",
         era=era or None,
         museum_name=museum_name or None,
-        description=description or answer_text,
+        description=description or normalized_answer or answer_text,
         tags=tags,
         reasoning=reasoning,
     )

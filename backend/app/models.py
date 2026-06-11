@@ -6,6 +6,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -147,6 +148,8 @@ class PendingArtifact(Base):
     source_path: Mapped[str] = mapped_column(String(1024), nullable=False)
     file_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     file_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    image_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    image_mime_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     # pending -> identifying -> identified -> submitting -> submitted ; or failed
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False, index=True)
@@ -158,6 +161,17 @@ class PendingArtifact(Base):
     era: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    camera_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    lens_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    capture_museum_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    exhibition_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    shutter_speed: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    aperture: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    iso: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    edit_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)

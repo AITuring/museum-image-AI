@@ -31,7 +31,7 @@ type ArtifactFormState = {
   name: string
   era: string
   description: string
-  tags: string
+  tags: string[]
   cameraModel: string
   lensModel: string
   captureMuseumName: string
@@ -126,6 +126,11 @@ type ExhibitionOption = {
   end_at: string | null
 }
 
+type SubmitNotice = {
+  type: "success" | "error"
+  text: string
+}
+
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? "" : "http://localhost:8000")).replace(/\/$/, "")
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
@@ -190,12 +195,26 @@ function formatConfidence(confidence: number | null | undefined) {
   return `${Math.round(confidence * 100)}%`
 }
 
+function normalizeTags(tags: string[]) {
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  for (const rawTag of tags) {
+    const tag = rawTag.trim()
+    if (!tag || seen.has(tag)) {
+      continue
+    }
+    seen.add(tag)
+    normalized.push(tag)
+  }
+  return normalized
+}
+
 const EMPTY_ARTIFACT_FORM: ArtifactFormState = {
   museumName: "",
   name: "",
   era: "",
   description: "",
-  tags: "",
+  tags: [],
   cameraModel: "",
   lensModel: "",
   captureMuseumName: "",
@@ -252,6 +271,8 @@ function App() {
   const [museumSuggestions, setMuseumSuggestions] = useState<MuseumOption[]>([])
   const [selectedCaptureMuseum, setSelectedCaptureMuseum] = useState<MuseumOption | null>(null)
   const [exhibitionSuggestions, setExhibitionSuggestions] = useState<ExhibitionOption[]>([])
+  const [tagInput, setTagInput] = useState("")
+  const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
 
   const orderedStreams = useMemo(
@@ -460,11 +481,31 @@ function App() {
       name: candidate.artifact_name,
       era: candidate.era ?? "",
       description: candidate.description,
-      tags: candidate.tags.join(", "),
+      tags: normalizeTags(candidate.tags),
     }))
+    setTagInput("")
     setSelectedCandidateKey(candidate.provider)
     setArtifactMessage(`已采用 ${candidate.provider} 的识图结果，可在下方微调后入库`)
     setArtifactError(null)
+  }
+
+  function addTags(rawValue: string) {
+    const nextTags = normalizeTags(rawValue.split(/[,\n，、；;]/).map((tag) => tag.trim()))
+    if (nextTags.length === 0) {
+      return
+    }
+    setArtifactForm((current) => ({
+      ...current,
+      tags: normalizeTags([...current.tags, ...nextTags]),
+    }))
+    setTagInput("")
+  }
+
+  function removeTag(tagToRemove: string) {
+    setArtifactForm((current) => ({
+      ...current,
+      tags: current.tags.filter((tag) => tag !== tagToRemove),
+    }))
   }
 
   useEffect(() => {
@@ -483,6 +524,17 @@ function App() {
       streamAbortRef.current?.abort()
     }
   }, [])
+
+  useEffect(() => {
+    if (!submitNotice) {
+      return
+    }
+    const timeout = window.setTimeout(
+      () => setSubmitNotice(null),
+      submitNotice.type === "error" ? 6000 : 3500,
+    )
+    return () => window.clearTimeout(timeout)
+  }, [submitNotice])
 
   useEffect(() => {
     const rawQuery = artifactForm.captureMuseumName.trim()
@@ -593,6 +645,7 @@ function App() {
     selectFile(null)
     setUploadedImage(null)
     setArtifactForm({ ...EMPTY_ARTIFACT_FORM })
+    setTagInput("")
     setProviderOrder([])
     setProviderStreams({})
     setUnavailableProviders([])
@@ -601,6 +654,7 @@ function App() {
     setMuseumSuggestions([])
     setExhibitionSuggestions([])
     setArtifactMessage(null)
+    setSubmitNotice(null)
   }
 
   async function handleCreateArtifact(event: FormEvent<HTMLFormElement>) {
@@ -608,6 +662,7 @@ function App() {
     setArtifactSubmitting(true)
     setArtifactMessage(null)
     setArtifactError(null)
+    setSubmitNotice(null)
 
     try {
       if (!artifactForm.museumName.trim()) {
@@ -635,10 +690,7 @@ function App() {
           name: artifactForm.name,
           era: artifactForm.era || null,
           description: artifactForm.description || null,
-          tags: artifactForm.tags
-            .split(",")
-            .map((tag) => tag.trim())
-            .filter(Boolean),
+          tags: artifactForm.tags,
           camera_model: artifactForm.cameraModel.trim() || null,
           lens_model: artifactForm.lensModel.trim() || null,
           capture_museum_name: artifactForm.captureMuseumName.trim(),
@@ -653,14 +705,13 @@ function App() {
         }),
       })
 
-      setArtifactForm({ ...EMPTY_ARTIFACT_FORM })
-      setSelectedCaptureMuseum(null)
-      setMuseumSuggestions([])
-      setExhibitionSuggestions([])
-      setArtifactMessage("已提交云端，图片已上传 OSS")
       resetCurrentImage()
+      setSubmitNotice({ type: "success", text: "已提交云端，图片已上传 OSS" })
     } catch (err) {
-      setArtifactError(err instanceof Error ? err.message : "提交云端失败")
+      setSubmitNotice({
+        type: "error",
+        text: err instanceof Error ? err.message : "提交云端失败",
+      })
     } finally {
       setArtifactSubmitting(false)
     }
@@ -1051,13 +1102,37 @@ function App() {
             </label>
             <label className="field">
               <span>标签</span>
-              <input
-                value={artifactForm.tags}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, tags: event.target.value }))
-                }
-                placeholder="逗号分隔"
-              />
+              <div className="tag-editor">
+                <div className="tag-editor-chips">
+                  {artifactForm.tags.length > 0 ? (
+                    artifactForm.tags.map((tag) => (
+                      <span key={tag} className="tag-chip">
+                        {tag}
+                        <button type="button" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>
+                          ×
+                        </button>
+                      </span>
+                    ))
+                  ) : (
+                    <span className="tag-editor-placeholder">暂无标签</span>
+                  )}
+                </div>
+                <input
+                  value={tagInput}
+                  onChange={(event) => setTagInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === "," || event.key === "，") {
+                      event.preventDefault()
+                      addTags(tagInput)
+                    }
+                    if (event.key === "Backspace" && !tagInput && artifactForm.tags.length > 0) {
+                      removeTag(artifactForm.tags[artifactForm.tags.length - 1])
+                    }
+                  }}
+                  onBlur={() => addTags(tagInput)}
+                  placeholder="输入后回车或逗号添加"
+                />
+              </div>
             </label>
           </div>
           <div className="field-row">
@@ -1267,12 +1342,31 @@ function App() {
         </div>
 
         <div className="form-footer">
-          {artifactMessage ? <p className="success-text">{artifactMessage}</p> : <span />}
+          {submitNotice ? (
+            <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>
+              {submitNotice.text}
+            </p>
+          ) : artifactMessage ? (
+            <p className="success-text">{artifactMessage}</p>
+          ) : (
+            <span />
+          )}
           <button type="submit" className="primary" disabled={artifactSubmitting || !uploadedImage}>
             {artifactSubmitting ? "提交中..." : "提交云端"}
           </button>
         </div>
       </form>
+      {submitNotice ? (
+        <div className={`submit-toast ${submitNotice.type}`}>
+          <div className="submit-toast-body">
+            <strong>{submitNotice.type === "error" ? "提交失败" : "提交成功"}</strong>
+            <p>{submitNotice.text}</p>
+          </div>
+          <button type="button" className="submit-toast-close" onClick={() => setSubmitNotice(null)}>
+            ×
+          </button>
+        </div>
+      ) : null}
       </>
       ) : null}
     </main>
