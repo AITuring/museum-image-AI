@@ -22,6 +22,12 @@ type GalleryArtifact = {
   images: GalleryImage[]
 }
 
+type RawGalleryArtifact = Omit<GalleryArtifact, "tags" | "images" | "exhibitions"> & {
+  tags?: string[]
+  images?: GalleryImage[]
+  exhibitions?: GalleryArtifact["exhibitions"]
+}
+
 function toAbsoluteUrl(apiBaseUrl: string, url: string) {
   return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
 }
@@ -49,6 +55,15 @@ function getDisplayImageUrl(apiBaseUrl: string, url: string, mode: "thumb" | "pr
   return withOssImageProcess(absoluteUrl, "image/resize,m_lfit,w_1280/quality,q_82/format,webp")
 }
 
+function normalizeArtifact(item: RawGalleryArtifact): GalleryArtifact {
+  return {
+    ...item,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    images: Array.isArray(item.images) ? item.images : [],
+    exhibitions: Array.isArray(item.exhibitions) ? item.exhibitions : [],
+  }
+}
+
 export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [query, setQuery] = useState("")
   const [submittedQuery, setSubmittedQuery] = useState("")
@@ -66,7 +81,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         if (q.trim()) params.set("q", q.trim())
         const res = await fetch(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        setItems((await res.json()) as GalleryArtifact[])
+        const payload = (await res.json()) as RawGalleryArtifact[]
+        setItems(payload.map(normalizeArtifact))
       } catch (err) {
         setError(err instanceof Error ? err.message : "加载失败")
       } finally {
@@ -163,15 +179,11 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
             </button>
             <div className="gallery-modal-images">
               {active.images.map((img) => (
-                <a
+                <img
                   key={img.id}
-                  href={getDisplayImageUrl(apiBaseUrl, img.url, "original")}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="gallery-image-link"
-                >
-                  <img src={getDisplayImageUrl(apiBaseUrl, img.url, "preview")} alt={active.name} />
-                </a>
+                  src={getDisplayImageUrl(apiBaseUrl, img.url, "preview")}
+                  alt={active.name}
+                />
               ))}
             </div>
             {active.images[0] ? (
