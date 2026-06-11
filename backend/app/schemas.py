@@ -74,6 +74,7 @@ class CloudArtifactSubmitRequest(BaseModel):
     name: str
     era: str | None = None
     description: str | None = None
+    existing_artifact_id: int | None = None
     tags: list[str] = Field(default_factory=list)
     camera_model: str | None = None
     lens_model: str | None = None
@@ -103,6 +104,12 @@ class ArtifactRead(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ArtifactMatchRead(BaseModel):
+    artifact: ArtifactRead
+    match_score: float
+    match_reason: str
 
 
 class ArtifactImageAttach(ArtifactImageCreate):

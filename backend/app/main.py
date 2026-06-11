@@ -3,7 +3,9 @@ import hashlib
 import json
 import logging
 import mimetypes
+import re
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 from contextlib import asynccontextmanager
@@ -14,7 +16,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import inspect, or_, select, text
+from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
@@ -33,6 +35,7 @@ from app.oss import upload_image
 from app.schemas import (
     ArtifactCreate,
     ArtifactImageAttach,
+    ArtifactMatchRead,
     ArtifactImageRead,
     ArtifactRead,
     BatchIdentifyRequest,
@@ -66,6 +69,13 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = Path("/data") if Path("/data").exists() else BASE_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
 LEGACY_BATCH_IMPORTS_DIR = DATA_DIR / "batch_imports"
+
+
+@dataclass(slots=True)
+class ArtifactMatchCandidate:
+    artifact: Artifact
+    score: float
+    reason: str
 
 
 def run_startup_migrations(connection) -> None:
@@ -350,6 +360,62 @@ def optional_text(value: str | None) -> str | None:
     return text_value or None
 
 
+def normalize_identity_text(value: str | None) -> str | None:
+    text_value = optional_text(value)
+    return text_value.casefold() if text_value else None
+
+
+def compact_artifact_name_for_match(value: str | None) -> str | None:
+    text_value = optional_text(value)
+    if text_value is None:
+        return None
+    compact = re.sub(
+        r"[\s\-_·•,，.。:：;；/\\|()（）\[\]【】<>《》\"'“”‘’]+",
+        "",
+        text_value.casefold(),
+    )
+    return compact or None
+
+
+def longest_common_subsequence_length(left: str, right: str) -> int:
+    if not left or not right:
+        return 0
+    dp = [0] * (len(right) + 1)
+    for left_char in left:
+        prev = 0
+        for index, right_char in enumerate(right, start=1):
+            current = dp[index]
+            if left_char == right_char:
+                dp[index] = prev + 1
+            else:
+                dp[index] = max(dp[index], dp[index - 1])
+            prev = current
+    return dp[-1]
+
+
+def artifact_name_match_score(source_name: str | None, candidate_name: str | None) -> float:
+    source_compact = compact_artifact_name_for_match(source_name)
+    candidate_compact = compact_artifact_name_for_match(candidate_name)
+    if source_compact is None or candidate_compact is None:
+        return 0.0
+    if source_compact == candidate_compact:
+        return 1.0
+
+    shorter, longer = sorted(
+        [source_compact, candidate_compact],
+        key=len,
+    )
+    if len(shorter) < 3:
+        return 0.0
+
+    lcs_length = longest_common_subsequence_length(shorter, longer)
+    shorter_ratio = lcs_length / len(shorter)
+    longer_ratio = lcs_length / len(longer)
+    if shorter_ratio < 0.66:
+        return 0.0
+    return round(shorter_ratio * 0.7 + longer_ratio * 0.3, 4)
+
+
 def optional_float(value: str | float | None, field_name: str) -> float | None:
     if value is None:
         return None
@@ -556,6 +622,126 @@ def should_proxy_artifact_queries_to_cloud() -> bool:
     return settings.app_role == "local" and bool(settings.cloud_api_base_url)
 
 
+def build_artifact_match_read(match: ArtifactMatchCandidate) -> ArtifactMatchRead:
+    return ArtifactMatchRead(
+        artifact=ArtifactRead.model_validate(match.artifact),
+        match_score=match.score,
+        match_reason=match.reason,
+    )
+
+
+def find_existing_artifact_match(
+    db: Session,
+    *,
+    name: str | None,
+    museum_name: str | None = None,
+    era: str | None = None,
+) -> ArtifactMatchCandidate | None:
+    normalized_name = normalize_identity_text(name)
+    compact_name = compact_artifact_name_for_match(name)
+    normalized_museum_name = normalize_identity_text(museum_name)
+    normalized_era = normalize_identity_text(era)
+    if (
+        normalized_name is None
+        or compact_name is None
+        or normalized_museum_name is None
+        or normalized_era is None
+    ):
+        return None
+
+    base_query = (
+        artifact_detail_query()
+        .join(Artifact.museum)
+        .where(
+            func.lower(Museum.name) == normalized_museum_name,
+            Artifact.era.is_not(None),
+            func.lower(Artifact.era) == normalized_era,
+        )
+    )
+
+    exact_match = db.scalar(
+        base_query.where(func.lower(Artifact.name) == normalized_name).order_by(
+            Artifact.created_at.asc(),
+            Artifact.id.asc(),
+        )
+    )
+    if exact_match is not None:
+        return ArtifactMatchCandidate(
+            artifact=exact_match,
+            score=1.0,
+            reason="名称完全一致，且时代、馆藏一致。",
+        )
+
+    if len(compact_name) < 3:
+        return None
+
+    candidates = list(
+        db.scalars(
+            base_query.order_by(
+                Artifact.created_at.asc(),
+                Artifact.id.asc(),
+            )
+        )
+    )
+    best_match = None
+    best_score = -1
+    for candidate in candidates:
+        score = artifact_name_match_score(name, candidate.name)
+        if score > best_score:
+            best_match = candidate
+            best_score = score
+    if best_match is None or best_score < 0.68:
+        return None
+    return ArtifactMatchCandidate(
+        artifact=best_match,
+        score=best_score,
+        reason="名称大部分一致，且时代、馆藏一致。",
+    )
+
+
+async def fetch_cloud_artifact_match(
+    *,
+    name: str | None,
+    museum_name: str | None = None,
+    era: str | None = None,
+) -> ArtifactMatchRead | None:
+    if not settings.cloud_api_base_url:
+        return None
+
+    normalized_name = optional_text(name)
+    normalized_museum_name = optional_text(museum_name)
+    normalized_era = optional_text(era)
+    if (
+        normalized_name is None
+        or normalized_museum_name is None
+        or normalized_era is None
+    ):
+        return None
+
+    params = {
+        "name": normalized_name,
+        "museum_name": normalized_museum_name,
+        "era": normalized_era,
+    }
+
+    base = settings.cloud_api_base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            response = await client.get(
+                f"{base}{settings.api_prefix}/artifacts/match",
+                params=params,
+            )
+            response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001 - do not fail the main workflow on preview lookup
+        logger.warning("artifact match lookup failed: %s", exc, exc_info=exc)
+        return None
+
+    payload = response.json()
+    if not payload:
+        return None
+    return ArtifactMatchRead.model_validate(payload)
+
+
 @app.get(f"{settings.api_prefix}/health", response_model=HealthRead)
 def healthcheck() -> HealthRead:
     return HealthRead(status="ok", environment=settings.app_env, database="connected")
@@ -748,6 +934,7 @@ async def ingest_artifact(
     name: str = Form(...),
     era: str | None = Form(None),
     description: str | None = Form(None),
+    existing_artifact_id: int | None = Form(None),
     tags: str = Form(""),
     camera_model: str | None = Form(None),
     lens_model: str | None = Form(None),
@@ -788,35 +975,58 @@ async def ingest_artifact(
 
     museum = ensure_museum(db, museum_name)
     capture_museum, exhibition = resolve_capture_context(db, capture_museum_name, exhibition_name)
-    artifact = Artifact(
-        museum_id=museum.id,
-        name=name.strip(),
-        era=(era or None),
-        description=(description or None),
-        ai_status="reviewed",
+    merged_tags = merge_unique_tags(
+        parse_tags(tags),
+        build_capture_tags(
+            image_metadata.get("camera_model"),
+            image_metadata.get("lens_model"),
+        ),
     )
-    artifact.tags = [
-        ArtifactTag(name=tag)
-        for tag in merge_unique_tags(
-            parse_tags(tags),
-            build_capture_tags(
-                image_metadata.get("camera_model"),
-                image_metadata.get("lens_model"),
-            ),
+
+    if existing_artifact_id is not None:
+        artifact = db.scalar(artifact_detail_query().where(Artifact.id == existing_artifact_id))
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="要更新的文物不存在。")
+        artifact.ai_status = "reviewed"
+        artifact.museum_id = museum.id
+        artifact.name = name.strip()
+        artifact.era = optional_text(era)
+        artifact.description = optional_text(description)
+        existing_tag_names = {tag.name for tag in artifact.tags}
+        for tag in merged_tags:
+            if tag not in existing_tag_names:
+                artifact.tags.append(ArtifactTag(name=tag))
+                existing_tag_names.add(tag)
+    else:
+        artifact = Artifact(
+            museum_id=museum.id,
+            name=name.strip(),
+            era=(era or None),
+            description=(description or None),
+            ai_status="reviewed",
         )
-    ]
-    db.add(artifact)
-    db.flush()
+        artifact.tags = [ArtifactTag(name=tag) for tag in merged_tags]
+        db.add(artifact)
+        db.flush()
+
     if exhibition is not None:
-        db.add(ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition.id))
-    artifact.images = [
+        existing_link = db.scalar(
+            select(ArtifactExhibition).where(
+                ArtifactExhibition.artifact_id == artifact.id,
+                ArtifactExhibition.exhibition_id == exhibition.id,
+            )
+        )
+        if existing_link is None:
+            db.add(ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition.id))
+
+    artifact.images.append(
         ArtifactImage(
             url=image_url,
             capture_museum_id=capture_museum.id if capture_museum is not None else None,
             exhibition_id=exhibition.id if exhibition is not None else None,
             **image_metadata,
         )
-    ]
+    )
     db.commit()
     return db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
 
@@ -850,6 +1060,9 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
                     "name": payload.name.strip(),
                     "era": payload.era or "",
                     "description": payload.description or "",
+                    "existing_artifact_id": ""
+                    if payload.existing_artifact_id is None
+                    else str(payload.existing_artifact_id),
                     "tags": json.dumps(payload.tags, ensure_ascii=False),
                     "camera_model": payload.camera_model or "",
                     "lens_model": payload.lens_model or "",
@@ -1038,10 +1251,31 @@ async def batch_identify_stream(payload: BatchIdentifyRequest) -> StreamingRespo
                     candidate = await request_web_candidate(
                         site, [str(image_path)], DATA_DIR, row.file_name
                     )
-                    row.museum_name = candidate.museum_name
-                    row.name = candidate.artifact_name
-                    row.era = candidate.era
-                    row.description = candidate.description
+                    matched_artifact = await fetch_cloud_artifact_match(
+                        name=candidate.artifact_name,
+                        museum_name=candidate.museum_name,
+                        era=candidate.era,
+                    )
+                    row.museum_name = (
+                        matched_artifact.artifact.museum_name
+                        if matched_artifact is not None
+                        else candidate.museum_name
+                    )
+                    row.name = (
+                        matched_artifact.artifact.name
+                        if matched_artifact is not None
+                        else candidate.artifact_name
+                    )
+                    row.era = (
+                        matched_artifact.artifact.era
+                        if matched_artifact is not None
+                        else candidate.era
+                    )
+                    row.description = (
+                        matched_artifact.artifact.description
+                        if matched_artifact is not None
+                        else candidate.description
+                    )
                     row.tags = candidate.tags or []
                     row.confidence = candidate.confidence
                     row.provider = candidate.provider
@@ -1274,6 +1508,47 @@ def list_artifacts(
             .distinct()
         )
     return list(db.scalars(query))
+
+
+@app.get(f"{settings.api_prefix}/artifacts/match", response_model=ArtifactMatchRead | None)
+def match_artifact(
+    name: str = Query(..., min_length=1),
+    museum_name: str | None = Query(default=None),
+    era: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> ArtifactMatchRead | None:
+    normalized_name = optional_text(name)
+    normalized_museum_name = optional_text(museum_name)
+    normalized_era = optional_text(era)
+    if normalized_name is None or normalized_museum_name is None or normalized_era is None:
+        return None
+
+    if should_proxy_artifact_queries_to_cloud():
+        params = {
+            "name": normalized_name,
+            "museum_name": normalized_museum_name,
+            "era": normalized_era,
+        }
+        base = settings.cloud_api_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                response = client.get(
+                    f"{base}{settings.api_prefix}/artifacts/match",
+                    params=params,
+                )
+                response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - surface lookup failure to the caller
+            raise HTTPException(status_code=502, detail=f"查询云端同名文物失败：{exc}") from exc
+        payload = response.json()
+        return ArtifactMatchRead.model_validate(payload) if payload else None
+
+    match = find_existing_artifact_match(
+        db,
+        name=normalized_name,
+        museum_name=normalized_museum_name,
+        era=normalized_era,
+    )
+    return build_artifact_match_read(match) if match is not None else None
 
 
 @app.post(f"{settings.api_prefix}/artifacts", response_model=ArtifactRead, status_code=201)

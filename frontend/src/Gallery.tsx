@@ -163,6 +163,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <strong className="gallery-title">{artifact.name}</strong>
                 <span className="gallery-line">时代：{artifact.era || "待确认"}</span>
                 <span className="gallery-line">馆藏：{artifact.museum_name || "待识别"}</span>
+                <span className="gallery-line">图片：{artifact.images.length} 张</span>
               </div>
             </button>
           )
@@ -233,6 +234,30 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                       <p className="result-desc">{active.description}</p>
                     ) : (
                       <span className="gallery-detail-empty">暂无描述</span>
+                    )}
+                  </div>
+                </div>
+                <div className="gallery-detail-line gallery-detail-line-block">
+                  <span className="gallery-detail-label">图片</span>
+                  <div className="gallery-thumb-list">
+                    {active.images.length > 0 ? (
+                      active.images.map((image) => (
+                        <a
+                          key={image.id}
+                          href={getDisplayImageUrl(apiBaseUrl, image.url, "original")}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="gallery-thumb-link"
+                        >
+                          <img
+                            src={getDisplayImageUrl(apiBaseUrl, image.url, "thumb")}
+                            alt={active.name}
+                            loading="lazy"
+                          />
+                        </a>
+                      ))
+                    ) : (
+                      <span className="gallery-detail-empty">暂无图片</span>
                     )}
                   </div>
                 </div>

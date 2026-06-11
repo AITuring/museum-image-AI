@@ -117,6 +117,24 @@ type MuseumOption = {
   name: string
 }
 
+type ExistingArtifactImage = {
+  id: number
+  url: string
+}
+
+type ExistingArtifactMatch = {
+  artifact: {
+    id: number
+    name: string
+    era: string | null
+    description: string | null
+    museum_name: string
+    images: ExistingArtifactImage[]
+  }
+  match_score: number
+  match_reason: string
+}
+
 type ExhibitionOption = {
   id: number
   museum_id: number
@@ -273,6 +291,8 @@ function App() {
   const [exhibitionSuggestions, setExhibitionSuggestions] = useState<ExhibitionOption[]>([])
   const [tagInput, setTagInput] = useState("")
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
+  const [matchedArtifact, setMatchedArtifact] = useState<ExistingArtifactMatch | null>(null)
+  const [sameArtifactDecision, setSameArtifactDecision] = useState<"yes" | "no" | null>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
 
   const orderedStreams = useMemo(
@@ -597,6 +617,45 @@ function App() {
     }
   }, [apiBaseUrl, artifactForm.exhibitionName, selectedCaptureMuseum])
 
+  useEffect(() => {
+    const name = artifactForm.name.trim()
+    const museumName = artifactForm.museumName.trim()
+    const era = artifactForm.era.trim()
+    if (!name || !museumName || !era) {
+      setMatchedArtifact(null)
+      setSameArtifactDecision(null)
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ name })
+        params.set("museum_name", museumName)
+        params.set("era", era)
+        const matched = await fetchJson<ExistingArtifactMatch | null>(
+          `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
+          { signal: controller.signal },
+        )
+        if (controller.signal.aborted) {
+          return
+        }
+        setMatchedArtifact(matched)
+        setSameArtifactDecision(null)
+      } catch {
+        if (!controller.signal.aborted) {
+          setMatchedArtifact(null)
+          setSameArtifactDecision(null)
+        }
+      }
+    }, 220)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [apiBaseUrl, artifactForm.era, artifactForm.museumName, artifactForm.name])
+
   function selectFile(file: File | null) {
     setSelectedFile(file)
     setPreviewUrl((current) => {
@@ -653,6 +712,8 @@ function App() {
     setSelectedCaptureMuseum(null)
     setMuseumSuggestions([])
     setExhibitionSuggestions([])
+    setMatchedArtifact(null)
+    setSameArtifactDecision(null)
     setArtifactMessage(null)
     setSubmitNotice(null)
   }
@@ -680,6 +741,9 @@ function App() {
       if (!artifactForm.exhibitionName.trim() || artifactForm.exhibitionName.trim().startsWith("@")) {
         throw new Error("请填写或选择展览名称")
       }
+      if (matchedArtifact && sameArtifactDecision === null) {
+        throw new Error("后端检测到疑似同一件，请先确认是否为同一件")
+      }
 
       await fetchJson<unknown>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
         method: "POST",
@@ -690,6 +754,8 @@ function App() {
           name: artifactForm.name,
           era: artifactForm.era || null,
           description: artifactForm.description || null,
+          existing_artifact_id:
+            sameArtifactDecision === "yes" && matchedArtifact ? matchedArtifact.artifact.id : null,
           tags: artifactForm.tags,
           camera_model: artifactForm.cameraModel.trim() || null,
           lens_model: artifactForm.lensModel.trim() || null,
@@ -1050,6 +1116,76 @@ function App() {
             })}
           </div>
 
+          {matchedArtifact ? (
+            <section className="backend-match-card">
+              <div className="backend-match-head">
+                <div>
+                  <h3>后端疑似同一件</h3>
+                  <p className="muted">
+                    {matchedArtifact.match_reason} 匹配度 {Math.round(matchedArtifact.match_score * 100)}%
+                  </p>
+                </div>
+                <span className="badge conf">{matchedArtifact.artifact.images.length} 张历史图片</span>
+              </div>
+              <div className="backend-match-meta">
+                <span>名称：{matchedArtifact.artifact.name}</span>
+                <span>时代：{matchedArtifact.artifact.era || "待确认"}</span>
+                <span>馆藏：{matchedArtifact.artifact.museum_name}</span>
+              </div>
+              {matchedArtifact.artifact.description ? (
+                <p className="result-desc">{matchedArtifact.artifact.description}</p>
+              ) : (
+                <p className="muted small">库中这条记录暂无描述。</p>
+              )}
+              {matchedArtifact.artifact.images.length > 0 ? (
+                <div className="existing-artifact-gallery">
+                  {matchedArtifact.artifact.images.map((image) => (
+                    <a
+                      key={image.id}
+                      href={toAbsoluteUrl(image.url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="existing-artifact-thumb"
+                    >
+                      <img src={toAbsoluteUrl(image.url)} alt={matchedArtifact.artifact.name} loading="lazy" />
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+              <div className="backend-match-actions">
+                <button
+                  type="button"
+                  className={`primary small ${sameArtifactDecision === "yes" ? "selected-action" : ""}`}
+                  onClick={() => {
+                    setSameArtifactDecision("yes")
+                    setArtifactMessage(`已确认与「${matchedArtifact.artifact.name}」是同一件，提交时将更新库内原记录`)
+                    setArtifactError(null)
+                  }}
+                >
+                  是同一件
+                </button>
+                <button
+                  type="button"
+                  className={`ghost ${sameArtifactDecision === "no" ? "selected-action" : ""}`}
+                  onClick={() => {
+                    setSameArtifactDecision("no")
+                    setArtifactMessage("已标记为不是同一件，提交时会新建文物记录")
+                    setArtifactError(null)
+                  }}
+                >
+                  不是同一件
+                </button>
+              </div>
+              {sameArtifactDecision === "yes" ? (
+                <p className="success-text">后续你在表单里改名称、时代、描述，提交时会直接更新这条已有文物。</p>
+              ) : sameArtifactDecision === "no" ? (
+                <p className="muted small">当前会按新文物入库，不会改动库里这条旧记录。</p>
+              ) : (
+                <p className="muted small">请先人工确认是否为同一件，再决定是更新旧记录还是新建文物。</p>
+              )}
+            </section>
+          ) : null}
+
           {hasResult ? (
             <p className="muted small center">提示：可对比多模型结论，点击「采用」自动填入下方入库表单。</p>
           ) : null}
@@ -1352,7 +1488,11 @@ function App() {
             <span />
           )}
           <button type="submit" className="primary" disabled={artifactSubmitting || !uploadedImage}>
-            {artifactSubmitting ? "提交中..." : "提交云端"}
+            {artifactSubmitting
+              ? "提交中..."
+              : sameArtifactDecision === "yes"
+                ? "更新已有文物并上传图片"
+                : "提交云端"}
           </button>
         </div>
       </form>
