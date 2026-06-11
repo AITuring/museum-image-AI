@@ -160,11 +160,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                 )}
               </div>
               <div className="gallery-meta">
-                <strong>{artifact.name}</strong>
-                <span className="muted small">
-                  {artifact.museum_name}
-                  {artifact.era ? ` · ${artifact.era}` : ""}
-                </span>
+                <strong className="gallery-title">{artifact.name}</strong>
+                <span className="gallery-line">时代：{artifact.era || "待确认"}</span>
+                <span className="gallery-line">馆藏：{artifact.museum_name || "待识别"}</span>
               </div>
             </button>
           )
@@ -177,55 +175,84 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
             <button type="button" className="gallery-close" onClick={() => setActive(null)}>
               ×
             </button>
-            <div className="gallery-modal-images">
-              {active.images.map((img) => (
-                <img
-                  key={img.id}
-                  src={getDisplayImageUrl(apiBaseUrl, img.url, "preview")}
-                  alt={active.name}
-                />
-              ))}
-            </div>
-            {active.images[0] ? (
-              <div className="gallery-actions">
-                <a
-                  href={getDisplayImageUrl(apiBaseUrl, active.images[0].url, "original")}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="primary small"
-                >
-                  查看原图
-                </a>
+            <div className="gallery-modal-hero">
+              <div className="gallery-modal-images">
+                {active.images.length > 0 ? (
+                  active.images.map((img) => (
+                    <img
+                      key={img.id}
+                      src={getDisplayImageUrl(apiBaseUrl, img.url, "preview")}
+                      alt={active.name}
+                    />
+                  ))
+                ) : (
+                  <div className="gallery-modal-empty">暂无图片</div>
+                )}
               </div>
-            ) : null}
-            <h3>{active.name}</h3>
-            <div className="result-meta">
-              <span>时代：{active.era || "—"}</span>
-              <span>馆藏：{active.museum_name}</span>
             </div>
-            {active.exhibitions.length > 0 ? (
-              <div className="field">
-                <span>历史展出</span>
-                <div className="tag-row">
-                  {active.exhibitions.map((exhibition) => (
-                    <span key={exhibition.id}>
-                      {exhibition.museum_name} · {exhibition.name}
-                      {exhibition.start_at || exhibition.end_at
-                        ? ` (${exhibition.start_at?.slice(0, 10) ?? "未知"} - ${exhibition.end_at?.slice(0, 10) ?? "至今"})`
-                        : ""}
-                    </span>
-                  ))}
+            <div className="gallery-detail">
+              <div className="gallery-detail-head">
+                <h3 className="gallery-detail-title">{active.name}</h3>
+                {active.images[0] ? (
+                  <div className="gallery-actions">
+                    <a
+                      href={getDisplayImageUrl(apiBaseUrl, active.images[0].url, "original")}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="primary small"
+                    >
+                      查看原图
+                    </a>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="gallery-detail-lines">
+                <div className="gallery-detail-line">
+                  <span className="gallery-detail-label">时代</span>
+                  <span className="gallery-detail-value">{active.era || "待确认"}</span>
                 </div>
+                <div className="gallery-detail-line">
+                  <span className="gallery-detail-label">馆藏</span>
+                  <span className="gallery-detail-value">{active.museum_name || "待识别"}</span>
+                </div>
+                <div className="gallery-detail-line">
+                  <span className="gallery-detail-label">标签</span>
+                  <div className="tag-row">
+                    {active.tags.length > 0 ? (
+                      active.tags.map((tag) => <span key={tag}>{tag}</span>)
+                    ) : (
+                      <span className="gallery-detail-empty">暂无标签</span>
+                    )}
+                  </div>
+                </div>
+                <div className="gallery-detail-line gallery-detail-line-block">
+                  <span className="gallery-detail-label">描述</span>
+                  <div className="gallery-detail-value">
+                    {active.description ? (
+                      <p className="result-desc">{active.description}</p>
+                    ) : (
+                      <span className="gallery-detail-empty">暂无描述</span>
+                    )}
+                  </div>
+                </div>
+                {active.exhibitions.length > 0 ? (
+                  <div className="gallery-detail-line gallery-detail-line-block">
+                    <span className="gallery-detail-label">历史展出</span>
+                    <div className="tag-row">
+                      {active.exhibitions.map((exhibition) => (
+                        <span key={exhibition.id}>
+                          {exhibition.museum_name} · {exhibition.name}
+                          {exhibition.start_at || exhibition.end_at
+                            ? ` (${exhibition.start_at?.slice(0, 10) ?? "未知"} - ${exhibition.end_at?.slice(0, 10) ?? "至今"})`
+                            : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            ) : null}
-            {active.tags.length > 0 ? (
-              <div className="tag-row">
-                {active.tags.map((tag) => (
-                  <span key={tag}>{tag}</span>
-                ))}
-              </div>
-            ) : null}
-            {active.description ? <p className="result-desc">{active.description}</p> : null}
+            </div>
           </div>
         </div>
       ) : null}
