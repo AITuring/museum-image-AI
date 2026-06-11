@@ -40,6 +40,15 @@ class ArtifactCreate(BaseModel):
     images: list[ArtifactImageCreate] = Field(default_factory=list)
 
 
+class CloudArtifactSubmitRequest(BaseModel):
+    image_url: str
+    museum_name: str
+    name: str
+    era: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
 class ArtifactRead(BaseModel):
     id: int
     museum_id: int

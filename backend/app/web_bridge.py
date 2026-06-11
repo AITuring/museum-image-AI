@@ -18,6 +18,7 @@ Important constraints learned the hard way:
 import asyncio
 import json
 import logging
+import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,8 @@ from app.vision import (
 )
 
 logger = logging.getLogger("app.web_bridge")
+
+PLACEHOLDER_VALUES = {"", "见描述", "待确认", "待识别", "未知", "不详", "未提及"}
 
 WEB_STRUCTURING_SYSTEM_PROMPT = """
 你会收到一段「AI 网页端对一件文物图片的鉴定回答」。请把它抽取为数据库录入 JSON，只输出 JSON：
@@ -316,20 +319,126 @@ async def _structure_answer(answer_text: str) -> dict[str, object]:
     return parse_json_response(extract_message_text(data))
 
 
+def _extract_with_patterns(answer_text: str, patterns: list[str]) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, answer_text, flags=re.MULTILINE)
+        if match:
+            value = match.group(1).strip().strip(" ,，。；;：:")
+            if value:
+                return value
+    return ""
+
+
+def _extract_artifact_name(answer_text: str) -> str:
+    return _extract_with_patterns(
+        answer_text,
+        [
+            r"(?:这件文物|该文物|此文物|这件器物|该器物|此器|它)(?:是|为)“?([^，。；\n]{1,40})”?",
+            r"^“?([^，。；\n]{1,40})”?[，,。；;]\s*(?:为|是)",
+        ],
+    )
+
+
+def _extract_era(answer_text: str) -> str:
+    match = re.search(
+        (
+            r"(新石器时代|夏代|商代(?:早期|中期|晚期)?|西周(?:早期|中期|晚期)?|东周|春秋|战国|"
+            r"秦代|汉代|西汉|东汉|三国|魏晋(?:南北朝)?|隋代|唐代|宋代|辽代|金代|元代|"
+            r"明代|清代|民国)"
+        ),
+        answer_text,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _extract_museum_name(answer_text: str) -> str:
+    return _extract_with_patterns(
+        answer_text,
+        [
+            r"(?:现藏于|收藏于|藏于|现藏|馆藏于)([^，。；\n]{2,40})",
+            r"(?:出土于)([^，。；\n]{2,40})",
+        ],
+    )
+
+
+def _build_summary(answer_text: str) -> str:
+    paragraphs = [chunk.strip() for chunk in re.split(r"\n+", answer_text) if chunk.strip()]
+    if not paragraphs:
+        return answer_text.strip()
+    if len(paragraphs) == 1:
+        return paragraphs[0]
+    # Keep the first two logical paragraphs instead of a hard character cut.
+    return "\n".join(paragraphs[:2])
+
+
+def _derive_tags(answer_text: str, artifact_name: str, era: str, museum_name: str) -> list[str]:
+    tags: list[str] = []
+    candidates = [
+        era,
+        museum_name if museum_name.endswith(("馆", "院")) else "",
+        artifact_name,
+    ]
+    for keyword in ["青铜器", "礼器", "铭文", "龙纹", "簋", "鼎", "尊", "陶器", "瓷器", "佛像"]:
+        if keyword in answer_text:
+            candidates.append(keyword)
+    for item in candidates:
+        cleaned = item.strip()
+        if cleaned and cleaned not in tags:
+            tags.append(cleaned)
+        if len(tags) >= 6:
+            break
+    return tags
+
+
+def _merge_structured_answer(answer_text: str, structured: dict[str, object] | None) -> dict[str, object]:
+    data = dict(structured or {})
+
+    artifact_name = str(data.get("artifact_name", "")).strip()
+    if artifact_name in PLACEHOLDER_VALUES:
+        artifact_name = _extract_artifact_name(answer_text)
+
+    era = str(data.get("era", "")).strip()
+    if era in PLACEHOLDER_VALUES:
+        era = _extract_era(answer_text)
+
+    museum_name = str(data.get("museum_name", "")).strip()
+    if museum_name in PLACEHOLDER_VALUES:
+        museum_name = _extract_museum_name(answer_text)
+
+    description = str(data.get("description", "")).strip()
+    if description in PLACEHOLDER_VALUES:
+        description = _build_summary(answer_text)
+
+    raw_tags = [str(tag).strip() for tag in data.get("tags", []) if str(tag).strip()]
+    tags = raw_tags or _derive_tags(answer_text, artifact_name, era, museum_name)
+
+    reasoning = str(data.get("reasoning", "")).strip() or answer_text
+
+    data.update(
+        artifact_name=artifact_name or "待确认文物",
+        era=era or None,
+        museum_name=museum_name or None,
+        description=description or answer_text,
+        tags=tags,
+        reasoning=reasoning,
+    )
+    return data
+
+
 def _build_candidate(
     site: WebChatSite, answer_text: str, structured: dict[str, object] | None
 ) -> VisionCandidateRead:
-    structured = structured or {}
+    structured = _merge_structured_answer(answer_text, structured)
     tags = [str(tag).strip() for tag in structured.get("tags", []) if str(tag).strip()]
     confidence_value = structured.get("confidence")
     return VisionCandidateRead(
         provider=site.key,
         model=site.label,
-        artifact_name=str(structured.get("artifact_name", "")).strip() or "见描述",
+        artifact_name=str(structured.get("artifact_name", "")).strip() or "待确认文物",
         era=str(structured.get("era", "")).strip() or None,
         museum_name=str(structured.get("museum_name", "")).strip() or None,
         tags=tags,
-        description=str(structured.get("description", "")).strip() or answer_text[:200],
+        description=str(structured.get("description", "")).strip() or answer_text,
         confidence=float(confidence_value) if confidence_value is not None else None,
         analysis=answer_text,
         reasoning=str(structured.get("reasoning", "")).strip() or answer_text,

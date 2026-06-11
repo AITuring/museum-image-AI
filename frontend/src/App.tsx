@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import "./App.css"
 import BatchConsole from "./BatchConsole"
 import Gallery from "./Gallery"
@@ -7,13 +7,6 @@ type HealthResponse = {
   status: string
   environment: string
   database: string
-}
-
-type Museum = {
-  id: number
-  name: string
-  location: string | null
-  description: string | null
 }
 
 type UploadedImage = {
@@ -154,7 +147,6 @@ function formatConfidence(confidence: number | null | undefined) {
 function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(true)
-  const [museums, setMuseums] = useState<Museum[]>([])
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null)
@@ -226,31 +218,6 @@ function App() {
     } finally {
       setLoadingHealth(false)
     }
-  }
-
-  async function loadMuseums() {
-    const data = await fetchJson<Museum[]>(`${apiBaseUrl}/api/museums`)
-    setMuseums(data)
-  }
-
-  async function ensureMuseumId(museumName: string) {
-    const normalized = normalizeName(museumName)
-    const matched = museums.find((museum) => normalizeName(museum.name) === normalized)
-    if (matched) {
-      return matched.id
-    }
-
-    const created = await fetchJson<Museum>(`${apiBaseUrl}/api/museums`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: museumName.trim(),
-        location: null,
-        description: "AI 识图候选自动创建",
-      }),
-    })
-    await loadMuseums()
-    return created.id
   }
 
   function updateStream(provider: string, patch: Partial<ProviderStream>) {
@@ -418,7 +385,7 @@ function App() {
   useEffect(() => {
     async function loadInitialData() {
       try {
-        await Promise.all([loadHealth(), loadMuseums()])
+        await loadHealth()
       } catch (err) {
         setArtifactError(err instanceof Error ? err.message : "初始化失败")
       }
@@ -482,7 +449,7 @@ function App() {
     setArtifactMessage(null)
   }
 
-  async function handleCreateArtifact(event: React.FormEvent<HTMLFormElement>) {
+  async function handleCreateArtifact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setArtifactSubmitting(true)
     setArtifactMessage(null)
@@ -499,13 +466,12 @@ function App() {
         throw new Error("请先上传并识别图片")
       }
 
-      const museumId = await ensureMuseumId(artifactForm.museumName)
-
-      await fetchJson<unknown>(`${apiBaseUrl}/api/artifacts`, {
+      await fetchJson<unknown>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          museum_id: museumId,
+          image_url: uploadedImage.url,
+          museum_name: artifactForm.museumName.trim(),
           name: artifactForm.name,
           era: artifactForm.era || null,
           description: artifactForm.description || null,
@@ -513,15 +479,14 @@ function App() {
             .split(",")
             .map((tag) => tag.trim())
             .filter(Boolean),
-          images: [{ url: uploadedImage.url }],
         }),
       })
 
       setArtifactForm({ museumName: "", name: "", era: "", description: "", tags: "" })
-      setArtifactMessage("文物已入库")
+      setArtifactMessage("已提交云端，图片已上传 OSS")
       resetCurrentImage()
     } catch (err) {
-      setArtifactError(err instanceof Error ? err.message : "创建文物失败")
+      setArtifactError(err instanceof Error ? err.message : "提交云端失败")
     } finally {
       setArtifactSubmitting(false)
     }
@@ -543,7 +508,7 @@ function App() {
       done: Boolean(selectedCandidateKey),
       active: hasResult && !selectedCandidateKey,
     },
-    { label: "提交入库", done: false, active: Boolean(selectedCandidateKey) },
+    { label: "提交云端", done: false, active: Boolean(selectedCandidateKey) },
   ]
 
   return (
@@ -870,8 +835,8 @@ function App() {
         <div className="section-heading">
           <span className="step-badge">3</span>
           <div>
-            <h2>确认并入库</h2>
-            <p className="muted">采用上方某个候选后会自动填入，可手动微调后提交。</p>
+            <h2>确认并提交云端</h2>
+            <p className="muted">采用上方候选后可微调，提交时会写线上数据库并上传图片到 OSS。</p>
           </div>
         </div>
 
@@ -937,7 +902,7 @@ function App() {
         <div className="form-footer">
           {artifactMessage ? <p className="success-text">{artifactMessage}</p> : <span />}
           <button type="submit" className="primary" disabled={artifactSubmitting || !uploadedImage}>
-            {artifactSubmitting ? "入库中…" : "提交入库"}
+            {artifactSubmitting ? "提交中..." : "提交云端"}
           </button>
         </div>
       </form>

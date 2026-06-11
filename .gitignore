@@ -24,6 +24,8 @@ data/chrome_profile*/
 # Local batch import images (mounted into the container)
 import/*
 !import/.gitkeep
+.venv/*_env
+.venv-*
 
 # Python bytecode in scripts
 backend/scripts/__pycache__

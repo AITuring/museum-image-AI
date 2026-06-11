@@ -27,6 +27,7 @@ from app.schemas import (
     BatchIdentifyRequest,
     BatchScanRequest,
     BatchScanResponse,
+    CloudArtifactSubmitRequest,
     HealthRead,
     MuseumCreate,
     MuseumRead,
@@ -144,6 +145,16 @@ def artifact_image_query():
 
 def build_uploaded_file_url(filename: str) -> str:
     return f"/files/uploads/{filename}"
+
+
+def resolve_uploaded_file_path(image_url: str) -> Path:
+    if not image_url.startswith("/files/uploads/"):
+        raise HTTPException(status_code=400, detail="仅支持提交本地上传后的图片。")
+    relative_path = image_url.removeprefix("/files/").lstrip("/")
+    file_path = DATA_DIR / relative_path
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=400, detail="上传图片已不存在，请重新上传后再提交。")
+    return file_path
 
 
 def ensure_museum(db: Session, museum_name: str) -> Museum:
@@ -408,6 +419,46 @@ async def ingest_artifact(
     db.add(artifact)
     db.commit()
     return db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
+
+
+@app.post(
+    f"{settings.api_prefix}/artifacts/submit-cloud",
+    response_model=ArtifactRead,
+    status_code=201,
+)
+async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -> Artifact:
+    if not settings.cloud_api_base_url:
+        raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
+    if not settings.ingest_token:
+        raise HTTPException(status_code=400, detail="未配置 INGEST_TOKEN。")
+    if not payload.museum_name.strip():
+        raise HTTPException(status_code=400, detail="请填写或确认博物馆名称。")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="请填写或确认文物名称。")
+
+    image_path = resolve_uploaded_file_path(payload.image_url)
+    content_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
+    base = settings.cloud_api_base_url.rstrip("/")
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                f"{base}{settings.api_prefix}/ingest/artifacts",
+                files={"image": (image_path.name, image_path.read_bytes(), content_type)},
+                data={
+                    "museum_name": payload.museum_name.strip(),
+                    "name": payload.name.strip(),
+                    "era": payload.era or "",
+                    "description": payload.description or "",
+                    "tags": json.dumps(payload.tags, ensure_ascii=False),
+                },
+                headers={"Authorization": f"Bearer {settings.ingest_token}"},
+            )
+            response.raise_for_status()
+    except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
+        raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
+
+    return ArtifactRead.model_validate(response.json())
 
 
 # ── Batch identification (local operator machine) ─────────────────────────────────
