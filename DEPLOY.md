@@ -5,10 +5,15 @@
 | 位置 | 跑什么 | 用什么 |
 | --- | --- | --- |
 | **阿里云服务器** | Postgres + 后端（cloud 角色，OSS 入库 / 检索 API） | Docker `docker-compose.cloud.yml` |
-| **Vercel** | 图库检索前端（纯静态） | Vercel 项目，Root = `frontend` |
-| **本地机器** | 单图/批量识别（通义网页桥 + Chrome）+ 提交云端 | Docker `docker-compose.yml` |
+| **Vercel** | 线上图库前端（连云端后端，纯静态） | Vercel 项目，Root = `frontend` |
+| **本地机器 · Docker** | 识图服务（识别控制台 + 本地后端 + 本地库），通义网页桥 + Chrome | Docker `docker-compose.yml` |
+| **本地机器 · npm** | 线上图库前端的本地预览（连**云端**后端） | `cd frontend && npm run dev` |
 
-数据流：本地扫描目录 → 通义识别 → 人工核对 → 带 `INGEST_TOKEN` 提交到云端 `/api/ingest/artifacts` → 云端图片入 OSS、元数据入库 → Vercel 前端检索云端。
+> 关键原则：**「识图」永远连本地后端，「图库」永远连云端后端**。
+> - Docker（识图控制台 `:5173` + 本地后端 `:8000`）只负责识别和入库到云端，互不掺和图库。
+> - 图库（Vercel 线上、本地 `npm run dev` 的 `:7001`）都只读云端后端，且都用「同源 + 服务端反代」的方式连接（Vercel 用 `vercel.json` rewrites，本地用 Vite dev proxy），所以**不需要给云端配 CORS**。
+
+数据流：本地扫描目录 → 通义识别 → 人工核对 → 带 `INGEST_TOKEN` 提交到云端 `/api/ingest/artifacts` → 云端图片入 OSS、元数据入库 → Vercel / 本地 `:7001` 图库检索云端。
 
 ---
 
@@ -180,7 +185,12 @@ Vercel 会在服务端把 `/api`、`/files` 反代到后端，浏览器始终同
 
 ## 三、本地机器（识别 + 批量入库）
 
-需要本机能看到浏览器扫码登录通义。用默认的 `docker-compose.yml`（含 Chrome/Xvfb）。
+本地有两件事，互不影响：
+
+- **识图服务（Docker）**：`docker-compose.yml` 起 3 个容器——`postgres`（本地库 `:5432`）、`backend`（识图后端 `:8000`，`APP_ROLE=local`）、`frontend`（识别控制台 `:5173`，跑 `npm run dev:identify`）。控制台连的是**本地** `:8000`。
+- **线上图库预览（npm）**：`cd frontend && npm run dev`，在 `:7001` 起一个 cloud-only 图库，连的是**云端**后端（见下「5. 本地预览线上图库」）。
+
+识图服务需要本机能看到浏览器扫码登录通义。用默认的 `docker-compose.yml`（含 Chrome/Xvfb）。
 
 ### 1. 登录通义（一次性，在宿主机执行）
 
@@ -209,32 +219,50 @@ CLOUD_API_BASE_URL=http://<公网IP>:8000   # 云端后端地址（本地→云�
 INGEST_TOKEN=与云端完全相同的那串
 ```
 
-### 3. 启动 / 停止
+### 3. 启动 / 停止（识图服务）
 
 ```bash
-docker compose up --build            # 前端 http://localhost:5173 ，后端 :8000
+docker compose up --build            # 识别控制台 http://localhost:5173 ，本地后端 :8000
 docker compose down
 ```
+
+> 容器内前端跑的是 `npm run dev:identify`（端口 5173，完整识别控制台）。这与本地 `npm run dev`（图库 7001）刻意分开，互不抢端口。
 
 ### 4. 使用
 
 1. 浏览器开 `http://localhost:5173` → 「批量入库」标签。
 2. 目录填 `/data/import`（即上面 `IMPORT_DIR` 挂载点）→ 扫描目录。
 3. 「开始识别」顺序跑（每张约 30–60s）。
-4. 逐条核对表单 → 「提交云端」。提交成功后 Vercel 图库即可检索到。
+4. 逐条核对表单 → 「提交云端」。提交成功后 Vercel / 本地 `:7001` 图库即可检索到。
+
+### 5. 本地预览线上图库（可选）
+
+想在本机预览「线上图库」的样子（连的是云端数据，不是本地库）：
+
+```bash
+cd frontend
+npm install        # 首次
+npm run dev        # 图库前端 http://localhost:7001
+```
+
+- `npm run dev` 用 `--mode gallery` 启动：`VITE_CLOUD_ONLY=true` 只显示图库检索，固定端口 `7001`。
+- 它对 `/api`、`/files` 发**同源**请求，由 Vite dev proxy（`frontend/vite.config.ts`）反代到云端后端 `VITE_CLOUD_BACKEND`（默认 `http://123.57.34.90:8000`，在 `frontend/.env.gallery` 配置）。做法与 Vercel 选项 A 完全一致，因此**无需云端配 CORS**。
+- 换云端服务器时只改 `frontend/.env.gallery` 里的 `VITE_CLOUD_BACKEND` 一处。
+- 端口为什么是 7001：macOS 的「隔空播放接收器（AirPlay Receiver）」默认占用 `7000`。要改回 7000，先在「系统设置 → 通用 → 隔空投送与接力」关闭隔空播放接收器，再把 `frontend/package.json` 里 `dev` 脚本的 `--port 7001` 改成 `7000`。
 
 ---
 
 ## 端口与连接速查
 
-| 环节 | 地址 | 说明 |
-| --- | --- | --- |
-| 云端后端 | `http://<公网IP>:8000` | 安全组+防火墙放行 8000 |
-| 健康检查 | `GET /api/health` | 返回 ok |
-| 云端入库 | `POST /api/ingest/artifacts` | Bearer `INGEST_TOKEN` |
-| Vercel 前端 | `https://<app>.vercel.app` | 选项 A 反代 / 选项 B 直连 |
-| 本地前端 | `http://localhost:5173` | 识别 + 批量入库 |
-| 本地后端 | `http://localhost:8000` | 同机调用云端 |
+| 环节 | 地址 | 连哪个后端 | 说明 |
+| --- | --- | --- | --- |
+| 云端后端 | `http://<公网IP>:8000` | 自身 | 安全组+防火墙放行 8000 |
+| 健康检查 | `GET /api/health` | — | 返回 ok |
+| 云端入库 | `POST /api/ingest/artifacts` | — | Bearer `INGEST_TOKEN` |
+| Vercel 图库 | `https://<app>.vercel.app` | 云端 | 选项 A 反代 / 选项 B 直连 |
+| 本地图库预览 | `http://localhost:7001` | **云端** | `npm run dev`，Vite proxy 反代云端 |
+| 本地识别控制台 | `http://localhost:5173` | **本地** | `docker compose up`（识别 + 批量入库） |
+| 本地后端 | `http://localhost:8000` | 自身 | 识图后端，并向云端推送入库 |
 
 `INGEST_TOKEN` 是本地↔云端的唯一写入凭证，两边必须一致。
 
