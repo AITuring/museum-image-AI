@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { createPortal } from "react-dom"
 
 type GalleryImage = {
   id: number
@@ -96,6 +97,20 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     void load("")
   }, [load])
 
+  useEffect(() => {
+    if (!active) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActive(null)
+    }
+    document.addEventListener("keydown", onKeyDown)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+    return () => {
+      document.removeEventListener("keydown", onKeyDown)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [active])
+
   function handleSearch(event: FormEvent) {
     event.preventDefault()
     setSubmittedQuery(query)
@@ -170,8 +185,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         })}
       </div>
 
-      {active ? (
-        <div className="gallery-modal" onClick={() => setActive(null)}>
+      {active
+        ? createPortal(
+            <div className="gallery-modal" onClick={() => setActive(null)}>
           <div className="gallery-modal-body" onClick={(e) => e.stopPropagation()}>
             <button type="button" className="gallery-close" onClick={() => setActive(null)}>
               ×
@@ -279,8 +295,10 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        </div>,
+            document.body,
+          )
+        : null}
     </section>
   )
 }
