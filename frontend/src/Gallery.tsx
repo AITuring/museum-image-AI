@@ -72,6 +72,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState<GalleryArtifact | null>(null)
+  const [activeImageIndex, setActiveImageIndex] = useState(0)
 
   const load = useCallback(
     async (q: string) => {
@@ -99,6 +100,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   useEffect(() => {
     if (!active) return
+    setActiveImageIndex(0)
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setActive(null)
     }
@@ -192,28 +194,54 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
             <button type="button" className="gallery-close" onClick={() => setActive(null)}>
               ×
             </button>
-            <div className="gallery-modal-hero">
-              <div className="gallery-modal-images">
-                {active.images.length > 0 ? (
-                  active.images.map((img) => (
-                    <img
-                      key={img.id}
-                      src={getDisplayImageUrl(apiBaseUrl, img.url, "preview")}
-                      alt={active.name}
-                    />
-                  ))
-                ) : (
-                  <div className="gallery-modal-empty">暂无图片</div>
-                )}
-              </div>
+            <div className="gallery-modal-media">
+              {active.images.length > 0 ? (
+                <>
+                  <img
+                    className="gallery-modal-main-img"
+                    src={getDisplayImageUrl(
+                      apiBaseUrl,
+                      (active.images[activeImageIndex] ?? active.images[0]).url,
+                      "preview",
+                    )}
+                    alt={active.name}
+                  />
+                  {active.images.length > 1 ? (
+                    <div className="gallery-modal-thumbs">
+                      {active.images.map((image, index) => (
+                        <button
+                          type="button"
+                          key={image.id}
+                          className={`gallery-modal-thumb ${index === activeImageIndex ? "active" : ""}`}
+                          onClick={() => setActiveImageIndex(index)}
+                          aria-label={`查看第 ${index + 1} 张`}
+                        >
+                          <img
+                            src={getDisplayImageUrl(apiBaseUrl, image.url, "thumb")}
+                            alt={active.name}
+                            loading="lazy"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <div className="gallery-modal-empty">暂无图片</div>
+              )}
             </div>
-            <div className="gallery-detail">
+
+            <div className="gallery-modal-info">
               <div className="gallery-detail-head">
                 <h3 className="gallery-detail-title">{active.name}</h3>
-                {active.images[0] ? (
+                {active.images.length > 0 ? (
                   <div className="gallery-actions">
                     <a
-                      href={getDisplayImageUrl(apiBaseUrl, active.images[0].url, "original")}
+                      href={getDisplayImageUrl(
+                        apiBaseUrl,
+                        (active.images[activeImageIndex] ?? active.images[0]).url,
+                        "original",
+                      )}
                       target="_blank"
                       rel="noreferrer"
                       className="primary small"
@@ -243,40 +271,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                     )}
                   </div>
                 </div>
-                <div className="gallery-detail-line gallery-detail-line-block">
-                  <span className="gallery-detail-label">描述</span>
-                  <div className="gallery-detail-value">
-                    {active.description ? (
-                      <p className="result-desc">{active.description}</p>
-                    ) : (
-                      <span className="gallery-detail-empty">暂无描述</span>
-                    )}
-                  </div>
-                </div>
-                <div className="gallery-detail-line gallery-detail-line-block">
-                  <span className="gallery-detail-label">图片</span>
-                  <div className="gallery-thumb-list">
-                    {active.images.length > 0 ? (
-                      active.images.map((image) => (
-                        <a
-                          key={image.id}
-                          href={getDisplayImageUrl(apiBaseUrl, image.url, "original")}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="gallery-thumb-link"
-                        >
-                          <img
-                            src={getDisplayImageUrl(apiBaseUrl, image.url, "thumb")}
-                            alt={active.name}
-                            loading="lazy"
-                          />
-                        </a>
-                      ))
-                    ) : (
-                      <span className="gallery-detail-empty">暂无图片</span>
-                    )}
-                  </div>
-                </div>
                 {active.exhibitions.length > 0 ? (
                   <div className="gallery-detail-line gallery-detail-line-block">
                     <span className="gallery-detail-label">历史展出</span>
@@ -292,6 +286,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                     </div>
                   </div>
                 ) : null}
+                <div className="gallery-detail-line gallery-detail-line-block gallery-detail-desc">
+                  <span className="gallery-detail-label">描述</span>
+                  <div className="gallery-detail-value">
+                    {active.description ? (
+                      <p className="result-desc">{active.description}</p>
+                    ) : (
+                      <span className="gallery-detail-empty">暂无描述</span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
