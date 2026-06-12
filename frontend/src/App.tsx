@@ -1221,279 +1221,314 @@ function App() {
         </div>
 
         <div className="form-fields">
-          <div className="field-row">
-            <label className="field">
-              <span>博物馆名称</span>
-              <input
-                value={artifactForm.museumName}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, museumName: event.target.value }))
-                }
-                placeholder="例如：南京博物院"
-              />
-            </label>
-            <label className="field">
-              <span>文物名称</span>
-              <input
-                required
-                value={artifactForm.name}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, name: event.target.value }))
-                }
-                placeholder="例如：如意云纹金盘"
-              />
-            </label>
-          </div>
-          <div className="field-row">
-            <label className="field">
-              <span>时代</span>
-              <input
-                value={artifactForm.era}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, era: event.target.value }))
-                }
-                placeholder="例如：元代"
-              />
-            </label>
-            <label className="field">
-              <span>标签</span>
-              <div className="tag-editor">
-                <div className="tag-editor-chips">
-                  {artifactForm.tags.length > 0 ? (
-                    artifactForm.tags.map((tag) => (
-                      <span key={tag} className="tag-chip">
-                        {tag}
-                        <button type="button" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>
-                          ×
-                        </button>
-                      </span>
-                    ))
-                  ) : (
-                    <span className="tag-editor-placeholder">暂无标签</span>
-                  )}
-                </div>
-                <input
-                  value={tagInput}
-                  onChange={(event) => setTagInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === "," || event.key === "，") {
-                      event.preventDefault()
-                      addTags(tagInput)
+          <section className="form-section">
+            <div className="form-section-head">
+              <span className="form-section-kicker">BASIC</span>
+              <h3>基本信息</h3>
+            </div>
+            <div className="form-section-body">
+              <div className="field-row">
+                <label className="field">
+                  <span>博物馆名称</span>
+                  <input
+                    value={artifactForm.museumName}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, museumName: event.target.value }))
                     }
-                    if (event.key === "Backspace" && !tagInput && artifactForm.tags.length > 0) {
-                      removeTag(artifactForm.tags[artifactForm.tags.length - 1])
+                    placeholder="例如：南京博物院"
+                  />
+                </label>
+                <label className="field">
+                  <span>文物名称</span>
+                  <input
+                    required
+                    value={artifactForm.name}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, name: event.target.value }))
                     }
-                  }}
-                  onBlur={() => addTags(tagInput)}
-                  placeholder="输入后回车或逗号添加"
-                />
+                    placeholder="例如：如意云纹金盘"
+                  />
+                </label>
               </div>
-            </label>
-          </div>
-          <div className="field-row">
-            <label className="field">
-              <span>机型</span>
-              <input
-                value={artifactForm.cameraModel}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, cameraModel: event.target.value }))
-                }
-                placeholder="自动读取，可手动补充"
-              />
-            </label>
-            <label className="field">
-              <span>镜头</span>
-              <input
-                value={artifactForm.lensModel}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, lensModel: event.target.value }))
-                }
-                placeholder="自动读取，可手动补充"
-              />
-            </label>
-          </div>
-          <div className="field-row">
-            <label className="field">
-              <span>拍摄时博物馆</span>
-              <input
-                value={artifactForm.captureMuseumName}
-                onChange={(event) => {
-                  const value = event.target.value
-                  setArtifactForm((current) => ({ ...current, captureMuseumName: value }))
-                  if (selectedCaptureMuseum?.name !== value) {
-                    setSelectedCaptureMuseum(null)
+              <div className="field-row">
+                <label className="field">
+                  <span>时代</span>
+                  <input
+                    value={artifactForm.era}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, era: event.target.value }))
+                    }
+                    placeholder="例如：元代"
+                  />
+                </label>
+                <label className="field">
+                  <span>标签</span>
+                  <div className="tag-editor">
+                    <div className="tag-editor-chips">
+                      {artifactForm.tags.length > 0 ? (
+                        artifactForm.tags.map((tag) => (
+                          <span key={tag} className="tag-chip">
+                            {tag}
+                            <button type="button" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>
+                              ×
+                            </button>
+                          </span>
+                        ))
+                      ) : (
+                        <span className="tag-editor-placeholder">暂无标签</span>
+                      )}
+                    </div>
+                    <input
+                      value={tagInput}
+                      onChange={(event) => setTagInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === "," || event.key === "，") {
+                          event.preventDefault()
+                          addTags(tagInput)
+                        }
+                        if (event.key === "Backspace" && !tagInput && artifactForm.tags.length > 0) {
+                          removeTag(artifactForm.tags[artifactForm.tags.length - 1])
+                        }
+                      }}
+                      onBlur={() => addTags(tagInput)}
+                      placeholder="输入后回车或逗号添加"
+                    />
+                  </div>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-head">
+              <span className="form-section-kicker">CAPTURE</span>
+              <h3>拍摄与展览</h3>
+            </div>
+            <div className="form-section-body">
+              <div className="field-row">
+                <label className="field">
+                  <span>机型</span>
+                  <input
+                    value={artifactForm.cameraModel}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, cameraModel: event.target.value }))
+                    }
+                    placeholder="自动读取，可手动补充"
+                  />
+                </label>
+                <label className="field">
+                  <span>镜头</span>
+                  <input
+                    value={artifactForm.lensModel}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, lensModel: event.target.value }))
+                    }
+                    placeholder="自动读取，可手动补充"
+                  />
+                </label>
+              </div>
+              <div className="field-row">
+                <label className="field">
+                  <span>拍摄时博物馆</span>
+                  <input
+                    value={artifactForm.captureMuseumName}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setArtifactForm((current) => ({ ...current, captureMuseumName: value }))
+                      if (selectedCaptureMuseum?.name !== value) {
+                        setSelectedCaptureMuseum(null)
+                      }
+                    }}
+                    placeholder="输入 @ 后联想检索，例如：@南博"
+                  />
+                  {artifactForm.captureMuseumName.trim().startsWith("@") ? (
+                    <span className="field-help">输入 `@关键词` 后，从下方结果选择拍摄时所在博物馆。</span>
+                  ) : null}
+                  {museumSuggestions.length > 0 ? (
+                    <div className="suggestion-list">
+                      {museumSuggestions.map((museum) => (
+                        <button
+                          key={museum.id}
+                          type="button"
+                          className="suggestion-item"
+                          onClick={() => {
+                            setSelectedCaptureMuseum(museum)
+                            setMuseumSuggestions([])
+                            setArtifactForm((current) => ({
+                              ...current,
+                              captureMuseumName: museum.name,
+                              exhibitionName:
+                                current.exhibitionName.trim().startsWith("@") || !current.exhibitionName.trim()
+                                  ? "常设"
+                                  : current.exhibitionName,
+                            }))
+                          }}
+                        >
+                          {museum.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </label>
+                <label className="field">
+                  <span>展览</span>
+                  <input
+                    value={artifactForm.exhibitionName}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, exhibitionName: event.target.value }))
+                    }
+                    placeholder={
+                      selectedCaptureMuseum
+                        ? "默认常设，输入 @ 后联想检索该馆展览"
+                        : "默认常设，可直接填写"
+                    }
+                  />
+                  {artifactForm.exhibitionName.trim().startsWith("@") && selectedCaptureMuseum ? (
+                    <span className="field-help">当前按 `{selectedCaptureMuseum.name}` 的展览库联想检索。</span>
+                  ) : null}
+                  {exhibitionSuggestions.length > 0 ? (
+                    <div className="suggestion-list">
+                      {exhibitionSuggestions.map((exhibition) => (
+                        <button
+                          key={exhibition.id}
+                          type="button"
+                          className="suggestion-item"
+                          onClick={() => {
+                            setExhibitionSuggestions([])
+                            setArtifactForm((current) => ({
+                              ...current,
+                              exhibitionName: exhibition.name,
+                            }))
+                          }}
+                        >
+                          <span>{exhibition.name}</span>
+                          {exhibition.start_at || exhibition.end_at ? (
+                            <em>
+                              {exhibition.start_at?.slice(0, 10) ?? "未知"} - {exhibition.end_at?.slice(0, 10) ?? "至今"}
+                            </em>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section className="form-section">
+            <div className="form-section-head">
+              <span className="form-section-kicker">META</span>
+              <h3>时间、坐标与参数</h3>
+            </div>
+            <div className="form-section-body">
+              <div className="field-row">
+                <label className="field">
+                  <span>纬度</span>
+                  <input
+                    value={artifactForm.latitude}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, latitude: event.target.value }))
+                    }
+                    placeholder="例如：32.060255"
+                  />
+                </label>
+                <label className="field">
+                  <span>经度</span>
+                  <input
+                    value={artifactForm.longitude}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, longitude: event.target.value }))
+                    }
+                    placeholder="例如：118.796877"
+                  />
+                </label>
+              </div>
+              <div className="field-row">
+                <label className="field">
+                  <span>拍摄时间</span>
+                  <input
+                    value={artifactForm.capturedAt}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, capturedAt: event.target.value }))
+                    }
+                    placeholder="例如：2024-05-01T14:30:00"
+                  />
+                </label>
+                <label className="field">
+                  <span>上传时间</span>
+                  <input value={artifactForm.uploadedAt} readOnly placeholder="上传后自动生成" />
+                </label>
+              </div>
+              <div className="field-row">
+                <label className="field">
+                  <span>快门</span>
+                  <input
+                    value={artifactForm.shutterSpeed}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, shutterSpeed: event.target.value }))
+                    }
+                    placeholder="例如：1/125s"
+                  />
+                </label>
+                <label className="field">
+                  <span>光圈</span>
+                  <input
+                    value={artifactForm.aperture}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, aperture: event.target.value }))
+                    }
+                    placeholder="例如：f/2.8"
+                  />
+                </label>
+              </div>
+              <div className="field-row">
+                <label className="field">
+                  <span>感光度</span>
+                  <input
+                    value={artifactForm.iso}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, iso: event.target.value }))
+                    }
+                    placeholder="例如：400"
+                  />
+                </label>
+                <label className="field">
+                  <span>修图方式</span>
+                  <select
+                    value={artifactForm.editMethod}
+                    onChange={(event) =>
+                      setArtifactForm((current) => ({ ...current, editMethod: event.target.value }))
+                    }
+                  >
+                    <option value="">未填写</option>
+                    <option value="简单调整">简单调整</option>
+                    <option value="堆栈合成">堆栈合成</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section className="form-section form-section-compact">
+            <div className="form-section-head">
+              <span className="form-section-kicker">TEXT</span>
+              <h3>补充描述</h3>
+            </div>
+            <div className="form-section-body">
+              <label className="field">
+                <span>描述</span>
+                <textarea
+                  rows={3}
+                  value={artifactForm.description}
+                  onChange={(event) =>
+                    setArtifactForm((current) => ({ ...current, description: event.target.value }))
                   }
-                }}
-                placeholder="输入 @ 后联想检索，例如：@南博"
-              />
-              {artifactForm.captureMuseumName.trim().startsWith("@") ? (
-                <span className="field-help">输入 `@关键词` 后，从下方结果选择拍摄时所在博物馆。</span>
-              ) : null}
-              {museumSuggestions.length > 0 ? (
-                <div className="suggestion-list">
-                  {museumSuggestions.map((museum) => (
-                    <button
-                      key={museum.id}
-                      type="button"
-                      className="suggestion-item"
-                      onClick={() => {
-                        setSelectedCaptureMuseum(museum)
-                        setMuseumSuggestions([])
-                        setArtifactForm((current) => ({
-                          ...current,
-                          captureMuseumName: museum.name,
-                          exhibitionName:
-                            current.exhibitionName.trim().startsWith("@") || !current.exhibitionName.trim()
-                              ? "常设"
-                              : current.exhibitionName,
-                        }))
-                      }}
-                    >
-                      {museum.name}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </label>
-            <label className="field">
-              <span>展览</span>
-              <input
-                value={artifactForm.exhibitionName}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, exhibitionName: event.target.value }))
-                }
-                placeholder={
-                  selectedCaptureMuseum
-                    ? "默认常设，输入 @ 后联想检索该馆展览"
-                    : "默认常设，可直接填写"
-                }
-              />
-              {artifactForm.exhibitionName.trim().startsWith("@") && selectedCaptureMuseum ? (
-                <span className="field-help">当前按 `{selectedCaptureMuseum.name}` 的展览库联想检索。</span>
-              ) : null}
-              {exhibitionSuggestions.length > 0 ? (
-                <div className="suggestion-list">
-                  {exhibitionSuggestions.map((exhibition) => (
-                    <button
-                      key={exhibition.id}
-                      type="button"
-                      className="suggestion-item"
-                      onClick={() => {
-                        setExhibitionSuggestions([])
-                        setArtifactForm((current) => ({
-                          ...current,
-                          exhibitionName: exhibition.name,
-                        }))
-                      }}
-                    >
-                      <span>{exhibition.name}</span>
-                      {exhibition.start_at || exhibition.end_at ? (
-                        <em>
-                          {exhibition.start_at?.slice(0, 10) ?? "未知"} - {exhibition.end_at?.slice(0, 10) ?? "至今"}
-                        </em>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </label>
-          </div>
-          <div className="field-row">
-            <label className="field">
-              <span>纬度</span>
-              <input
-                value={artifactForm.latitude}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, latitude: event.target.value }))
-                }
-                placeholder="例如：32.060255"
-              />
-            </label>
-            <label className="field">
-              <span>经度</span>
-              <input
-                value={artifactForm.longitude}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, longitude: event.target.value }))
-                }
-                placeholder="例如：118.796877"
-              />
-            </label>
-          </div>
-          <div className="field-row">
-            <label className="field">
-              <span>拍摄时间</span>
-              <input
-                value={artifactForm.capturedAt}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, capturedAt: event.target.value }))
-                }
-                placeholder="例如：2024-05-01T14:30:00"
-              />
-            </label>
-            <label className="field">
-              <span>上传时间</span>
-              <input value={artifactForm.uploadedAt} readOnly placeholder="上传后自动生成" />
-            </label>
-          </div>
-          <div className="field-row">
-            <label className="field">
-              <span>快门</span>
-              <input
-                value={artifactForm.shutterSpeed}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, shutterSpeed: event.target.value }))
-                }
-                placeholder="例如：1/125s"
-              />
-            </label>
-            <label className="field">
-              <span>光圈</span>
-              <input
-                value={artifactForm.aperture}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, aperture: event.target.value }))
-                }
-                placeholder="例如：f/2.8"
-              />
-            </label>
-          </div>
-          <div className="field-row">
-            <label className="field">
-              <span>感光度</span>
-              <input
-                value={artifactForm.iso}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, iso: event.target.value }))
-                }
-                placeholder="例如：400"
-              />
-            </label>
-            <label className="field">
-              <span>修图方式</span>
-              <select
-                value={artifactForm.editMethod}
-                onChange={(event) =>
-                  setArtifactForm((current) => ({ ...current, editMethod: event.target.value }))
-                }
-              >
-                <option value="">未填写</option>
-                <option value="简单调整">简单调整</option>
-                <option value="堆栈合成">堆栈合成</option>
-              </select>
-            </label>
-          </div>
-          <label className="field">
-            <span>描述</span>
-            <textarea
-              rows={3}
-              value={artifactForm.description}
-              onChange={(event) =>
-                setArtifactForm((current) => ({ ...current, description: event.target.value }))
-              }
-              placeholder="文物简介，可选"
-            />
-          </label>
+                  placeholder="文物简介，可选"
+                />
+              </label>
+            </div>
+          </section>
         </div>
 
         <div className="form-footer">

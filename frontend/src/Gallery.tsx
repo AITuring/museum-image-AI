@@ -12,6 +12,17 @@ type GalleryArtifact = {
   era: string | null
   description: string | null
   museum_name: string
+  camera_model?: string | null
+  lens_model?: string | null
+  capture_museum_name?: string | null
+  exhibition_name?: string | null
+  latitude?: number | null
+  longitude?: number | null
+  captured_at?: string | null
+  uploaded_at?: string | null
+  shutter_speed?: string | null
+  aperture?: string | null
+  iso?: number | null
   tags: string[]
   exhibitions: Array<{
     id: number
@@ -63,6 +74,17 @@ function normalizeArtifact(item: RawGalleryArtifact): GalleryArtifact {
     images: Array.isArray(item.images) ? item.images : [],
     exhibitions: Array.isArray(item.exhibitions) ? item.exhibitions : [],
   }
+}
+
+function formatMetaDate(value?: string | null) {
+  if (!value) return ""
+  const normalized = value.replace("T", " ")
+  return normalized.length >= 19 ? normalized.slice(0, 19) : normalized
+}
+
+function formatMetaValue(value?: string | number | null) {
+  if (value === null || value === undefined) return ""
+  return String(value)
 }
 
 export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
@@ -191,6 +213,30 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         ? createPortal(
             <div className="gallery-modal" onClick={() => setActive(null)}>
           <div className="gallery-modal-body" onClick={(e) => e.stopPropagation()}>
+            {(() => {
+              const equipmentTags = active.tags.filter((tag) => /^(机型|镜头)[:：]/.test(tag))
+              const subjectTags = active.tags.filter((tag) => !/^(机型|镜头)[:：]/.test(tag))
+              const equipmentMeta = [
+                active.camera_model ? `机型:${active.camera_model}` : null,
+                active.lens_model ? `镜头:${active.lens_model}` : null,
+              ].filter((item): item is string => Boolean(item))
+              const captureMuseumName = formatMetaValue(active.capture_museum_name)
+              const exhibitionName = formatMetaValue(active.exhibition_name)
+              const capturedAt = formatMetaDate(active.captured_at)
+              const uploadedAt = formatMetaDate(active.uploaded_at)
+              const coordinates =
+                active.latitude !== null &&
+                active.latitude !== undefined &&
+                active.longitude !== null &&
+                active.longitude !== undefined
+                  ? `${active.latitude}, ${active.longitude}`
+                  : ""
+              const shutterSpeed = formatMetaValue(active.shutter_speed)
+              const aperture = formatMetaValue(active.aperture)
+              const iso = formatMetaValue(active.iso)
+
+              return (
+                <>
             <button type="button" className="gallery-close" onClick={() => setActive(null)}>
               ×
             </button>
@@ -202,7 +248,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                     src={getDisplayImageUrl(
                       apiBaseUrl,
                       (active.images[activeImageIndex] ?? active.images[0]).url,
-                      "preview",
+                      "original",
                     )}
                     alt={active.name}
                   />
@@ -261,18 +307,85 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                   <span className="gallery-detail-label">馆藏</span>
                   <span className="gallery-detail-value">{active.museum_name || "待识别"}</span>
                 </div>
-                <div className="gallery-detail-line">
-                  <span className="gallery-detail-label">标签</span>
-                  <div className="tag-row">
-                    {active.tags.length > 0 ? (
-                      active.tags.map((tag) => <span key={tag}>{tag}</span>)
-                    ) : (
-                      <span className="gallery-detail-empty">暂无标签</span>
-                    )}
+                {subjectTags.length > 0 ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">标签</span>
+                    <div className="tag-row">
+                      {subjectTags.map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                ) : null}
+                {equipmentTags.length > 0 ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">设备</span>
+                    <div className="tag-row">
+                      {equipmentTags.map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+                    </div>
+                  </div>
+                ) : equipmentMeta.length > 0 ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">设备</span>
+                    <div className="tag-row">
+                      {equipmentMeta.map((tag) => (
+                        <span key={tag}>{tag}</span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {captureMuseumName ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">拍摄馆</span>
+                    <span className="gallery-detail-value">{captureMuseumName}</span>
+                  </div>
+                ) : null}
+                {exhibitionName ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">展览</span>
+                    <span className="gallery-detail-value">{exhibitionName}</span>
+                  </div>
+                ) : null}
+                {capturedAt ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">拍摄时间</span>
+                    <span className="gallery-detail-value">{capturedAt}</span>
+                  </div>
+                ) : null}
+                {uploadedAt ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">上传时间</span>
+                    <span className="gallery-detail-value">{uploadedAt}</span>
+                  </div>
+                ) : null}
+                {coordinates ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">经纬度</span>
+                    <span className="gallery-detail-value">{coordinates}</span>
+                  </div>
+                ) : null}
+                {shutterSpeed ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">快门</span>
+                    <span className="gallery-detail-value">{shutterSpeed}</span>
+                  </div>
+                ) : null}
+                {aperture ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">光圈</span>
+                    <span className="gallery-detail-value">{aperture}</span>
+                  </div>
+                ) : null}
+                {iso ? (
+                  <div className="gallery-detail-line">
+                    <span className="gallery-detail-label">ISO</span>
+                    <span className="gallery-detail-value">{iso}</span>
+                  </div>
+                ) : null}
                 {active.exhibitions.length > 0 ? (
-                  <div className="gallery-detail-line gallery-detail-line-block">
+                  <div className="gallery-detail-line">
                     <span className="gallery-detail-label">历史展出</span>
                     <div className="tag-row">
                       {active.exhibitions.map((exhibition) => (
@@ -286,18 +399,19 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                     </div>
                   </div>
                 ) : null}
-                <div className="gallery-detail-line gallery-detail-line-block gallery-detail-desc">
-                  <span className="gallery-detail-label">描述</span>
-                  <div className="gallery-detail-value">
-                    {active.description ? (
+                {active.description ? (
+                  <div className="gallery-detail-line gallery-detail-desc">
+                    <span className="gallery-detail-label">描述</span>
+                    <div className="gallery-detail-value">
                       <p className="result-desc">{active.description}</p>
-                    ) : (
-                      <span className="gallery-detail-empty">暂无描述</span>
-                    )}
+                    </div>
                   </div>
-                </div>
+                ) : null}
               </div>
             </div>
+                </>
+              )
+            })()}
           </div>
         </div>,
             document.body,

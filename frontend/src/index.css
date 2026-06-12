@@ -1,11 +1,11 @@
 :root {
-  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #0f172a;
+  color: #231913;
   background:
-    radial-gradient(circle at top, rgba(216, 180, 254, 0.35), transparent 36%),
-    linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+    radial-gradient(circle at top, rgba(201, 170, 132, 0.2), transparent 34%),
+    linear-gradient(180deg, #f8f2e9 0%, #f2eadf 46%, #eee4d6 100%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -25,6 +25,23 @@ body,
 
 body {
   min-width: 320px;
+  color: #231913;
+  background:
+    linear-gradient(180deg, rgba(255, 251, 245, 0.42), rgba(255, 251, 245, 0)),
+    radial-gradient(circle at top, rgba(201, 170, 132, 0.18), transparent 28%),
+    linear-gradient(180deg, #f8f2e9 0%, #f2eadf 46%, #eee4d6 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.4;
+  background-image: linear-gradient(rgba(139, 94, 60, 0.04) 1px, transparent 1px);
+  background-size: 100% 36px;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 80%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 80%);
 }
 
 button,
