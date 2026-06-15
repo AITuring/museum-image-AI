@@ -68,6 +68,26 @@ class ArtifactCreate(BaseModel):
     images: list[ArtifactImageCreate] = Field(default_factory=list)
 
 
+class ArtifactUpdate(BaseModel):
+    museum_name: str
+    name: str
+    era: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    image_id: int | None = None
+    camera_model: str | None = None
+    lens_model: str | None = None
+    capture_museum_name: str | None = None
+    exhibition_name: str | None = "常设"
+    latitude: float | None = None
+    longitude: float | None = None
+    captured_at: datetime | None = None
+    shutter_speed: str | None = None
+    aperture: str | None = None
+    iso: int | None = None
+    edit_method: str | None = None
+
+
 class CloudArtifactSubmitRequest(BaseModel):
     image_url: str
     museum_name: str

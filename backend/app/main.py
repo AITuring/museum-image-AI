@@ -38,6 +38,7 @@ from app.schemas import (
     ArtifactMatchRead,
     ArtifactImageRead,
     ArtifactRead,
+    ArtifactUpdate,
     BatchIdentifyRequest,
     BatchScanRequest,
     BatchScanResponse,
@@ -490,6 +491,28 @@ def resolve_capture_context(
         else None
     )
     return capture_museum, exhibition
+
+
+def sync_artifact_links_and_tags(
+    artifact: Artifact,
+    subject_tags: list[str],
+) -> None:
+    capture_tags: list[str] = []
+    exhibition_ids: set[int] = set()
+    for image in artifact.images:
+        capture_tags = merge_unique_tags(
+            capture_tags,
+            build_capture_tags(image.camera_model, image.lens_model),
+        )
+        if image.exhibition_id is not None:
+            exhibition_ids.add(image.exhibition_id)
+
+    merged_tags = merge_unique_tags(subject_tags, capture_tags)
+    artifact.tags = [ArtifactTag(name=tag) for tag in merged_tags]
+    artifact.exhibition_links = [
+        ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition_id)
+        for exhibition_id in sorted(exhibition_ids)
+    ]
 
 
 def build_image_metadata(
@@ -1508,6 +1531,77 @@ def list_artifacts(
             .distinct()
         )
     return list(db.scalars(query))
+
+
+@app.patch(f"{settings.api_prefix}/artifacts/{{artifact_id}}", response_model=ArtifactRead)
+def update_artifact(
+    artifact_id: int,
+    payload: ArtifactUpdate,
+    db: Session = Depends(get_db),
+) -> ArtifactRead:
+    if not payload.museum_name.strip():
+        raise HTTPException(status_code=400, detail="请填写或确认博物馆名称。")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="请填写或确认文物名称。")
+
+    if should_proxy_artifact_queries_to_cloud():
+        base = settings.cloud_api_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=30, follow_redirects=True) as client:
+                response = client.patch(
+                    f"{base}{settings.api_prefix}/artifacts/{artifact_id}",
+                    json=payload.model_dump(mode="json"),
+                )
+                response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - surface cloud update failure to the operator
+            raise HTTPException(status_code=502, detail=f"更新云端文物失败：{exc}") from exc
+        return ArtifactRead.model_validate(response.json())
+
+    artifact = db.scalar(artifact_detail_query().where(Artifact.id == artifact_id))
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="文物不存在。")
+
+    museum = ensure_museum(db, payload.museum_name)
+    artifact.museum_id = museum.id
+    artifact.name = payload.name.strip()
+    artifact.era = optional_text(payload.era)
+    artifact.description = optional_text(payload.description)
+
+    target_image = None
+    if payload.image_id is not None:
+        target_image = next((image for image in artifact.images if image.id == payload.image_id), None)
+        if target_image is None:
+            raise HTTPException(status_code=404, detail="要编辑的图片不存在。")
+    elif artifact.images:
+        target_image = artifact.images[0]
+
+    if target_image is not None:
+        capture_museum, exhibition = resolve_capture_context(
+            db,
+            payload.capture_museum_name,
+            payload.exhibition_name,
+        )
+        target_image.camera_model = optional_text(payload.camera_model)
+        target_image.lens_model = optional_text(payload.lens_model)
+        target_image.capture_museum_id = capture_museum.id if capture_museum is not None else None
+        target_image.exhibition_id = exhibition.id if exhibition is not None else None
+        target_image.latitude = payload.latitude
+        target_image.longitude = payload.longitude
+        target_image.captured_at = payload.captured_at
+        target_image.shutter_speed = optional_text(payload.shutter_speed)
+        target_image.aperture = optional_text(payload.aperture)
+        target_image.iso = payload.iso
+        target_image.edit_method = normalize_edit_method(payload.edit_method)
+
+    sync_artifact_links_and_tags(
+        artifact,
+        [tag.strip() for tag in payload.tags if tag.strip()],
+    )
+    db.commit()
+    refreshed = db.scalar(artifact_detail_query().where(Artifact.id == artifact_id))
+    if refreshed is None:
+        raise HTTPException(status_code=404, detail="文物不存在。")
+    return ArtifactRead.model_validate(refreshed)
 
 
 @app.get(f"{settings.api_prefix}/artifacts/match", response_model=ArtifactMatchRead | None)
