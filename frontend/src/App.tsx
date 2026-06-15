@@ -807,10 +807,9 @@ function App() {
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
-          <span className="brand-mark">博</span>
+          <img className="brand-mark" src="/logo.png" alt="文物数据库" />
           <div>
-            <p className="eyebrow">Museum Image DB</p>
-            <h1>文物识图工作台</h1>
+            <h1>文物数据库</h1>
           </div>
         </div>
         <div className={`health-pill ${health ? "online" : "offline"}`}>
@@ -821,33 +820,31 @@ function App() {
         </div>
       </header>
 
-      <nav className="view-tabs">
-        {!cloudOnly ? (
-          <>
-            <button
-              type="button"
-              className={view === "single" ? "active" : ""}
-              onClick={() => setView("single")}
-            >
-              单图识别
-            </button>
-            <button
-              type="button"
-              className={view === "batch" ? "active" : ""}
-              onClick={() => setView("batch")}
-            >
-              批量入库
-            </button>
-          </>
-        ) : null}
-        <button
-          type="button"
-          className={view === "gallery" ? "active" : ""}
-          onClick={() => setView("gallery")}
-        >
-          图库检索
-        </button>
-      </nav>
+      {!cloudOnly ? (
+        <nav className="view-tabs">
+          <button
+            type="button"
+            className={view === "single" ? "active" : ""}
+            onClick={() => setView("single")}
+          >
+            单图识别
+          </button>
+          <button
+            type="button"
+            className={view === "batch" ? "active" : ""}
+            onClick={() => setView("batch")}
+          >
+            批量入库
+          </button>
+          <button
+            type="button"
+            className={view === "gallery" ? "active" : ""}
+            onClick={() => setView("gallery")}
+          >
+            图库
+          </button>
+        </nav>
+      ) : null}
 
       {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 

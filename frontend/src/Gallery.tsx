@@ -143,26 +143,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   return (
     <section className="panel form-wide">
-      <div className="section-heading">
-        <span className="step-badge">🔍</span>
-        <div>
-          <h2>图库检索</h2>
-          <p className="muted">按名称、年代、博物馆或描述检索已入库文物。</p>
-        </div>
-      </div>
-
-      <form className="scan-row" onSubmit={handleSearch}>
-        <label className="field scan-input">
-          <span>关键词</span>
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="例如：青铜 / 唐代 / 南京博物院"
-          />
-        </label>
-        <button type="submit" className="primary" disabled={loading}>
-          {loading ? "检索中…" : "检索"}
-        </button>
+      <form className="gallery-search" onSubmit={handleSearch}>
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="搜索名称、时代、馆藏或描述，按回车检索"
+          aria-label="图库搜索"
+        />
       </form>
 
       {error ? <p className="error-text">{error}</p> : null}
