@@ -121,7 +121,19 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           script_stop: true
           envs: DEPLOY_PATH,REPO_URL,BRANCH,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,ROLLBACK_TARGET,ROLLBACK_REF,ROLLBACK_IMAGE,GHCR_USERNAME,GHCR_TOKEN,REPO_SSH_PRIVATE_KEY_B64
-          script_path: scripts/rollback_cloud.sh
+          script: |
+            set -euo pipefail
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              echo "Repository does not exist at $DEPLOY_PATH" >&2
+              exit 1
+            fi
+            cd "$DEPLOY_PATH"
+            git fetch --prune origin "$BRANCH" --tags
+            if [ -n "${ROLLBACK_REF:-}" ]; then
+              git checkout --force "$ROLLBACK_REF"
+            fi
+            chmod +x scripts/rollback_cloud.sh
+            bash scripts/rollback_cloud.sh
 
       - name: Mark deployment success
         if: ${{ success() }}

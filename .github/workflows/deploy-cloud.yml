@@ -150,7 +150,19 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           script_stop: true
           envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,GHCR_USERNAME,GHCR_TOKEN,REPO_SSH_PRIVATE_KEY_B64
-          script_path: scripts/deploy_cloud.sh
+          script: |
+            set -euo pipefail
+            mkdir -p "$(dirname "$DEPLOY_PATH")"
+            if [ ! -d "$DEPLOY_PATH/.git" ]; then
+              git clone "$REPO_URL" "$DEPLOY_PATH"
+            fi
+            cd "$DEPLOY_PATH"
+            git fetch --prune origin "$BRANCH" --tags
+            if [ -n "${DEPLOY_REF:-}" ]; then
+              git checkout --force "$DEPLOY_REF"
+            fi
+            chmod +x scripts/deploy_cloud.sh
+            bash scripts/deploy_cloud.sh
 
       - name: Mark deployment success
         if: ${{ success() }}
