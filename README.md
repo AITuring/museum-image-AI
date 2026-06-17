@@ -157,6 +157,7 @@ WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011
 - 有头真实 Chrome（Xvfb）比纯 API 占用更多 CPU/内存，识别也更慢（需等网页端 agent 跑完）。
 - `WEB_USER_DATA_DIR` 持久化目录同一时刻只能被一个进程占用：后端单进程没问题，但**不要在后端运行时用同一个 profile 跑登录脚本**。
 - 网页端 DOM 变化时，抓取可能失效：可调 `QWEN_WEB_ANSWER_SELECTOR`，或更新 `web_bridge.py` 里的输入框/发送按钮选择器。
+- 网页桥上传前会在内存/临时文件中自动压缩超过 `WEB_UPLOAD_MAX_FILE_BYTES` 的大图，以适配通义网页端限制；压缩会尽量把结果控制在 `WEB_UPLOAD_TARGET_MIN_FILE_BYTES` 到 `WEB_UPLOAD_TARGET_MAX_FILE_BYTES` 之间，并限制最长边不超过 `WEB_UPLOAD_MAX_DIMENSION`。这不会修改本地原图，也不会影响后续提交到 OSS 的原始图片字节。
 
 ## 批量识别入库（本地 → 云端 OSS）
 

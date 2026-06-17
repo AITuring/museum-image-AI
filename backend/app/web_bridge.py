@@ -318,6 +318,113 @@ async def _materialize_image(image_url: str, data_dir: Path) -> tuple[Path, bool
     raise ValueError(f"web bridge cannot handle image url: {image_url}")
 
 
+def _compress_for_web_upload(image_path: Path) -> bytes | None:
+    max_bytes = settings.web_upload_max_file_bytes
+    if max_bytes <= 0:
+        return None
+    target_min_bytes = min(settings.web_upload_target_min_file_bytes, max_bytes)
+    target_max_bytes = min(max(settings.web_upload_target_max_file_bytes, target_min_bytes), max_bytes)
+
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(image_path) as original:
+            image = original.convert("RGB")
+            longest_side = max(image.size)
+            max_dimension = max(960, settings.web_upload_max_dimension)
+            dimension_candidates = []
+            for candidate in (
+                min(longest_side, max_dimension),
+                5600,
+                5200,
+                4800,
+                4400,
+                4000,
+                3600,
+                3200,
+                2800,
+                2400,
+                2200,
+                2000,
+                1800,
+                1600,
+                1440,
+                1280,
+                1120,
+                960,
+            ):
+                clamped = min(longest_side, max_dimension, candidate)
+                if clamped >= 960 and clamped not in dimension_candidates:
+                    dimension_candidates.append(clamped)
+
+            best_under_limit: bytes | None = None
+            qualities = (95, 92, 90, 88, 85, 82, 80, 78, 75, 72, 70, 68, 65, 62, 60, 58, 55)
+            for target_longest in dimension_candidates:
+                if longest_side > target_longest:
+                    scale = target_longest / longest_side
+                    resized = image.resize(
+                        (max(1, round(image.size[0] * scale)), max(1, round(image.size[1] * scale))),
+                        Image.LANCZOS,
+                    )
+                else:
+                    resized = image
+
+                first_under_limit: bytes | None = None
+                for quality in qualities:
+                    buffer = BytesIO()
+                    resized.save(buffer, format="JPEG", quality=quality, optimize=True)
+                    payload = buffer.getvalue()
+                    size = len(payload)
+                    if size > max_bytes:
+                        continue
+                    if first_under_limit is None:
+                        first_under_limit = payload
+                    if target_min_bytes <= size <= target_max_bytes:
+                        return payload
+
+                if first_under_limit is None:
+                    continue
+                best_under_limit = first_under_limit
+                if len(first_under_limit) < target_min_bytes:
+                    return first_under_limit
+
+            return best_under_limit
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("web bridge failed to compress oversized image %s: %s", image_path, exc)
+        return None
+
+
+def _prepare_web_upload_image(image_path: Path) -> tuple[Path, bool]:
+    max_bytes = settings.web_upload_max_file_bytes
+    if max_bytes <= 0:
+        return image_path, False
+    if image_path.stat().st_size <= max_bytes:
+        return image_path, False
+
+    compressed = _compress_for_web_upload(image_path)
+    if not compressed:
+        logger.warning(
+            "web bridge image %s is %d bytes and could not be reduced under %d bytes; using original file",
+            image_path,
+            image_path.stat().st_size,
+            max_bytes,
+        )
+        return image_path, False
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
+    tmp.write(compressed)
+    tmp.close()
+    logger.info(
+        "web bridge compressed oversized upload %s from %d bytes to %d bytes",
+        image_path,
+        image_path.stat().st_size,
+        len(compressed),
+    )
+    return Path(tmp.name), True
+
+
 async def _upload_image(page, site: WebChatSite, image_path: Path) -> None:
     """Upload the image.
 
@@ -572,7 +679,9 @@ def _parse_tag_tokens(value: str) -> list[str]:
 
 
 def _extract_tag_block(answer_text: str) -> tuple[list[str], str]:
-    marker = re.compile(r"^(?:适合入库的)?(?:推荐)?标签(?:如下)?\s*[:：]\s*(.*)$")
+    marker = re.compile(
+        r"^(?:适合入库的)?(?:(?:入库|推荐|建议)\s*)?标签(?:建议|如下)?\s*[:：]?\s*(.*)$"
+    )
     lines = answer_text.split("\n")
     for index, line in enumerate(lines):
         match = marker.match(line.strip())
@@ -584,7 +693,7 @@ def _extract_tag_block(answer_text: str) -> tuple[list[str], str]:
             stripped = remainder.strip()
             if not stripped:
                 break
-            if re.match(r"^(?:说明|备注|理由|依据|补充)[:：]", stripped):
+            if re.match(r"^(?:说明|备注|理由|依据|补充|器型与材质|纹饰与工艺|用途与历史背景|出土与墓葬信息)[:：]?$", stripped):
                 break
             tag_lines.append(stripped)
         description_lines = lines[:index]
@@ -674,13 +783,18 @@ async def request_web_candidate(
         raise ValueError("web bridge requires at least one image url")
 
     image_path, is_temp = await _materialize_image(image_urls[0], data_dir)
+    upload_path = image_path
+    upload_is_temp = False
     try:
+        upload_path, upload_is_temp = _prepare_web_upload_image(image_path)
         if _remote_bridge_base_url():
-            answer_text = await _fetch_answer_remote(site, image_path, settings.web_prompt)
+            answer_text = await _fetch_answer_remote(site, upload_path, settings.web_prompt)
         else:
             async with _BROWSER_LOCK:  # serialize: one web conversation at a time
-                answer_text = await _fetch_answer(site, image_path, settings.web_prompt)
+                answer_text = await _fetch_answer(site, upload_path, settings.web_prompt)
     finally:
+        if upload_is_temp:
+            Path(upload_path).unlink(missing_ok=True)
         if is_temp:
             Path(image_path).unlink(missing_ok=True)
 

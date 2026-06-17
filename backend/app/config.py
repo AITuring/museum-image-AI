@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Persistent Chrome profile dir (keeps the bridge looking like a real, returning user).
     web_user_data_dir: str = "/data/web_chrome_profile"
     web_timeout_seconds: int = 150
+    web_upload_max_file_bytes: int = 10 * 1024 * 1024
+    web_upload_target_min_file_bytes: int = 2 * 1024 * 1024
+    web_upload_target_max_file_bytes: int = 8 * 1024 * 1024
+    web_upload_max_dimension: int = 4096
     web_bridge_remote_url: str = ""
     web_bridge_remote_timeout_seconds: int = 240
     web_bridge_remote_start_command: str = (
