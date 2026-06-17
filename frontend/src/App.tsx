@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { createPortal } from "react-dom"
 import "./App.css"
 import BatchConsole from "./BatchConsole"
 import Gallery from "./Gallery"
@@ -8,6 +9,22 @@ type HealthResponse = {
   status: string
   environment: string
   database: string
+}
+
+type WebBridgeStatus = {
+  enabled: boolean
+  site_key: string | null
+  site_label: string | null
+  login_required: boolean
+  auto_login_supported: boolean
+  login_command: string | null
+  detail: string | null
+}
+
+type WebBridgeLoginStart = {
+  started: boolean
+  detail: string
+  login_command: string | null
 }
 
 type UploadedImage = {
@@ -333,6 +350,10 @@ function App() {
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
   const [matchedArtifact, setMatchedArtifact] = useState<ExistingArtifactMatch | null>(null)
   const [sameArtifactDecision, setSameArtifactDecision] = useState<"yes" | "no" | null>(null)
+  const [webBridgeStatus, setWebBridgeStatus] = useState<WebBridgeStatus | null>(null)
+  const [webBridgeLoginMessage, setWebBridgeLoginMessage] = useState<string | null>(null)
+  const [showWebBridgeLoginModal, setShowWebBridgeLoginModal] = useState(false)
+  const [launchingWebBridgeLogin, setLaunchingWebBridgeLogin] = useState(false)
   const streamAbortRef = useRef<AbortController | null>(null)
 
   const orderedStreams = useMemo(
@@ -393,6 +414,45 @@ function App() {
     } finally {
       setLoadingHealth(false)
     }
+  }
+
+  async function loadWebBridgeStatus(): Promise<WebBridgeStatus | null> {
+    try {
+      const data = await fetchJson<WebBridgeStatus>(`${apiBaseUrl}/api/web-bridge/status`)
+      setWebBridgeStatus(data)
+      return data
+    } catch {
+      setWebBridgeStatus(null)
+      return null
+    }
+  }
+
+  async function ensureWebBridgeLoginReady(autoStart = true): Promise<boolean> {
+    const status = await loadWebBridgeStatus()
+    if (!status?.enabled || !status.login_required) {
+      setShowWebBridgeLoginModal(false)
+      setWebBridgeLoginMessage(null)
+      return true
+    }
+
+    setShowWebBridgeLoginModal(true)
+    setWebBridgeLoginMessage(status.detail ?? "通义网页桥当前未登录。")
+    if (!autoStart) {
+      return false
+    }
+
+    setLaunchingWebBridgeLogin(true)
+    try {
+      const result = await fetchJson<WebBridgeLoginStart>(`${apiBaseUrl}/api/web-bridge/login/start`, {
+        method: "POST",
+      })
+      setWebBridgeLoginMessage(result.detail)
+    } catch (err) {
+      setWebBridgeLoginMessage(err instanceof Error ? err.message : "无法自动启动登录，请手动执行登录命令。")
+    } finally {
+      setLaunchingWebBridgeLogin(false)
+    }
+    return false
   }
 
   function updateStream(provider: string, patch: Partial<ProviderStream>) {
@@ -485,6 +545,12 @@ function App() {
   }
 
   async function analyzeImageStream(image: UploadedImage) {
+    const ready = await ensureWebBridgeLoginReady(true)
+    if (!ready) {
+      setArtifactError("通义网页桥尚未登录，请先完成扫码登录。")
+      return
+    }
+
     streamAbortRef.current?.abort()
     const controller = new AbortController()
     streamAbortRef.current = controller
@@ -582,6 +648,7 @@ function App() {
     async function loadInitialData() {
       try {
         await loadHealth()
+        await loadWebBridgeStatus()
       } catch (err) {
         setArtifactError(err instanceof Error ? err.message : "初始化失败")
       }
@@ -609,6 +676,18 @@ function App() {
       streamAbortRef.current?.abort()
     }
   }, [])
+
+  const copyWebBridgeLoginCommand = useCallback(async () => {
+    if (!webBridgeStatus?.login_command) {
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(webBridgeStatus.login_command)
+      setWebBridgeLoginMessage("登录命令已复制到剪贴板，请在宿主机终端执行。")
+    } catch {
+      setWebBridgeLoginMessage("复制失败，请手动复制下方登录命令。")
+    }
+  }, [webBridgeStatus])
 
   useEffect(() => {
     if (!submitNotice) {
@@ -1628,6 +1707,67 @@ function App() {
           </button>
         </div>
       ) : null}
+      {showWebBridgeLoginModal
+        ? createPortal(
+            <div className="gallery-modal" onClick={() => setShowWebBridgeLoginModal(false)}>
+              <div className="gallery-modal-body bridge-login-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="section-heading">
+                  <div>
+                    <h2>通义扫码登录</h2>
+                    <p className="muted">
+                      {webBridgeStatus?.site_label || "通义网页桥"} 当前未登录，识图前需要先完成扫码。
+                    </p>
+                  </div>
+                </div>
+                <div className="bridge-login-content">
+                  <p className="result-desc">
+                    {webBridgeLoginMessage ||
+                      webBridgeStatus?.detail ||
+                      "检测到网页桥登录态缺失，请先完成通义扫码登录。"}
+                  </p>
+                  {webBridgeStatus?.auto_login_supported ? (
+                    <p className="muted small">
+                      当前环境支持自动拉起登录窗口；如果没有弹出，请点击下方“重新尝试打开登录窗口”。
+                    </p>
+                  ) : (
+                    <p className="muted small">
+                      当前是 Docker 容器环境，后端无法直接弹出你宿主机上的 Chrome 窗口，所以需要你在宿主机手动执行登录命令。
+                    </p>
+                  )}
+                  {webBridgeStatus?.login_command ? (
+                    <pre className="bridge-login-command">{webBridgeStatus.login_command}</pre>
+                  ) : null}
+                </div>
+                <div className="backend-match-actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={launchingWebBridgeLogin}
+                    onClick={() => void ensureWebBridgeLoginReady(true)}
+                  >
+                    {launchingWebBridgeLogin ? "正在尝试启动..." : "重新尝试打开登录窗口"}
+                  </button>
+                  {webBridgeStatus?.login_command ? (
+                    <button type="button" className="ghost" onClick={() => void copyWebBridgeLoginCommand()}>
+                      复制登录命令
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => {
+                      void loadWebBridgeStatus()
+                      setShowWebBridgeLoginModal(false)
+                    }}
+                  >
+                    我已登录，稍后重试
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
       </>
       ) : null}
     </main>

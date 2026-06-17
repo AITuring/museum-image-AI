@@ -350,6 +350,7 @@ APP_ROLE=local
 DASHSCOPE_API_KEY=你的key            # 用于把网页答案结构化为入库 JSON
 QWEN_WEB_ENABLED=true
 WEB_HEADLESS=false
+BACKEND_PLATFORM=linux/amd64        # Apple 芯片本机 Docker 需要强制 amd64，Chrome 才能在容器里安装
 IMPORT_DIR=/absolute/path/to/your/images  # 要批量识别的图片目录，会挂到容器 /data/import
 
 CLOUD_API_BASE_URL=http://<公网IP>:8000   # 云端后端地址（本地→云端是服务端调用，http 即可）
@@ -362,7 +363,7 @@ INGEST_TOKEN=与云端完全相同的那串
 docker compose up --build            # 识别控制台 http://localhost:5173 ，本地后端 :8000
 docker compose down
 ```
-
+> 如果你是 Apple Silicon / Arm64 机器，必须让后端容器以 `linux/amd64` 运行，否则 `playwright install chrome` 会在镜像构建时失败。
 > 容器内前端跑的是 `npm run dev:identify`（端口 5173，完整识别控制台）。这与本地 `npm run dev`（图库 7001）刻意分开，互不抢端口。
 
 ### 4. 使用
@@ -417,5 +418,3 @@ git commit -m "chore: 移除误提交的登录会话"
 # git filter-repo --path data/qwen_web_state.json --path data/doubao_web_state.json --invert-paths
 git push
 ```
-
-

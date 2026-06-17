@@ -131,6 +131,27 @@ QWEN_WEB_STORAGE_STATE=/data/qwen_web_state.json
 - 后端镜像已安装真实 Chrome 与 Xvfb（见 `backend/Dockerfile`），`CMD` 通过 `xvfb-run` 启动 uvicorn，有头 Chrome 可在无显示器服务器中运行。
 - 把登录得到的 `data/qwen_web_state.json` 挂载/拷贝到容器的 `/data/` 下（与 `QWEN_WEB_STORAGE_STATE` 路径一致）。`data/` 在 compose 中已挂载，`WEB_USER_DATA_DIR` 的持久化 profile 也写在这里。
 
+### 宿主机桥接模式（推荐给本机 Docker 开发）
+
+如果 Docker 里的 `Chrome + Xvfb` 无法稳定拉起通义上传入口，可以把网页桥执行挪到宿主机，Docker 后端只通过 HTTP 调它：
+
+```bash
+# 宿主机启动 bridge 服务（需先执行过一次 web_bridge_login.py）
+.venv-webtune/bin/python backend/scripts/host_web_bridge_server.py --port 8011
+```
+
+`.env` 中增加：
+
+```bash
+WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011
+```
+
+然后重启 Docker 后端。此模式下：
+
+- 宿主机 bridge 负责真实 Chrome、登录态和页面自动化。
+- Docker 后端只上传图片字节、接收网页回答，再继续走原来的结构化和候选合并逻辑。
+- `docker-compose.yml` 已补 `host.docker.internal` 映射，macOS / Docker Desktop 可直接访问宿主机服务。
+
 ### 注意事项
 
 - 有头真实 Chrome（Xvfb）比纯 API 占用更多 CPU/内存，识别也更慢（需等网页端 agent 跑完）。

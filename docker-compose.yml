@@ -17,6 +17,9 @@ services:
       retries: 5
 
   backend:
+    # Real Google Chrome is only available in this container workflow on x86_64.
+    # On Apple Silicon, force amd64 so the qwen web bridge remains usable.
+    platform: ${BACKEND_PLATFORM:-linux/amd64}
     build:
       context: ./backend
       args:
@@ -29,17 +32,27 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       APP_ENV: ${APP_ENV:-development}
       INSTALL_BROWSER: ${INSTALL_BROWSER:-true}
+      WEB_USER_DATA_DIR: /data/web_chrome_profile
+      QWEN_WEB_STORAGE_STATE: /data/qwen_web_state.json
+      WEB_BRIDGE_REMOTE_URL: ${WEB_BRIDGE_REMOTE_URL:-}
     # Use plain uvicorn when the browser bridge is disabled. When Chrome is installed,
     # keep Xvfb so the bridge can drive a headful browser on a headless container.
+    # `xvfb-run` is unreliable here under amd64 emulation on Apple Silicon, so start
+    # Xvfb explicitly and then launch uvicorn in the foreground.
     command: >
       sh -c 'if [ "$${INSTALL_BROWSER:-true}" = "true" ]; then
-        exec xvfb-run -a --server-args="-screen 0 1920x1080x24" uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload;
+        cd /app &&
+        Xvfb :99 -screen 0 1920x1080x24 >/tmp/xvfb.log 2>&1 &
+        export DISPLAY=:99 &&
+        exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000;
       else
-        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload;
+        cd /app && exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000;
       fi'
     # Chrome needs more shared memory than the Docker default (we also pass
     # --disable-dev-shm-usage as a belt-and-braces fallback in web_bridge.py).
     shm_size: "1gb"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
       - ./data:/data

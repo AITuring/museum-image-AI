@@ -212,6 +212,22 @@ class HealthRead(BaseModel):
     database: str
 
 
+class WebBridgeStatusRead(BaseModel):
+    enabled: bool
+    site_key: str | None = None
+    site_label: str | None = None
+    login_required: bool = False
+    auto_login_supported: bool = False
+    login_command: str | None = None
+    detail: str | None = None
+
+
+class WebBridgeLoginStartRead(BaseModel):
+    started: bool
+    detail: str
+    login_command: str | None = None
+
+
 # ── Batch identification (local side) ────────────────────────────────────────────
 
 

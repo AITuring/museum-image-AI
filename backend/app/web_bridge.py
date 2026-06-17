@@ -16,9 +16,12 @@ Important constraints learned the hard way:
 """
 
 import asyncio
+import base64
 import json
 import logging
 import re
+import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -151,7 +154,7 @@ async def _get_context():
 
 def _load_cookies(storage_state_path: str) -> list[dict]:
     """Read Playwright storage_state JSON and return its cookies (or [])."""
-    path = Path(storage_state_path)
+    path = _resolve_storage_state_path(storage_state_path)
     if not path.exists():
         return []
     try:
@@ -159,6 +162,128 @@ def _load_cookies(storage_state_path: str) -> list[dict]:
     except (OSError, ValueError):
         return []
     return data.get("cookies", []) or []
+
+
+def _resolve_storage_state_path(storage_state_path: str) -> Path:
+    path = Path(storage_state_path)
+    if path.exists():
+        return path
+    # Host-local absolute paths are not visible inside the Docker container, but the same
+    # `data/` directory is bind-mounted to `/data`. Fall back to the mounted file.
+    fallback = Path("/data") / path.name
+    if Path("/.dockerenv").exists() and fallback.exists():
+        return fallback
+    return path
+
+
+def _login_script_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "scripts" / "web_bridge_login.py"
+
+
+def _default_login_command() -> str:
+    return ".venv-webtune/bin/python backend/scripts/web_bridge_login.py --duration 300"
+
+
+def _remote_bridge_base_url() -> str:
+    return settings.web_bridge_remote_url.rstrip("/")
+
+
+def _remote_bridge_start_command() -> str:
+    return settings.web_bridge_remote_start_command
+
+
+def _remote_bridge_health() -> tuple[bool, dict[str, object] | None]:
+    base = _remote_bridge_base_url()
+    if not base:
+        return False, None
+    try:
+        response = httpx.get(
+            f"{base}/health",
+            timeout=min(settings.web_bridge_remote_timeout_seconds, 3),
+            follow_redirects=True,
+        )
+        response.raise_for_status()
+        return True, response.json()
+    except Exception:
+        return False, None
+
+
+def is_web_bridge_login_required(site: WebChatSite) -> bool:
+    return len(_load_cookies(site.storage_state)) == 0
+
+
+def can_auto_launch_web_bridge_login() -> bool:
+    return not Path("/.dockerenv").exists()
+
+
+def build_web_bridge_status(site: WebChatSite | None):
+    from app.schemas import WebBridgeStatusRead
+
+    if site is None:
+        return WebBridgeStatusRead(enabled=False, detail="未启用通义网页桥接。")
+
+    login_required = is_web_bridge_login_required(site)
+    auto_login_supported = can_auto_launch_web_bridge_login()
+    detail = None
+    remote_url = _remote_bridge_base_url()
+    if remote_url:
+        reachable, remote_status = _remote_bridge_health()
+        if not reachable:
+            detail = (
+                "已启用宿主机网页桥模式，但宿主机 bridge 服务不可达。"
+                f"请先在宿主机启动：{_remote_bridge_start_command()}"
+            )
+        elif remote_status:
+            login_required = bool(remote_status.get("login_required", login_required))
+            detail = f"当前通过宿主机网页桥执行：{remote_url}"
+    if login_required:
+        detail = (
+            "通义网页桥当前未登录。"
+            if auto_login_supported
+            else "当前运行在 Docker 容器内，无法直接弹出宿主机扫码窗口。请在宿主机运行登录脚本。"
+        )
+    return WebBridgeStatusRead(
+        enabled=True,
+        site_key=site.key,
+        site_label=site.label,
+        login_required=login_required,
+        auto_login_supported=auto_login_supported,
+        login_command=_default_login_command(),
+        detail=detail,
+    )
+
+
+def start_web_bridge_login(duration: int = 300):
+    from app.schemas import WebBridgeLoginStartRead
+
+    command = _default_login_command()
+    if not can_auto_launch_web_bridge_login():
+        return WebBridgeLoginStartRead(
+            started=False,
+            detail="当前运行在 Docker 容器内，无法直接弹出宿主机扫码窗口，请在宿主机执行下面的登录命令。",
+            login_command=command,
+        )
+
+    script = _login_script_path()
+    try:
+        subprocess.Popen(  # noqa: S603 - local trusted helper script
+            [sys.executable, str(script), "--duration", str(duration)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("web bridge login helper failed to launch: %s", exc, exc_info=exc)
+        return WebBridgeLoginStartRead(
+            started=False,
+            detail=f"自动启动登录窗口失败：{exc}",
+            login_command=command,
+        )
+    return WebBridgeLoginStartRead(
+        started=True,
+        detail="已尝试拉起通义登录窗口，请在弹出的 Chrome 中扫码登录。",
+        login_command=command,
+    )
 
 
 def _resolve_local_image_path(image_url: str, data_dir: Path) -> Path | None:
@@ -200,9 +325,29 @@ async def _upload_image(page, site: WebChatSite, image_path: Path) -> None:
     for it and set files directly. Only if it never appears do we fall back to clicking
     an attach control and catching the file chooser.
     """
+    await page.wait_for_function(
+        """() => {
+            return Boolean(
+                document.querySelector('[contenteditable="true"], textarea') ||
+                document.querySelector('input[type="file"]') ||
+                document.querySelector('button[aria-label="添加附件"], [role="button"][aria-label="添加附件"]')
+            );
+        }""",
+        timeout=40000,
+    )
+
+    all_inputs = page.locator('input[type="file"]')
+    input_count = await all_inputs.count()
+    for index in range(input_count):
+        candidate = all_inputs.nth(index)
+        accept = (await candidate.get_attribute("accept") or "").lower()
+        if any(token in accept for token in (".png", ".jpg", ".jpeg", ".bmp", ".webp", "image/")):
+            await candidate.set_input_files(str(image_path))
+            return
+
     existing = page.locator(site.image_input_selector).first
     try:
-        await existing.wait_for(state="attached", timeout=35000)
+        await existing.wait_for(state="attached", timeout=5000)
         await existing.set_input_files(str(image_path))
         return
     except Exception:
@@ -210,7 +355,7 @@ async def _upload_image(page, site: WebChatSite, image_path: Path) -> None:
 
     if site.attach_name:
         async with page.expect_file_chooser() as fc_info:
-            await page.get_by_role("button", name=site.attach_name).click(force=True)
+            await page.locator(f'button[aria-label="{site.attach_name}"], [role="button"][aria-label="{site.attach_name}"]').first.click(force=True)
         chooser = await fc_info.value
         await chooser.set_files(str(image_path))
         return
@@ -309,6 +454,33 @@ async def _fetch_answer(site: WebChatSite, image_path: Path, prompt: str) -> str
         return await _wait_for_answer(page, site)
     finally:
         await page.close()
+
+
+async def _fetch_answer_remote(site: WebChatSite, image_path: Path, prompt: str) -> str:
+    base = _remote_bridge_base_url()
+    if not base:
+        raise RuntimeError("未配置宿主机网页桥地址")
+    payload = {
+        "site_key": site.key,
+        "image_name": image_path.name,
+        "image_base64": base64.b64encode(image_path.read_bytes()).decode("ascii"),
+        "prompt": prompt,
+    }
+    timeout = httpx.Timeout(settings.web_bridge_remote_timeout_seconds)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        response = await client.post(f"{base}/v1/bridge/fetch", json=payload)
+        if not response.is_success:
+            detail = response.text
+            try:
+                detail = response.json().get("detail", detail)
+            except Exception:
+                pass
+            raise RuntimeError(f"宿主机网页桥调用失败：{detail}")
+        data = response.json()
+    answer_text = str(data.get("answer_text", "")).strip()
+    if not answer_text:
+        raise RuntimeError("宿主机网页桥未返回答案")
+    return answer_text
 
 
 async def _structure_answer(answer_text: str) -> dict[str, object]:
@@ -503,8 +675,11 @@ async def request_web_candidate(
 
     image_path, is_temp = await _materialize_image(image_urls[0], data_dir)
     try:
-        async with _BROWSER_LOCK:  # serialize: one web conversation at a time
-            answer_text = await _fetch_answer(site, image_path, settings.web_prompt)
+        if _remote_bridge_base_url():
+            answer_text = await _fetch_answer_remote(site, image_path, settings.web_prompt)
+        else:
+            async with _BROWSER_LOCK:  # serialize: one web conversation at a time
+                answer_text = await _fetch_answer(site, image_path, settings.web_prompt)
     finally:
         if is_temp:
             Path(image_path).unlink(missing_ok=True)

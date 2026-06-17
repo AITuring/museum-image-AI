@@ -1364,6 +1364,35 @@ button:disabled {
   background: rgba(250, 246, 239, 0.98);
 }
 
+.bridge-login-modal {
+  width: min(720px, 100%);
+  height: auto;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding: 22px;
+}
+
+.bridge-login-content {
+  display: grid;
+  gap: 12px;
+}
+
+.bridge-login-command {
+  margin: 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: rgba(243, 234, 223, 0.76);
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .gallery-actions {
   justify-content: flex-end;
 }
@@ -1726,6 +1755,14 @@ button:disabled {
     height: 100dvh;
     grid-template-columns: 1fr;
     border-radius: 0;
+  }
+
+  .bridge-login-modal {
+    width: calc(100vw - 24px);
+    height: auto;
+    max-height: calc(100dvh - 24px);
+    border-radius: 22px;
+    padding: 18px;
   }
 
   .gallery-modal-media {

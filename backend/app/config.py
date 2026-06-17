@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Persistent Chrome profile dir (keeps the bridge looking like a real, returning user).
     web_user_data_dir: str = "/data/web_chrome_profile"
     web_timeout_seconds: int = 150
+    web_bridge_remote_url: str = ""
+    web_bridge_remote_timeout_seconds: int = 240
+    web_bridge_remote_start_command: str = (
+        ".venv-webtune/bin/python backend/scripts/host_web_bridge_server.py --port 8011"
+    )
     web_prompt: str = (
         "请识别这件文物：优先用相似图检索确认它的身份，然后告诉我它的名称、时代、"
         "所属博物馆或出土地，并补充器型、材质、纹饰、工艺、用途、出土信息、墓葬情况、"

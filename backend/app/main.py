@@ -55,6 +55,8 @@ from app.schemas import (
     MuseumUpdate,
     PendingArtifactRead,
     PendingArtifactUpdate,
+    WebBridgeLoginStartRead,
+    WebBridgeStatusRead,
     UploadedImageRead,
     VisionAnalyzeRequest,
     VisionAnalyzeResponse,
@@ -64,7 +66,12 @@ from app.vision import (
     request_provider_analysis,
     stream_provider_analysis,
 )
-from app.web_bridge import enabled_sites, request_web_candidate
+from app.web_bridge import (
+    build_web_bridge_status,
+    enabled_sites,
+    request_web_candidate,
+    start_web_bridge_login,
+)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff"}
 EDIT_METHOD_OPTIONS = {"简单调整", "堆栈合成"}
@@ -845,6 +852,23 @@ async def fetch_cloud_artifact_match(
 @app.get(f"{settings.api_prefix}/health", response_model=HealthRead)
 def healthcheck() -> HealthRead:
     return HealthRead(status="ok", environment=settings.app_env, database="connected")
+
+
+@app.get(f"{settings.api_prefix}/web-bridge/status", response_model=WebBridgeStatusRead)
+def web_bridge_status() -> WebBridgeStatusRead:
+    site = next((item for item in enabled_sites() if item.key == "qwen_web"), None)
+    return build_web_bridge_status(site)
+
+
+@app.post(f"{settings.api_prefix}/web-bridge/login/start", response_model=WebBridgeLoginStartRead)
+def start_web_bridge_login_helper() -> WebBridgeLoginStartRead:
+    site = next((item for item in enabled_sites() if item.key == "qwen_web"), None)
+    if site is None:
+        raise HTTPException(status_code=400, detail="未启用通义网页桥接。")
+    result = start_web_bridge_login()
+    if not result.started and "Docker 容器" in result.detail:
+        raise HTTPException(status_code=409, detail=result.detail)
+    return result
 
 
 @app.post(
