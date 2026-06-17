@@ -508,9 +508,18 @@ def sync_artifact_links_and_tags(
             exhibition_ids.add(image.exhibition_id)
 
     merged_tags = merge_unique_tags(subject_tags, capture_tags)
-    artifact.tags = [ArtifactTag(name=tag) for tag in merged_tags]
+    existing_tags = {tag.name: tag for tag in artifact.tags}
+    artifact.tags = [
+        existing_tags.get(tag_name) or ArtifactTag(name=tag_name)
+        for tag_name in merged_tags
+    ]
+
+    existing_links = {
+        link.exhibition_id: link for link in artifact.exhibition_links if link.exhibition_id is not None
+    }
     artifact.exhibition_links = [
-        ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition_id)
+        existing_links.get(exhibition_id)
+        or ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition_id)
         for exhibition_id in sorted(exhibition_ids)
     ]
 
@@ -1539,6 +1548,9 @@ def update_artifact(
     payload: ArtifactUpdate,
     db: Session = Depends(get_db),
 ) -> ArtifactRead:
+    # #region debug-point A:patch-entry
+    import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"artifacts-patch-500","runId":"pre-fix","hypothesisId":"A","location":"backend/app/main.py:update_artifact:entry","msg":"[DEBUG] patch artifact request received","data":{"artifact_id":artifact_id,"museum_name":payload.museum_name,"name":payload.name,"image_id":payload.image_id,"tag_count":len(payload.tags),"capture_museum_name":payload.capture_museum_name,"exhibition_name":payload.exhibition_name}}).encode(), headers={"Content-Type":"application/json"})).read()
+    # #endregion
     if not payload.museum_name.strip():
         raise HTTPException(status_code=400, detail="请填写或确认博物馆名称。")
     if not payload.name.strip():
@@ -1546,18 +1558,27 @@ def update_artifact(
 
     if should_proxy_artifact_queries_to_cloud():
         base = settings.cloud_api_base_url.rstrip("/")
+        # #region debug-point B:proxy-branch
+        import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"artifacts-patch-500","runId":"pre-fix","hypothesisId":"B","location":"backend/app/main.py:update_artifact:proxy","msg":"[DEBUG] patch artifact entered proxy branch","data":{"artifact_id":artifact_id,"base":base}}).encode(), headers={"Content-Type":"application/json"})).read()
+        # #endregion
         try:
             with httpx.Client(timeout=30, follow_redirects=True) as client:
                 response = client.patch(
                     f"{base}{settings.api_prefix}/artifacts/{artifact_id}",
                     json=payload.model_dump(mode="json"),
                 )
+                # #region debug-point B:proxy-response
+                import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"artifacts-patch-500","runId":"pre-fix","hypothesisId":"B","location":"backend/app/main.py:update_artifact:proxy-response","msg":"[DEBUG] proxy response received","data":{"artifact_id":artifact_id,"status_code":response.status_code,"body_preview":response.text[:400]}}).encode(), headers={"Content-Type":"application/json"})).read()
+                # #endregion
                 response.raise_for_status()
         except Exception as exc:  # noqa: BLE001 - surface cloud update failure to the operator
             raise HTTPException(status_code=502, detail=f"更新云端文物失败：{exc}") from exc
         return ArtifactRead.model_validate(response.json())
 
     artifact = db.scalar(artifact_detail_query().where(Artifact.id == artifact_id))
+    # #region debug-point C:local-branch
+    import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"artifacts-patch-500","runId":"pre-fix","hypothesisId":"C","location":"backend/app/main.py:update_artifact:local","msg":"[DEBUG] patch artifact entered local branch","data":{"artifact_id":artifact_id,"artifact_found":artifact is not None}}).encode(), headers={"Content-Type":"application/json"})).read()
+    # #endregion
     if artifact is None:
         raise HTTPException(status_code=404, detail="文物不存在。")
 
@@ -1581,6 +1602,9 @@ def update_artifact(
             payload.capture_museum_name,
             payload.exhibition_name,
         )
+        # #region debug-point D:image-update
+        import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"artifacts-patch-500","runId":"pre-fix","hypothesisId":"D","location":"backend/app/main.py:update_artifact:image-update","msg":"[DEBUG] resolved target image context","data":{"artifact_id":artifact_id,"target_image_id":target_image.id,"capture_museum_id":capture_museum.id if capture_museum is not None else None,"exhibition_id":exhibition.id if exhibition is not None else None,"edit_method":payload.edit_method}}).encode(), headers={"Content-Type":"application/json"})).read()
+        # #endregion
         target_image.camera_model = optional_text(payload.camera_model)
         target_image.lens_model = optional_text(payload.lens_model)
         target_image.capture_museum_id = capture_museum.id if capture_museum is not None else None
@@ -1597,6 +1621,9 @@ def update_artifact(
         artifact,
         [tag.strip() for tag in payload.tags if tag.strip()],
     )
+    # #region debug-point E:before-commit
+    import json, urllib.request; urllib.request.urlopen(urllib.request.Request("http://127.0.0.1:7777/event", data=json.dumps({"sessionId":"artifacts-patch-500","runId":"pre-fix","hypothesisId":"E","location":"backend/app/main.py:update_artifact:before-commit","msg":"[DEBUG] local artifact update ready to commit","data":{"artifact_id":artifact_id,"museum_id":artifact.museum_id,"image_count":len(artifact.images),"tag_count":len(artifact.tags),"exhibition_link_count":len(artifact.exhibition_links)}}).encode(), headers={"Content-Type":"application/json"})).read()
+    # #endregion
     db.commit()
     refreshed = db.scalar(artifact_detail_query().where(Artifact.id == artifact_id))
     if refreshed is None:

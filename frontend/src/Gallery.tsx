@@ -208,7 +208,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     if (!active) return
     setActiveImageIndex(0)
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setActive(null)
+      if (event.key === "Escape" && !editing) setActive(null)
     }
     document.addEventListener("keydown", onKeyDown)
     const prevOverflow = document.body.style.overflow
@@ -217,7 +217,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       document.removeEventListener("keydown", onKeyDown)
       document.body.style.overflow = prevOverflow
     }
-  }, [active?.id])
+  }, [active?.id, editing])
 
   function handleSearch(event: FormEvent) {
     event.preventDefault()
@@ -242,6 +242,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setEditForm(null)
     setTagInput("")
     setSaveError(null)
+    setActive(null)
   }
 
   function addTags(rawValue: string) {
@@ -292,6 +293,10 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         throw new Error("请填写或确认文物名称")
       }
 
+      // #region debug-point A:save-request
+      fetch("http://127.0.0.1:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "artifacts-patch-500", runId: "pre-fix", hypothesisId: "A", location: "frontend/src/Gallery.tsx:handleSave:request", msg: "[DEBUG] gallery save request prepared", data: { artifactId: active.id, imageId: editForm.imageId, museumName: editForm.museumName.trim(), name: editForm.name.trim(), era: editForm.era.trim() || null, tagCount: editForm.tags.length, captureMuseumName: editForm.captureMuseumName.trim() || null, exhibitionName: editForm.exhibitionName.trim() || "常设", latitude: editForm.latitude.trim() || null, longitude: editForm.longitude.trim() || null, capturedAt: editForm.capturedAt.trim() || null, editMethod: editForm.editMethod || null }, ts: Date.now() }) }).catch(() => {})
+      // #endregion
+
       const response = await fetch(`${apiBaseUrl}/api/artifacts/${active.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -316,6 +321,10 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         }),
       })
 
+      // #region debug-point B:save-response
+      fetch("http://127.0.0.1:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "artifacts-patch-500", runId: "pre-fix", hypothesisId: "B", location: "frontend/src/Gallery.tsx:handleSave:response", msg: "[DEBUG] gallery save response received", data: { artifactId: active.id, status: response.status, ok: response.ok }, ts: Date.now() }) }).catch(() => {})
+      // #endregion
+
       if (!response.ok) {
         let message = `HTTP ${response.status}`
         try {
@@ -326,21 +335,18 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         } catch {
           // Ignore non-JSON error bodies.
         }
+        // #region debug-point B:save-error
+        fetch("http://127.0.0.1:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "artifacts-patch-500", runId: "pre-fix", hypothesisId: "B", location: "frontend/src/Gallery.tsx:handleSave:error", msg: "[DEBUG] gallery save failed response", data: { artifactId: active.id, status: response.status, message }, ts: Date.now() }) }).catch(() => {})
+        // #endregion
         throw new Error(message)
       }
 
       const updated = normalizeArtifact((await response.json()) as RawGalleryArtifact)
-      const nextIndex =
-        updated.images.findIndex((image) => image.id === editForm.imageId) >= 0
-          ? updated.images.findIndex((image) => image.id === editForm.imageId)
-          : 0
       setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
-      setActive(updated)
-      setActiveImageIndex(nextIndex)
       setEditing(false)
       setEditForm(null)
       setTagInput("")
-      setSaveNotice("已保存修改")
+      setActive(null)
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "保存失败")
     } finally {
@@ -405,7 +411,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       {active
         ? createPortal(
-            <div className="gallery-modal" onClick={() => setActive(null)}>
+            <div className="gallery-modal" onClick={() => !editing && setActive(null)}>
               <div className="gallery-modal-body" onClick={(e) => e.stopPropagation()}>
                 {(() => {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
@@ -431,9 +437,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
                   return (
                     <>
-                      <button type="button" className="gallery-close" onClick={() => setActive(null)}>
-                        ×
-                      </button>
                       <div className="gallery-modal-media">
                         {currentImage ? (
                           <>
@@ -470,7 +473,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
                       <div className="gallery-modal-info">
                         <div className="gallery-detail-head">
-                          <div>
+                          <div className="gallery-title-block">
                             <h3 className="gallery-detail-title">{active.name}</h3>
                             {currentImage ? (
                               <p className="muted small">
@@ -485,16 +488,31 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 编辑资料
                               </button>
                             ) : (
-                              <button type="button" className="ghost" onClick={handleCancelEdit} disabled={saving}>
-                                取消编辑
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  className="ghost"
+                                  onClick={handleCancelEdit}
+                                  disabled={saving}
+                                >
+                                  取消编辑
+                                </button>
+                                <button
+                                  type="submit"
+                                  form="gallery-edit-form"
+                                  className="primary"
+                                  disabled={saving}
+                                >
+                                  {saving ? "保存中..." : "保存修改"}
+                                </button>
+                              </>
                             )}
-                            {currentImage ? (
+                            {currentImage && !editing ? (
                               <a
                                 href={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="primary small"
+                                className="gallery-link-button"
                               >
                                 查看原图
                               </a>
@@ -503,7 +521,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                         </div>
 
                         {editing && editForm ? (
-                          <form className="gallery-edit-form" onSubmit={handleSave}>
+                          <form id="gallery-edit-form" className="gallery-edit-form" onSubmit={handleSave}>
                             <p className="muted small gallery-edit-note">
                               名称、时代、馆藏、描述会更新整条文物记录；下方拍摄参数仅更新当前这张图片。
                             </p>
@@ -782,7 +800,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               ) : (
                                 <span />
                               )}
-                              <button type="submit" className="primary" disabled={saving}>
+                              <button type="submit" className="primary gallery-bottom-save" disabled={saving}>
                                 {saving ? "保存中..." : "保存修改"}
                               </button>
                             </div>
