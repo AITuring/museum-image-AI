@@ -1,0 +1,190 @@
+name: Rollback Cloud Backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      rollback_target:
+        description: "回滚类型：previous-successful / last-successful / custom"
+        required: true
+        default: previous-successful
+      rollback_ref:
+        description: "当 rollback_target=custom 时填写对应 commit SHA 或 git ref"
+        required: false
+      image_tag:
+        description: "当 rollback_target=custom 时填写镜像 tag，例如 sha-abcdef1"
+        required: false
+
+concurrency:
+  group: deploy-cloud-production
+  cancel-in-progress: false
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ secrets.PRODUCTION_APP_URL }}
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch recent release history
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT || 22 }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_APP_PATH: ${{ secrets.SERVER_APP_PATH }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_key"
+          chmod 600 "$HOME/.ssh/server_key"
+          ssh-keyscan -p "$SERVER_PORT" "$SERVER_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+
+          ssh -i "$HOME/.ssh/server_key" \
+            -p "$SERVER_PORT" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${SERVER_USER}@${SERVER_HOST}" \
+            "cd '$SERVER_APP_PATH' && if [ -f .deploy/release_history.tsv ]; then tail -n 5 .deploy/release_history.tsv; fi" \
+            > recent_release_history.tsv || true
+
+      - name: Resolve rollback metadata
+        id: meta
+        run: |
+          IMAGE_NAME="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/museum-image-backend"
+          if [ "${{ inputs.rollback_target }}" = "custom" ]; then
+            if [ -z "${{ inputs.rollback_ref }}" ] || [ -z "${{ inputs.image_tag }}" ]; then
+              echo "rollback_ref and image_tag are required for custom rollback" >&2
+              exit 1
+            fi
+            echo "rollback_ref=${{ inputs.rollback_ref }}" >> "$GITHUB_OUTPUT"
+            echo "rollback_image=${IMAGE_NAME}:${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create deployment record
+        id: create_deployment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const response = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ steps.meta.outputs.rollback_ref }}' || context.sha,
+              environment: 'production',
+              auto_merge: false,
+              required_contexts: [],
+              description: 'Rollback backend image on production',
+              transient_environment: false,
+              production_environment: true
+            });
+            core.setOutput('deployment_id', String(response.data.id));
+
+      - name: Roll back on server
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_APP_PATH }}
+          REPO_URL: git@github.com:${{ github.repository }}.git
+          BRANCH: main
+          COMPOSE_FILE: docker-compose.cloud.yml
+          HEALTHCHECK_URL: ${{ secrets.BACKEND_HEALTHCHECK_URL }}
+          HEALTHCHECK_RETRIES: "30"
+          HEALTHCHECK_INTERVAL: "5"
+          ROLLBACK_TARGET: ${{ inputs.rollback_target }}
+          ROLLBACK_REF: ${{ steps.meta.outputs.rollback_ref }}
+          ROLLBACK_IMAGE: ${{ steps.meta.outputs.rollback_image }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          REPO_SSH_PRIVATE_KEY: ${{ secrets.REPO_SSH_PRIVATE_KEY }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script_stop: true
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,ROLLBACK_TARGET,ROLLBACK_REF,ROLLBACK_IMAGE,GHCR_USERNAME,GHCR_TOKEN,REPO_SSH_PRIVATE_KEY
+          script_path: scripts/rollback_cloud.sh
+
+      - name: Mark deployment success
+        if: ${{ success() }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: Number('${{ steps.create_deployment.outputs.deployment_id }}'),
+              state: 'success',
+              environment: 'production',
+              environment_url: '${{ secrets.PRODUCTION_APP_URL }}',
+              log_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: 'Production rollback succeeded'
+            });
+
+      - name: Mark deployment failure
+        if: ${{ failure() }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: Number('${{ steps.create_deployment.outputs.deployment_id }}'),
+              state: 'failure',
+              environment: 'production',
+              log_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: 'Production rollback failed'
+            });
+
+      - name: Write rollback summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## Release Card"
+            echo
+            echo "> Production rollback overview for this workflow run."
+            echo
+            echo "### Rollback Request"
+            echo
+            echo "| Key | Value |"
+            echo "| --- | --- |"
+            echo "| Status | \`${{ job.status }}\` |"
+            echo "| Environment | \`production\` |"
+            echo "| Rollback Mode | \`${{ inputs.rollback_target }}\` |"
+            echo "| Commit / Ref | \`${{ steps.meta.outputs.rollback_ref || 'resolved on server history' }}\` |"
+            echo "| Image | \`${{ steps.meta.outputs.rollback_image || 'resolved on server history' }}\` |"
+            echo "| Requested At | \`${{ github.run_started_at }}\` |"
+            echo "| App URL | ${{ secrets.PRODUCTION_APP_URL || 'Not configured' }} |"
+            echo
+            echo "### Quick Actions"
+            echo
+            echo "- [Open workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "- [Open deploy workflow](https://github.com/${{ github.repository }}/actions/workflows/deploy-cloud.yml)"
+            echo "- [Open production environment](https://github.com/${{ github.repository }}/deployments)"
+            echo
+            echo "### Recent Successful Releases"
+            echo
+            echo "| Deployed At (UTC) | Commit / Ref | Image |"
+            echo "| --- | --- | --- |"
+            if [ -s recent_release_history.tsv ]; then
+              tac recent_release_history.tsv | while IFS=$'\t' read -r deployed_at deployed_ref deployed_image; do
+                echo "| \`${deployed_at}\` | \`${deployed_ref}\` | \`${deployed_image}\` |"
+              done
+            else
+              echo "| \`n/a\` | \`No release history found on server\` | \`n/a\` |"
+            fi
+            echo
+            echo "### Notes"
+            echo
+            echo "- \`previous-successful\` and \`last-successful\` are resolved from the server-side release history in \`.deploy/release_history.tsv\`."
+            echo "- \`custom\` rollback uses the exact commit/ref and image tag you provide in the workflow form."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,218 @@
+name: Deploy Cloud Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - "docker-compose.cloud.yml"
+      - ".github/workflows/deploy-cloud.yml"
+      - "scripts/deploy_cloud.sh"
+      - "scripts/rollback_cloud.sh"
+      - ".env.example"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "可选：指定要重新部署的镜像 tag，例如 sha-abcdef1"
+        required: false
+      deploy_ref:
+        description: "可选：与镜像对应的 commit SHA 或 git ref"
+        required: false
+
+concurrency:
+  group: deploy-cloud-production
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_name: ${{ steps.meta.outputs.image_name }}
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_ref: ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.image_tag }}
+      deploy_ref: ${{ steps.meta.outputs.deploy_ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image metadata
+        id: meta
+        run: |
+          IMAGE_NAME="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/museum-image-backend"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
+            IMAGE_TAG="${{ inputs.image_tag }}"
+            DEPLOY_REF="${{ inputs.deploy_ref }}"
+            if [ -z "$DEPLOY_REF" ] && [[ "$IMAGE_TAG" == sha-* ]]; then
+              DEPLOY_REF="${IMAGE_TAG#sha-}"
+            fi
+          else
+            IMAGE_TAG="sha-${GITHUB_SHA}"
+            DEPLOY_REF="${GITHUB_SHA}"
+          fi
+
+          echo "image_name=$IMAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "deploy_ref=$DEPLOY_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_tag != '') }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_tag != '') }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend image
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.image_tag != '') }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          build-args: |
+            INSTALL_BROWSER=false
+          tags: |
+            ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.image_tag }}
+            ${{ steps.meta.outputs.image_name }}:main
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: ${{ secrets.PRODUCTION_APP_URL }}
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create deployment record
+        id: create_deployment
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const response = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ needs.build.outputs.deploy_ref }}' || context.sha,
+              environment: 'production',
+              auto_merge: false,
+              required_contexts: [],
+              description: 'Deploy backend image to production',
+              transient_environment: false,
+              production_environment: true
+            });
+            core.setOutput('deployment_id', String(response.data.id));
+
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_APP_PATH }}
+          REPO_URL: git@github.com:${{ github.repository }}.git
+          BRANCH: main
+          DEPLOY_REF: ${{ needs.build.outputs.deploy_ref }}
+          BACKEND_IMAGE: ${{ needs.build.outputs.image_name }}:${{ needs.build.outputs.image_tag }}
+          COMPOSE_FILE: docker-compose.cloud.yml
+          HEALTHCHECK_URL: ${{ secrets.BACKEND_HEALTHCHECK_URL }}
+          HEALTHCHECK_RETRIES: "30"
+          HEALTHCHECK_INTERVAL: "5"
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          REPO_SSH_PRIVATE_KEY: ${{ secrets.REPO_SSH_PRIVATE_KEY }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script_stop: true
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,GHCR_USERNAME,GHCR_TOKEN,REPO_SSH_PRIVATE_KEY
+          script_path: scripts/deploy_cloud.sh
+
+      - name: Mark deployment success
+        if: ${{ success() }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: Number('${{ steps.create_deployment.outputs.deployment_id }}'),
+              state: 'success',
+              environment: 'production',
+              environment_url: '${{ secrets.PRODUCTION_APP_URL }}',
+              log_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: 'Production deployment succeeded'
+            });
+
+      - name: Mark deployment failure
+        if: ${{ failure() }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: Number('${{ steps.create_deployment.outputs.deployment_id }}'),
+              state: 'failure',
+              environment: 'production',
+              log_url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              description: 'Production deployment failed'
+            });
+
+      - name: Write deployment summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "## Release Card"
+            echo
+            echo "> Production deployment overview for this workflow run."
+            echo
+            echo "### Current Release"
+            echo
+            echo "| Key | Value |"
+            echo "| --- | --- |"
+            echo "| Status | \`${{ job.status }}\` |"
+            echo "| Environment | \`production\` |"
+            echo "| Commit / Ref | \`${{ needs.build.outputs.deploy_ref || github.sha }}\` |"
+            echo "| Image | \`${{ needs.build.outputs.image_ref }}\` |"
+            echo "| Trigger | \`${{ github.event_name }}\` |"
+            echo "| Deployed At | \`${{ github.run_started_at }}\` |"
+            echo "| App URL | ${{ secrets.PRODUCTION_APP_URL || 'Not configured' }} |"
+            echo
+            echo "### Quick Actions"
+            echo
+            echo "- [Open workflow run](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo "- [Open production environment](https://github.com/${{ github.repository }}/deployments)"
+            echo "- [Open rollback workflow](https://github.com/${{ github.repository }}/actions/workflows/rollback-cloud.yml)"
+            echo
+            echo "### Rollback Shortcut"
+            echo
+            echo "| Input | Suggested value |"
+            echo "| --- | --- |"
+            echo "| \`rollback_target\` | \`custom\` |"
+            echo "| \`rollback_ref\` | \`${{ needs.build.outputs.deploy_ref || github.sha }}\` |"
+            echo "| \`image_tag\` | \`${{ needs.build.outputs.image_tag }}\` |"
+            echo
+            echo "### Notes"
+            echo
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.image_tag }}" ]; then
+              echo "- This run redeploys an existing image tag instead of building a new image."
+            else
+              echo "- This run built a new GHCR image and deployed it to production."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

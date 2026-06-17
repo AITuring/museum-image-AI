@@ -10,6 +10,7 @@
 | **本地机器 · npm** | 线上图库前端的本地预览（连**云端**后端） | `cd frontend && npm run dev` |
 
 > 关键原则：**「识图」永远连本地后端，「图库」永远连云端后端**。
+>
 > - Docker（识图控制台 `:5173` + 本地后端 `:8000`）只负责识别和入库到云端，互不掺和图库。
 > - 图库（Vercel 线上、本地 `npm run dev` 的 `:7001`）都只读云端后端，且都用「同源 + 服务端反代」的方式连接（Vercel 用 `vercel.json` rewrites，本地用 Vite dev proxy），所以**不需要给云端配 CORS**。
 
@@ -17,82 +18,86 @@
 
 ---
 
-## 一、阿里云服务器（后端 + 数据库）
+## 一、阿里云服务器（后端 + 数据库 + GitHub Actions 自动部署）
 
-### 1. 安装 Docker（一次性）
+当前线上后端采用：
 
-国内阿里云服务器走官方脚本 `get.docker.com` 常被重置（`curl: (35) Connection reset by peer`），直接用阿里云 apt 源安装最稳：
+- GitHub Actions 构建后端镜像
+- GHCR（GitHub Container Registry）保存镜像
+- 阿里云服务器只执行 `docker compose pull` + `docker compose up -d`
+- GitHub Deployments / Job Summary 展示每次部署与回滚
+
+你在 GitHub 网页里主要看 3 个地方：
+
+- `Actions`：查看构建、部署、重部署、回滚日志
+- `Environments -> production`：查看生产环境部署记录
+- `Actions run summary`：查看本次部署的 commit、镜像 tag、环境、线上地址、回滚入口
+
+### 1. 服务器初始化（一次性）
+
+国内阿里云服务器安装 Docker，用阿里云 apt 源最稳：
 
 ```bash
-# 依赖
 sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
+sudo apt-get install -y ca-certificates curl gnupg git
 
-# 阿里云 Docker GPG key
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/ubuntu/gpg \
   | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-# 阿里云 Docker 源（VERSION_CODENAME 自动取系统代号，如 jammy）
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
   https://mirrors.aliyun.com/docker-ce/linux/ubuntu \
   $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
   | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# 安装 Docker + compose 插件
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# 启动并验证
 sudo systemctl enable --now docker
+
+docker --version
 docker compose version
+git --version
 ```
 
-> 镜像加速器（构建时从 Docker Hub 拉 `python`/`postgres` 等基础镜像会快很多）：
->
-> ```bash
-> sudo mkdir -p /etc/docker
-> sudo tee /etc/docker/daemon.json > /dev/null <<'EOF'
-> {
->   "registry-mirrors": ["https://docker.1ms.run", "https://docker.mirrors.ustc.edu.cn"]
-> }
-> EOF
-> sudo systemctl daemon-reload && sudo systemctl restart docker
-> ```
+创建部署目录：
 
-> **故障排查：`apt-get update` 报 GPG / 仓库未签名错误**
-> 多为服务器上残留的无关第三方源（如 MongoDB）公钥缺失导致。先定位并清理：
->
-> ```bash
-> grep -rl mongodb /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null
-> sudo rm /etc/apt/sources.list.d/mongodb-org-7.0.list   # 用实际输出的文件名
-> sudo apt-get update
-> ```
+```bash
+sudo mkdir -p /opt/museum-image
+sudo chown -R "$USER":"$USER" /opt/museum-image
+```
 
-### 2. 开放端口
+开放端口：
 
-- 阿里云控制台 → ECS → 安全组 → 入方向：放行 TCP `8000`（来源 `0.0.0.0/0` 或仅信任 IP）。
-- 服务器防火墙（若启用）：`sudo ufw allow 8000/tcp`（或 firewalld 对应命令）。
+- 阿里云安全组放行 TCP `8000`
+- 服务器若启用 UFW：`sudo ufw allow 8000/tcp`
 
-### 3. 拉代码
+### 2. 服务器准备仓库与 `.env`
+
+服务器仍然需要保留一份仓库副本，用来同步：
+
+- `docker-compose.cloud.yml`
+- `scripts/deploy_cloud.sh`
+- `scripts/rollback_cloud.sh`
+
+首次拉仓库：
 
 ```bash
 cd /opt
-git clone https://github.com/AITuring/museum-image-AI.git museum-image
-cd museum-image
+git clone git@github.com:<你的组织或用户名>/<你的仓库名>.git museum-image
+cd /opt/museum-image
 ```
 
-### 4. 配置 `.env`
+创建云端 `.env`：
 
 ```bash
 cp .env.example .env
-openssl rand -hex 32        # 生成 INGEST_TOKEN，记下来，本地要用同一个
+openssl rand -hex 32
 vi .env
 ```
 
-云端必填项：
+云端最少需要：
 
 ```bash
 APP_ROLE=cloud
@@ -104,51 +109,183 @@ POSTGRES_PASSWORD=改成强密码
 DATABASE_URL=postgresql+psycopg://museum:改成强密码@postgres:5432/museum_image_db
 
 BACKEND_PORT=8000
-INGEST_TOKEN=粘贴 openssl 生成的串
+INGEST_TOKEN=与本地完全一致
 
 OSS_ACCESS_KEY_ID=你的AK
 OSS_ACCESS_KEY_SECRET=你的SK
-OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com   # 改成 bucket 所在地域
+OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 OSS_BUCKET=你的bucket名
 OSS_KEY_PREFIX=artifacts/
 
-# 仅 Vercel 选项 B（前端直连）才需要：
+# 仅当前端直连后端时需要：
 # CORS_ORIGINS=https://your-app.vercel.app
 ```
 
-> `DATABASE_URL` 的密码与 `POSTGRES_PASSWORD` 必须一致；主机名固定写 `postgres`。
+注意：
 
-OSS 准备：建 Bucket（记地域）→ 建 RAM AccessKey 并授权该 Bucket 读写 → Bucket 设「公共读」（否则前端看不到图）→ 若有防盗链白名单，加入 Vercel 域名。
+- `DATABASE_URL` 的密码必须与 `POSTGRES_PASSWORD` 一致
+- `DATABASE_URL` 的主机固定写 `postgres`
+- `.env` 只放在服务器，不要提交到 Git
 
-### 5. 启动 / 更新 / 停止
+### 3. GitHub Secrets 与权限
+
+仓库需要配置以下 Secrets：
+
+| Secret | 用途 | 示例 |
+| --- | --- | --- |
+| `SERVER_HOST` | 服务器公网 IP 或域名 | `1.2.3.4` |
+| `SERVER_PORT` | SSH 端口 | `22` |
+| `SERVER_USER` | 部署用户 | `root` / `ubuntu` |
+| `SERVER_SSH_KEY` | Actions 登录服务器的私钥 | 多行 OpenSSH 私钥 |
+| `SERVER_APP_PATH` | 服务器仓库目录 | `/opt/museum-image` |
+| `BACKEND_HEALTHCHECK_URL` | 健康检查地址 | `http://127.0.0.1:8000/api/health` |
+| `REPO_SSH_PRIVATE_KEY` | 服务器拉 GitHub 仓库用私钥 | 多行 OpenSSH 私钥 |
+| `GHCR_USERNAME` | 服务器登录 GHCR 的用户名 | GitHub 用户名 |
+| `GHCR_TOKEN` | 服务器拉 GHCR 镜像的 token | PAT |
+| `PRODUCTION_APP_URL` | 线上后端地址 | `https://api.example.com` |
+
+`GHCR_TOKEN` 建议使用 GitHub Personal Access Token，至少包含：
+
+- `read:packages`
+- 私有仓库场景建议再加 `repo`
+
+如果你的 GHCR 包是私有的，服务器端必须能用这个 token 成功执行：
 
 ```bash
-# 首次启动（构建镜像，约几分钟）
-docker compose -f docker-compose.cloud.yml up -d --build
+echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+```
 
-# 查看状态 / 日志
+另外，仓库建议启用：
+
+- `Settings -> Environments -> production`
+- 可选：给 `production` 加 reviewer 或分支限制
+
+### 4. GitHub Actions 流程
+
+当前有两个工作流：
+
+- [deploy-cloud.yml](file:///Users/dp/Desktop/my-museun-image/.github/workflows/deploy-cloud.yml)
+- [rollback-cloud.yml](file:///Users/dp/Desktop/my-museun-image/.github/workflows/rollback-cloud.yml)
+
+#### 自动部署
+
+当 `main` 分支发生这些文件变更时，会自动触发部署：
+
+- `backend/**`
+- `docker-compose.cloud.yml`
+- `.github/workflows/deploy-cloud.yml`
+- `scripts/deploy_cloud.sh`
+- `scripts/rollback_cloud.sh`
+- `.env.example`
+
+自动部署会做：
+
+1. 构建后端镜像
+2. 推送到 GHCR：
+   - `ghcr.io/<owner>/museum-image-backend:sha-<commit_sha>`
+   - `ghcr.io/<owner>/museum-image-backend:main`
+3. SSH 登录服务器
+4. 拉取对应镜像并执行 `docker compose up -d`
+5. 调用健康检查
+6. 失败时自动回滚到上一版成功镜像
+7. 把 deployment 状态写进 GitHub
+8. 在本次 Actions 页面写入 Job Summary
+
+#### 手动重部署
+
+在 GitHub `Actions -> Deploy Cloud Backend -> Run workflow`：
+
+- 不填参数：按当前 commit 重新构建并部署
+- 填 `image_tag`：直接重部署已存在镜像
+- 可选填 `deploy_ref`：把部署记录绑定到指定 commit / ref
+
+#### 手动回滚
+
+在 GitHub `Actions -> Rollback Cloud Backend -> Run workflow`：
+
+- `previous-successful`
+  - 回滚到上一个成功版本
+- `last-successful`
+  - 重新部署当前记录的最后成功版本
+- `custom`
+  - 自己填写：
+    - `rollback_ref`
+    - `image_tag`
+
+服务器上的发布记录保存在：
+
+- `.deploy/current_release.env`
+- `.deploy/release_history.tsv`
+
+### 5. 首次上线建议顺序
+
+1. 在本地确认代码已提交并 push
+2. 在 GitHub 配好所有 Secrets
+3. 在 GitHub 创建 `production` Environment
+4. 在服务器放好 `.env`
+5. 在服务器验证可以拉仓库
+6. 在服务器验证可以登录 GHCR
+7. 手动运行一次 `Deploy Cloud Backend`
+8. 成功后再手动运行一次 `Rollback Cloud Backend` 做演练
+
+### 6. 日常操作
+
+查看服务器状态：
+
+```bash
+cd /opt/museum-image
 docker compose -f docker-compose.cloud.yml ps
 docker compose -f docker-compose.cloud.yml logs -f backend
+docker compose -f docker-compose.cloud.yml logs -f postgres
+```
 
-# 代码更新后重新部署
-git pull && docker compose -f docker-compose.cloud.yml up -d --build
+验证后端：
 
-# 重启后端
-docker compose -f docker-compose.cloud.yml restart backend
+```bash
+curl http://127.0.0.1:8000/api/health
+curl http://<公网IP>:8000/api/health
+```
 
-# 停止（保留数据库卷）
+查看服务器记录的当前发布版本：
+
+```bash
+cd /opt/museum-image
+cat .deploy/current_release.env
+tail -n 20 .deploy/release_history.tsv
+```
+
+停止服务：
+
+```bash
+cd /opt/museum-image
 docker compose -f docker-compose.cloud.yml down
-# 停止并删除数据库卷（危险，会清空数据）
+```
+
+危险操作，删除数据库卷：
+
+```bash
+cd /opt/museum-image
 docker compose -f docker-compose.cloud.yml down -v
 ```
 
-### 6. 验证
+### 7. Actions 页面里的发布说明模板
 
-```bash
-curl http://localhost:8000/api/health           # 服务器本机
-curl http://<公网IP>:8000/api/health            # 外网，应返回 {"status":"ok",...}
-curl -X POST http://<公网IP>:8000/api/ingest/artifacts   # 无 token，应 401/503
-```
+每次部署或回滚结束后，当前 run 的 `Summary` 会自动显示：
+
+- 部署状态
+- 环境名
+- commit / ref
+- 镜像 tag
+- 线上地址
+- 当前 workflow 链接
+- 回滚或重部署入口
+
+这样你不用进日志全文，也能快速知道：
+
+- 这次部署了哪个 commit
+- 用了哪个镜像
+- 部署到哪里
+- 下一步该点哪里去重部署或回滚
 
 ---
 

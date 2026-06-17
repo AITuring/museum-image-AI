@@ -26,6 +26,7 @@ import/*
 !import/.gitkeep
 .venv/*_env
 .venv-*
+.deploy/
 
 # Python bytecode in scripts
 backend/scripts/__pycache__

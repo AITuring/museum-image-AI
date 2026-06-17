@@ -2,7 +2,7 @@
 # The frontend is deployed separately to Vercel (see README "云端部署"). No Chrome /
 # qwen bridge here — that runs on the local machine.
 #
-#   git pull && docker compose -f docker-compose.cloud.yml up -d --build
+#   BACKEND_IMAGE=ghcr.io/<owner>/<repo>-backend:sha-<commit> docker compose -f docker-compose.cloud.yml up -d
 #
 # Configure .env first (APP_ROLE=cloud, INGEST_TOKEN, OSS_*, POSTGRES_*, CORS_ORIGINS).
 
@@ -24,11 +24,7 @@ services:
     restart: unless-stopped
 
   backend:
-    build:
-      context: ./backend
-      args:
-        # Cloud role needs no browser — skip Chrome/Xvfb for a lean, fast build.
-        INSTALL_BROWSER: "false"
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     container_name: museum-cloud-backend
     env_file:
       - .env
