@@ -237,15 +237,25 @@ def run_startup_migrations(connection) -> None:
 
 def sync_reference_options(connection) -> None:
     for museum_name in WENWU_MUSEUM_OPTIONS:
-        latitude, longitude = WENWU_MUSEUM_COORDINATES.get(museum_name, (None, None))
+        longitude, latitude = WENWU_MUSEUM_COORDINATES.get(museum_name, (None, None))
         connection.execute(
             text(
                 """
                 INSERT INTO museums (name, description, latitude, longitude)
                 VALUES (:name, :description, :latitude, :longitude)
                 ON CONFLICT (name) DO UPDATE
-                SET latitude = COALESCE(museums.latitude, EXCLUDED.latitude),
-                    longitude = COALESCE(museums.longitude, EXCLUDED.longitude)
+                SET latitude = CASE
+                        WHEN museums.latitude IS NULL OR museums.longitude IS NULL THEN EXCLUDED.latitude
+                        WHEN ABS(museums.latitude - :reversed_latitude) < 0.000001
+                         AND ABS(museums.longitude - :reversed_longitude) < 0.000001 THEN EXCLUDED.latitude
+                        ELSE museums.latitude
+                    END,
+                    longitude = CASE
+                        WHEN museums.latitude IS NULL OR museums.longitude IS NULL THEN EXCLUDED.longitude
+                        WHEN ABS(museums.latitude - :reversed_latitude) < 0.000001
+                         AND ABS(museums.longitude - :reversed_longitude) < 0.000001 THEN EXCLUDED.longitude
+                        ELSE museums.longitude
+                    END
                 """
             ),
             {
@@ -253,6 +263,8 @@ def sync_reference_options(connection) -> None:
                 "description": "从 wenwu.tsx 参考数据同步",
                 "latitude": latitude,
                 "longitude": longitude,
+                "reversed_latitude": longitude,
+                "reversed_longitude": latitude,
             },
         )
 

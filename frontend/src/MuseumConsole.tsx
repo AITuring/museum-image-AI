@@ -45,6 +45,17 @@ function buildMuseumEditForm(museum: MuseumRecord): MuseumEditForm {
   }
 }
 
+function normalizeMuseumCoordinates<T extends { latitude: number | null; longitude: number | null }>(museum: T): T {
+  if (museum.latitude == null || museum.longitude == null) return museum
+  const hasReversedCoordinates = Math.abs(museum.latitude) > 90 && Math.abs(museum.longitude) <= 90
+  if (!hasReversedCoordinates) return museum
+  return {
+    ...museum,
+    latitude: museum.longitude,
+    longitude: museum.latitude,
+  }
+}
+
 function parseOptionalNumber(value: string, label: string) {
   const trimmed = value.trim()
   if (!trimmed) return null
@@ -107,35 +118,6 @@ function formatReverseGeocodeResult(result: any) {
   return poiName || formatted || district || null
 }
 
-function loadAMapScript() {
-  const mapWindow = window as any
-
-  if (mapWindow.AMap) {
-    return Promise.resolve(mapWindow.AMap)
-  }
-
-  mapWindow._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
-
-  return new Promise<any>((resolve, reject) => {
-    const existing = document.getElementById(AMAP_SCRIPT_ID) as HTMLScriptElement | null
-    if (existing) {
-      const handleLoad = () => resolve(mapWindow.AMap)
-      const handleError = () => reject(new Error("高德地图加载失败"))
-      existing.addEventListener("load", handleLoad, { once: true })
-      existing.addEventListener("error", handleError, { once: true })
-      return
-    }
-
-    const script = document.createElement("script")
-    script.id = AMAP_SCRIPT_ID
-    script.src = AMAP_SCRIPT_SRC
-    script.async = true
-    script.onload = () => resolve(mapWindow.AMap)
-    script.onerror = () => reject(new Error("高德地图加载失败"))
-    document.head.appendChild(script)
-  })
-}
-
 export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [query, setQuery] = useState("")
   const [submittedQuery, setSubmittedQuery] = useState("")
@@ -157,6 +139,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const museumMarkersRef = useRef<any[]>([])
   const editMarkerRef = useRef<any | null>(null)
   const reverseGeocodeRequestRef = useRef(0)
+  const resizeObserverRef = useRef<ResizeObserver | null>(null)
 
   const activeMuseum = useMemo(
     () => items.find((item) => item.id === activeId) ?? items[0] ?? null,
@@ -174,7 +157,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`)
         }
-        const payload = (await response.json()) as MuseumRecord[]
+        const payload = ((await response.json()) as MuseumRecord[]).map((item) => normalizeMuseumCoordinates(item))
         setItems(payload)
         setActiveId((current) => {
           if (payload.length === 0) return null
@@ -203,26 +186,79 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   useEffect(() => {
     let disposed = false
+    let finalizeTimer: number | null = null
+    let onWinResize: (() => void) | null = null
 
-    async function initializeMap() {
-      if (!mapContainerRef.current || mapRef.current) return
-      setMapLoading(true)
-      setMapError(null)
+    const initializeMap = () => {
+      if (!mapContainerRef.current) {
+        window.setTimeout(() => {
+          if (!disposed && mapContainerRef.current && (window as any).AMap && !mapRef.current) {
+            initializeMap()
+          }
+        }, 200)
+        return
+      }
+
+      const mapWindow = window as any
+      if (!mapWindow.AMap) {
+        console.error("高德地图API未加载")
+        setMapLoading(false)
+        setMapError("高德地图API未加载")
+        return
+      }
+
+      if (mapRef.current) return
 
       try {
-        const AMap = await loadAMapScript()
-        if (disposed || !mapContainerRef.current || mapRef.current) return
-        const map = new AMap.Map(mapContainerRef.current, {
+        const map = new mapWindow.AMap.Map(mapContainerRef.current, {
           zoom: 5,
-          center: [104.195397, 35.86166],
+          center: [116.397428, 39.90923],
           mapStyle: "amap://styles/whitesmoke",
         })
+
+        const safeResize = () => {
+          try {
+            const anyMap = map as any
+            if (typeof anyMap.resize === "function") {
+              anyMap.resize()
+            } else {
+              const center = map.getCenter()
+              const zoom = map.getZoom()
+              map.setZoom(zoom)
+              map.setCenter(center)
+            }
+          } catch {}
+        }
+
+        let finalized = false
+        const finalizeMap = () => {
+          if (disposed || finalized) return
+          finalized = true
+          safeResize()
+          window.setTimeout(() => {
+            if (disposed) return
+            safeResize()
+            setMapReady(true)
+            setMapLoading(false)
+          }, 0)
+        }
+
         mapRef.current = map
-        map.on("complete", () => {
-          if (disposed) return
-          setMapReady(true)
-          setMapLoading(false)
-        })
+
+        map.on("complete", () => finalizeMap())
+        map.on("tilesloaded", () => finalizeMap())
+
+        onWinResize = () => safeResize()
+        window.addEventListener("resize", onWinResize)
+
+        if ("ResizeObserver" in window && mapContainerRef.current) {
+          resizeObserverRef.current?.disconnect()
+          const observer = new ResizeObserver(() => safeResize())
+          observer.observe(mapContainerRef.current)
+          resizeObserverRef.current = observer
+        }
+
+        finalizeTimer = window.setTimeout(() => finalizeMap(), 1200)
       } catch (err) {
         if (disposed) return
         setMapLoading(false)
@@ -230,10 +266,60 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
     }
 
-    void initializeMap()
+    const mountTimer = window.setTimeout(() => {
+      const mapWindow = window as any
+      if (mapWindow.AMap) {
+        initializeMap()
+        return
+      }
+
+      setMapLoading(true)
+      setMapError(null)
+      mapWindow._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
+
+      const existing = document.getElementById(AMAP_SCRIPT_ID) as HTMLScriptElement | null
+      if (existing) {
+        existing.addEventListener(
+          "load",
+          () => initializeMap(),
+          { once: true },
+        )
+        existing.addEventListener(
+          "error",
+          () => {
+            console.error("高德地图加载失败")
+            setMapLoading(false)
+            setMapError("高德地图加载失败")
+          },
+          { once: true },
+        )
+        return
+      }
+
+      const script = document.createElement("script")
+      script.id = AMAP_SCRIPT_ID
+      script.src = AMAP_SCRIPT_SRC
+      script.async = true
+      script.onload = () => initializeMap()
+      script.onerror = () => {
+        console.error("高德地图加载失败")
+        setMapLoading(false)
+        setMapError("高德地图加载失败")
+      }
+      document.head.appendChild(script)
+    }, 100)
 
     return () => {
       disposed = true
+      window.clearTimeout(mountTimer)
+      if (finalizeTimer !== null) {
+        window.clearTimeout(finalizeTimer)
+      }
+      if (onWinResize) {
+        window.removeEventListener("resize", onWinResize)
+      }
+      resizeObserverRef.current?.disconnect()
+      resizeObserverRef.current = null
       museumMarkersRef.current.forEach((marker) => marker.setMap?.(null))
       museumMarkersRef.current = []
       editMarkerRef.current?.setMap?.(null)
@@ -310,7 +396,8 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [])
 
   const handleLocateByName = useCallback(async () => {
-    if (!editing || !editForm || !window.AMap?.PlaceSearch) return
+    const mapWindow = window as any
+    if (!editing || !editForm || !mapWindow.AMap?.PlaceSearch) return
     const queryText = editForm.name.trim() || activeMuseum?.name || ""
     if (!queryText) {
       setSaveError("请先填写博物馆名称，再尝试自动定位")
@@ -322,7 +409,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
 
     try {
       const resolved = await new Promise<{ lng: number; lat: number } | null>((resolve) => {
-        const placeSearch = new window.AMap.PlaceSearch({
+        const placeSearch = new mapWindow.AMap.PlaceSearch({
           city: "全国",
           citylimit: false,
           pageSize: 5,
@@ -355,7 +442,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   const renderMarkers = useCallback(() => {
     const map = mapRef.current
-    const AMap = window.AMap
+    const AMap = (window as any).AMap
     if (!map || !AMap) return
 
     museumMarkersRef.current.forEach((marker) => marker.setMap?.(null))
@@ -363,7 +450,9 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     editMarkerRef.current?.setMap?.(null)
     editMarkerRef.current = null
 
-    const markers = items
+    const markerMuseums = editing ? [] : activeMuseum ? [activeMuseum] : items
+
+    const markers = markerMuseums
       .filter((museum) => museum.latitude != null && museum.longitude != null)
       .map((museum) => {
         const marker = new AMap.Marker({
