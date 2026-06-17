@@ -293,10 +293,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         throw new Error("请填写或确认文物名称")
       }
 
-      // #region debug-point A:save-request
-      fetch("http://127.0.0.1:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "artifacts-patch-500", runId: "pre-fix", hypothesisId: "A", location: "frontend/src/Gallery.tsx:handleSave:request", msg: "[DEBUG] gallery save request prepared", data: { artifactId: active.id, imageId: editForm.imageId, museumName: editForm.museumName.trim(), name: editForm.name.trim(), era: editForm.era.trim() || null, tagCount: editForm.tags.length, captureMuseumName: editForm.captureMuseumName.trim() || null, exhibitionName: editForm.exhibitionName.trim() || "常设", latitude: editForm.latitude.trim() || null, longitude: editForm.longitude.trim() || null, capturedAt: editForm.capturedAt.trim() || null, editMethod: editForm.editMethod || null }, ts: Date.now() }) }).catch(() => {})
-      // #endregion
-
       const response = await fetch(`${apiBaseUrl}/api/artifacts/${active.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -321,10 +317,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         }),
       })
 
-      // #region debug-point B:save-response
-      fetch("http://127.0.0.1:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "artifacts-patch-500", runId: "pre-fix", hypothesisId: "B", location: "frontend/src/Gallery.tsx:handleSave:response", msg: "[DEBUG] gallery save response received", data: { artifactId: active.id, status: response.status, ok: response.ok }, ts: Date.now() }) }).catch(() => {})
-      // #endregion
-
       if (!response.ok) {
         let message = `HTTP ${response.status}`
         try {
@@ -335,9 +327,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         } catch {
           // Ignore non-JSON error bodies.
         }
-        // #region debug-point B:save-error
-        fetch("http://127.0.0.1:7777/event", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sessionId: "artifacts-patch-500", runId: "pre-fix", hypothesisId: "B", location: "frontend/src/Gallery.tsx:handleSave:error", msg: "[DEBUG] gallery save failed response", data: { artifactId: active.id, status: response.status, message }, ts: Date.now() }) }).catch(() => {})
-        // #endregion
         throw new Error(message)
       }
 
