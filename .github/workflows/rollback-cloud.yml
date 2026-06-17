@@ -24,7 +24,6 @@ jobs:
     timeout-minutes: 30
     environment:
       name: production
-      url: ${{ secrets.PRODUCTION_APP_URL }}
     permissions:
       contents: read
       deployments: write
