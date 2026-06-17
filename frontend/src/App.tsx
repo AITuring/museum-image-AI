@@ -810,6 +810,7 @@ function App() {
           <img className="brand-mark" src="/logo.png" alt="文物数据库" />
           <div>
             <h1>文物数据库</h1>
+            <p className="muted">基于多模型的文物识别与入库系统</p>
           </div>
         </div>
         <div className={`health-pill ${health ? "online" : "offline"}`}>
