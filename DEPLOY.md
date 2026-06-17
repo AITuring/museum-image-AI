@@ -9,7 +9,7 @@
 | **本地机器 · Docker** | 识图服务（识别控制台 + 本地后端 + 本地库），通义网页桥 + Chrome | Docker `docker-compose.yml` |
 | **本地机器 · npm** | 线上图库前端的本地预览（连**云端**后端） | `cd frontend && npm run dev` |
 
-> 关键原则：**「识图」永远连本地后端，「图库」永远连云端后端**。
+> 关键原则：**「识图」永远连本地后端，「图库」永远连云端后端**。 
 >
 > - Docker（识图控制台 `:5173` + 本地后端 `:8000`）只负责识别和入库到云端，互不掺和图库。
 > - 图库（Vercel 线上、本地 `npm run dev` 的 `:7001`）都只读云端后端，且都用「同源 + 服务端反代」的方式连接（Vercel 用 `vercel.json` rewrites，本地用 Vite dev proxy），所以**不需要给云端配 CORS**。
@@ -417,3 +417,5 @@ git commit -m "chore: 移除误提交的登录会话"
 # git filter-repo --path data/qwen_web_state.json --path data/doubao_web_state.json --invert-paths
 git push
 ```
+
+
