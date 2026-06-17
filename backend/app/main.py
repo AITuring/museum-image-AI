@@ -1173,33 +1173,33 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
     image_path = resolve_uploaded_file_path(payload.image_url)
     content_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
     base = settings.cloud_api_base_url.rstrip("/")
+    submit_data = {
+        "museum_name": payload.museum_name.strip(),
+        "name": payload.name.strip(),
+        "era": payload.era or "",
+        "description": payload.description or "",
+        "tags": json.dumps(payload.tags, ensure_ascii=False),
+        "camera_model": payload.camera_model or "",
+        "lens_model": payload.lens_model or "",
+        "capture_museum_name": payload.capture_museum_name or "",
+        "exhibition_name": normalize_exhibition_name(payload.exhibition_name),
+        "latitude": "" if payload.latitude is None else str(payload.latitude),
+        "longitude": "" if payload.longitude is None else str(payload.longitude),
+        "captured_at": payload.captured_at.isoformat() if payload.captured_at else "",
+        "shutter_speed": payload.shutter_speed or "",
+        "aperture": payload.aperture or "",
+        "iso": "" if payload.iso is None else str(payload.iso),
+        "edit_method": payload.edit_method or "",
+    }
+    if payload.existing_artifact_id is not None:
+        submit_data["existing_artifact_id"] = str(payload.existing_artifact_id)
 
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             response = await client.post(
                 f"{base}{settings.api_prefix}/ingest/artifacts",
                 files={"image": (image_path.name, image_path.read_bytes(), content_type)},
-                data={
-                    "museum_name": payload.museum_name.strip(),
-                    "name": payload.name.strip(),
-                    "era": payload.era or "",
-                    "description": payload.description or "",
-                    "existing_artifact_id": ""
-                    if payload.existing_artifact_id is None
-                    else str(payload.existing_artifact_id),
-                    "tags": json.dumps(payload.tags, ensure_ascii=False),
-                    "camera_model": payload.camera_model or "",
-                    "lens_model": payload.lens_model or "",
-                    "capture_museum_name": payload.capture_museum_name or "",
-                    "exhibition_name": normalize_exhibition_name(payload.exhibition_name),
-                    "latitude": "" if payload.latitude is None else str(payload.latitude),
-                    "longitude": "" if payload.longitude is None else str(payload.longitude),
-                    "captured_at": payload.captured_at.isoformat() if payload.captured_at else "",
-                    "shutter_speed": payload.shutter_speed or "",
-                    "aperture": payload.aperture or "",
-                    "iso": "" if payload.iso is None else str(payload.iso),
-                    "edit_method": payload.edit_method or "",
-                },
+                data=submit_data,
                 headers={"Authorization": f"Bearer {settings.ingest_token}"},
             )
             response.raise_for_status()

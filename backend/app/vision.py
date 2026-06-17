@@ -462,8 +462,6 @@ def sanitize_generated_tags(
         normalized_tag = _normalize_tag_value(tag)
         if not normalized_tag or normalized_tag in blocked_normalized:
             continue
-        if any(normalized_tag == blocked or normalized_tag in blocked or blocked in normalized_tag for blocked in blocked_normalized):
-            continue
         if tag not in cleaned_tags:
             cleaned_tags.append(tag)
     return cleaned_tags
