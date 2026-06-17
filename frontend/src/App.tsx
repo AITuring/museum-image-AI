@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import "./App.css"
 import BatchConsole from "./BatchConsole"
 import Gallery from "./Gallery"
+import MuseumConsole from "./MuseumConsole"
 
 type HealthResponse = {
   status: string
@@ -154,7 +155,45 @@ const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? 
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
 
-type View = "single" | "batch" | "gallery"
+type View = "single" | "batch" | "gallery" | "museums"
+
+const VIEW_PATHS: Record<View, string> = {
+  single: "/single",
+  batch: "/batch",
+  gallery: "/gallery",
+  museums: "/museums",
+}
+
+const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
+  { view: "single", label: "单图识别", cloudVisible: false },
+  { view: "batch", label: "批量入库", cloudVisible: false },
+  { view: "gallery", label: "图库", cloudVisible: true },
+  { view: "museums", label: "博物馆", cloudVisible: true },
+]
+
+function isViewAvailable(view: View) {
+  return !cloudOnly || view === "gallery" || view === "museums"
+}
+
+function getDefaultView(): View {
+  return cloudOnly ? "gallery" : "single"
+}
+
+function normalizeViewFromPath(pathname: string): View {
+  const normalizedPath = pathname.replace(/\/+$/, "") || "/"
+  const matched = (Object.entries(VIEW_PATHS) as Array<[View, string]>).find(
+    ([, path]) => path === normalizedPath,
+  )?.[0]
+
+  if (!matched) {
+    return getDefaultView()
+  }
+  return isViewAvailable(matched) ? matched : getDefaultView()
+}
+
+function getPathForView(view: View) {
+  return VIEW_PATHS[isViewAvailable(view) ? view : getDefaultView()]
+}
 
 const PIPELINE_STEPS = [
   { key: "analyze", label: "看图分析", hint: "多模态模型读取图像与展签文字" },
@@ -282,7 +321,7 @@ function App() {
   const [artifactSubmitting, setArtifactSubmitting] = useState(false)
   const [artifactMessage, setArtifactMessage] = useState<string | null>(null)
   const [artifactError, setArtifactError] = useState<string | null>(null)
-  const [view, setView] = useState<View>(cloudOnly ? "gallery" : "single")
+  const [view, setViewState] = useState<View>(() => normalizeViewFromPath(window.location.pathname))
   const [providerOrder, setProviderOrder] = useState<string[]>([])
   const [providerStreams, setProviderStreams] = useState<Record<string, ProviderStream>>({})
   const [unavailableProviders, setUnavailableProviders] = useState<string[]>([])
@@ -300,6 +339,16 @@ function App() {
     () => providerOrder.map((name) => providerStreams[name]).filter(Boolean) as ProviderStream[],
     [providerOrder, providerStreams],
   )
+
+  const setView = useCallback((nextView: View, options?: { replace?: boolean }) => {
+    const resolvedView = isViewAvailable(nextView) ? nextView : getDefaultView()
+    setViewState(resolvedView)
+    const targetPath = getPathForView(resolvedView)
+    if (window.location.pathname !== targetPath) {
+      const method = options?.replace ? "replaceState" : "pushState"
+      window.history[method]({}, "", targetPath)
+    }
+  }, [])
 
   const bestCandidateKey = useMemo(() => {
     let bestKey: string | null = null
@@ -538,6 +587,21 @@ function App() {
       }
     }
     void loadInitialData()
+  }, [])
+
+  useEffect(() => {
+    const normalizedView = normalizeViewFromPath(window.location.pathname)
+    const targetPath = getPathForView(normalizedView)
+    setViewState(normalizedView)
+    if (window.location.pathname !== targetPath) {
+      window.history.replaceState({}, "", targetPath)
+    }
+
+    const handlePopState = () => {
+      setViewState(normalizeViewFromPath(window.location.pathname))
+    }
+    window.addEventListener("popstate", handlePopState)
+    return () => window.removeEventListener("popstate", handlePopState)
   }, [])
 
   useEffect(() => {
@@ -813,41 +877,46 @@ function App() {
 
           </div>
         </div>
-        <div className={`health-pill ${health ? "online" : "offline"}`}>
-          <span className="status-dot" />
-          <span>
-            {loadingHealth ? "检查后端…" : health ? `后端在线 · ${health.environment}` : "后端未连通"}
-          </span>
+        <div className="topbar-actions">
+          <nav className="topbar-nav" aria-label="顶部导航">
+            {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly)
+              .filter((item) => item.view === "gallery" || item.view === "museums")
+              .map((item) => (
+              <button
+                type="button"
+                key={`top-${item.view}`}
+                className={view === item.view ? "active" : ""}
+                onClick={() => setView(item.view)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className={`health-pill ${health ? "online" : "offline"}`}>
+            <span className="status-dot" />
+            <span>
+              {loadingHealth ? "检查后端…" : health ? `后端在线 · ${health.environment}` : "后端未连通"}
+            </span>
+          </div>
         </div>
       </header>
 
-      {!cloudOnly ? (
-        <nav className="view-tabs">
+      <nav className="view-tabs">
+        {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
           <button
             type="button"
-            className={view === "single" ? "active" : ""}
-            onClick={() => setView("single")}
+            key={item.view}
+            className={view === item.view ? "active" : ""}
+            onClick={() => setView(item.view)}
           >
-            单图识别
+            {item.label}
           </button>
-          <button
-            type="button"
-            className={view === "batch" ? "active" : ""}
-            onClick={() => setView("batch")}
-          >
-            批量入库
-          </button>
-          <button
-            type="button"
-            className={view === "gallery" ? "active" : ""}
-            onClick={() => setView("gallery")}
-          >
-            图库
-          </button>
-        </nav>
-      ) : null}
+        ))}
+      </nav>
 
       {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
+
+      {view === "museums" ? <MuseumConsole apiBaseUrl={apiBaseUrl} /> : null}
 
       {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 

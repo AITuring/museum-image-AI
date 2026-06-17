@@ -23,6 +23,8 @@ class Museum(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -36,6 +38,25 @@ class Museum(Base):
     )
     captured_images: Mapped[list["ArtifactImage"]] = relationship(
         back_populates="capture_museum"
+    )
+
+    @property
+    def artifact_count(self) -> int:
+        return len(self.artifacts)
+
+    @property
+    def exhibition_count(self) -> int:
+        return len(self.exhibitions)
+
+
+class EraOption(Base):
+    __tablename__ = "era_options"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

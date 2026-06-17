@@ -6,6 +6,16 @@ from pydantic import BaseModel, ConfigDict, Field
 class MuseumCreate(BaseModel):
     name: str
     location: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+
+
+class MuseumUpdate(BaseModel):
+    name: str
+    location: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     description: str | None = None
 
 
@@ -27,7 +37,18 @@ class ExhibitionRead(ExhibitionCreate):
 class MuseumRead(MuseumCreate):
     id: int
     created_at: datetime
+    artifact_count: int = 0
+    exhibition_count: int = 0
     exhibitions: list[ExhibitionRead] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EraOptionRead(BaseModel):
+    id: int
+    name: str
+    sort_order: int
+    created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 

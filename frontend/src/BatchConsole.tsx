@@ -67,6 +67,12 @@ type MuseumOption = {
   name: string
 }
 
+type EraOption = {
+  id: number
+  name: string
+  sort_order: number
+}
+
 type ExhibitionOption = {
   id: number
   museum_id: number
@@ -116,8 +122,8 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [error, setError] = useState<string | null>(null)
   const [selectedFolderLabel, setSelectedFolderLabel] = useState<string | null>(null)
   const [tagInputs, setTagInputs] = useState<Record<number, string>>({})
-  const [museumSuggestions, setMuseumSuggestions] = useState<Record<number, MuseumOption[]>>({})
-  const [selectedCaptureMuseums, setSelectedCaptureMuseums] = useState<Record<number, MuseumOption | null>>({})
+  const [museumOptions, setMuseumOptions] = useState<MuseumOption[]>([])
+  const [eraOptions, setEraOptions] = useState<EraOption[]>([])
   const [exhibitionSuggestions, setExhibitionSuggestions] = useState<
     Record<number, ExhibitionOption[]>
   >({})
@@ -153,6 +159,21 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [loadPending])
 
   useEffect(() => {
+    void (async () => {
+      try {
+        const [museums, eras] = await Promise.all([
+          fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?limit=200`),
+          fetchJson<EraOption[]>(`${apiBaseUrl}/api/era-options`),
+        ])
+        setMuseumOptions(museums)
+        setEraOptions(eras)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "加载下拉选项失败")
+      }
+    })()
+  }, [apiBaseUrl])
+
+  useEffect(() => {
     if (!submitNotice) {
       return
     }
@@ -166,47 +187,8 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   useEffect(() => {
     const cleanup: Array<() => void> = []
     items.forEach((item) => {
-      const rawQuery = item.capture_museum_name?.trim() ?? ""
-      if (!rawQuery.startsWith("@")) {
-        setMuseumSuggestions((current) => {
-          if (!current[item.id]?.length) return current
-          const next = { ...current }
-          delete next[item.id]
-          return next
-        })
-        return
-      }
-      const q = rawQuery.slice(1).trim()
-      const controller = new AbortController()
-      const timer = window.setTimeout(async () => {
-        try {
-          const params = new URLSearchParams({ limit: "8" })
-          if (q) params.set("q", q)
-          const data = await fetchJson<MuseumOption[]>(
-            `${apiBaseUrl}/api/museums?${params.toString()}`,
-            { signal: controller.signal },
-          )
-          setMuseumSuggestions((current) => ({ ...current, [item.id]: data }))
-        } catch {
-          if (!controller.signal.aborted) {
-            setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
-          }
-        }
-      }, 180)
-      cleanup.push(() => {
-        controller.abort()
-        window.clearTimeout(timer)
-      })
-    })
-    return () => {
-      cleanup.forEach((fn) => fn())
-    }
-  }, [apiBaseUrl, items])
-
-  useEffect(() => {
-    const cleanup: Array<() => void> = []
-    items.forEach((item) => {
-      const selectedMuseum = selectedCaptureMuseums[item.id]
+      const selectedMuseum =
+        museumOptions.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ?? null
       const rawQuery = item.exhibition_name?.trim() ?? ""
       if (!selectedMuseum || !rawQuery.startsWith("@")) {
         setExhibitionSuggestions((current) => {
@@ -245,7 +227,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     return () => {
       cleanup.forEach((fn) => fn())
     }
-  }, [apiBaseUrl, items, selectedCaptureMuseums])
+  }, [apiBaseUrl, items, museumOptions])
 
   function patchLocal(id: number, patch: Partial<PendingArtifact>) {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)))
@@ -410,10 +392,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         throw new Error("请填写或确认文物名称")
       }
       if (
-        !(item.capture_museum_name ?? "").trim() ||
-        (item.capture_museum_name ?? "").trim().startsWith("@")
+        !(item.capture_museum_name ?? "").trim()
       ) {
-        throw new Error("请填写或选择拍摄时所在博物馆")
+        throw new Error("请先选择拍摄时所在博物馆")
       }
       if (!(item.exhibition_name ?? "").trim() || (item.exhibition_name ?? "").trim().startsWith("@")) {
         throw new Error("请填写或选择展览名称")
@@ -512,7 +493,13 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       ) : null}
 
       <div className="batch-list">
-        {items.map((item) => (
+        {items.map((item) => {
+          const hasMuseumOptions = museumOptions.length > 0
+          const hasEraOptions = eraOptions.length > 0
+          const selectedMuseum =
+            museumOptions.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ?? null
+
+          return (
           <article key={item.id} className="batch-card">
             <div className="batch-thumb">
               <img
@@ -540,15 +527,23 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <div className="batch-core-grid">
                   <label className={`field ${isMissingValue(item.museum_name) ? "field-invalid" : ""}`}>
                     <span>博物馆 / 出土地</span>
-                    <input
+                    <select
                       value={item.museum_name ?? ""}
-                      onChange={(e) => patchLocal(item.id, { museum_name: e.target.value })}
-                      placeholder="例如：陕西考古博物馆"
-                    />
+                      onChange={(e) => patchLocal(item.id, { museum_name: e.target.value || null })}
+                    >
+                      <option value="">
+                        {hasMuseumOptions ? "请选择博物馆 / 出土地" : "加载博物馆选项中…"}
+                      </option>
+                      {museumOptions.map((museum) => (
+                        <option key={museum.id} value={museum.name}>
+                          {museum.name}
+                        </option>
+                      ))}
+                    </select>
                     {isMissingValue(item.museum_name) ? (
                       <span className="field-help error">请先确认文物所属博物馆或出土地。</span>
                     ) : (
-                      <span className="field-help">单图同款主字段，提交前建议优先核对。</span>
+                      <span className="field-help">从数据库下拉选择，减少馆名不一致的问题。</span>
                     )}
                   </label>
                   <label className={`field ${isMissingValue(item.name) ? "field-invalid" : ""}`}>
@@ -566,13 +561,21 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </label>
                   <label className={`field ${isMissingValue(item.era) ? "field-soft-missing" : ""}`}>
                     <span>时代</span>
-                    <input
+                    <select
                       value={item.era ?? ""}
-                      onChange={(e) => patchLocal(item.id, { era: e.target.value })}
-                      placeholder="例如：唐代"
-                    />
+                      onChange={(e) => patchLocal(item.id, { era: e.target.value || null })}
+                    >
+                      <option value="">{hasEraOptions ? "请选择时代" : "加载时代选项中…"}</option>
+                      {eraOptions.map((era) => (
+                        <option key={era.id} value={era.name}>
+                          {era.name}
+                        </option>
+                      ))}
+                    </select>
                     <span className="field-help">
-                      {isMissingValue(item.era) ? "建议补充时代，便于后续检索和筛选。" : "可填朝代、时期或具体纪年。"}
+                      {isMissingValue(item.era)
+                        ? "时代改为数据库下拉选择，便于后续检索和筛选。"
+                        : "已按参考时代列表选择，可直接提交或继续补充其他字段。"}
                     </span>
                   </label>
                   <label
@@ -587,7 +590,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       value={item.exhibition_name ?? ""}
                       onChange={(e) => patchLocal(item.id, { exhibition_name: e.target.value })}
                       placeholder={
-                        selectedCaptureMuseums[item.id]
+                        selectedMuseum
                           ? "默认常设，输入 @ 后联想检索该馆展览"
                           : "例如：常设 / 大唐遗宝特展"
                       }
@@ -665,55 +668,37 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </label>
                 <label
                   className={`field ${
-                    isMissingValue(item.capture_museum_name) || needsSelection(item.capture_museum_name)
-                      ? "field-invalid"
-                      : ""
+                    isMissingValue(item.capture_museum_name) ? "field-invalid" : ""
                   }`}
                 >
                   <span>拍摄时博物馆</span>
-                  <input
+                  <select
                     value={item.capture_museum_name ?? ""}
                     onChange={(e) => {
                       const value = e.target.value
-                      patchLocal(item.id, { capture_museum_name: value })
-                      if (selectedCaptureMuseums[item.id]?.name !== value) {
-                        setSelectedCaptureMuseums((current) => ({ ...current, [item.id]: null }))
-                      }
+                      patchLocal(item.id, {
+                        capture_museum_name: value || null,
+                        exhibition_name:
+                          value && (!(item.exhibition_name ?? "").trim() || (item.exhibition_name ?? "").trim().startsWith("@"))
+                            ? "常设"
+                            : item.exhibition_name,
+                      })
                     }}
-                    placeholder="输入 @ 后联想检索，例如：@南博"
-                  />
-                  {needsSelection(item.capture_museum_name) ? (
-                    <span className="field-help error">输入 `@关键词` 后，请从下方结果选择拍摄时所在博物馆。</span>
-                  ) : isMissingValue(item.capture_museum_name) ? (
+                  >
+                    <option value="">
+                      {hasMuseumOptions ? "请选择拍摄时博物馆" : "加载博物馆选项中…"}
+                    </option>
+                    {museumOptions.map((museum) => (
+                      <option key={museum.id} value={museum.name}>
+                        {museum.name}
+                      </option>
+                    ))}
+                  </select>
+                  {isMissingValue(item.capture_museum_name) ? (
                     <span className="field-help error">提交前必须确认拍摄时所在博物馆。</span>
                   ) : (
-                    <span className="field-help">建议从联想结果选择，减少馆名别名造成的不一致。</span>
+                    <span className="field-help">已改为数据库下拉选择，馆名会保持一致。</span>
                   )}
-                  {(museumSuggestions[item.id] ?? []).length > 0 ? (
-                    <div className="suggestion-list">
-                      {(museumSuggestions[item.id] ?? []).map((museum) => (
-                        <button
-                          key={museum.id}
-                          type="button"
-                          className="suggestion-item"
-                          onClick={() => {
-                            setSelectedCaptureMuseums((current) => ({ ...current, [item.id]: museum }))
-                            setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
-                            patchLocal(item.id, {
-                              capture_museum_name: museum.name,
-                              exhibition_name:
-                                (item.exhibition_name ?? "").trim().startsWith("@") ||
-                                !(item.exhibition_name ?? "").trim()
-                                  ? "常设"
-                                  : item.exhibition_name,
-                            })
-                          }}
-                        >
-                          {museum.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
                 </label>
               </div>
 
@@ -863,7 +848,8 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               </div>
             </div>
           </article>
-        ))}
+          )
+        })}
       </div>
       {submitNotice ? (
         <div className={`submit-toast ${submitNotice.type}`}>

@@ -27,10 +27,13 @@ from app.models import (
     ArtifactExhibition,
     ArtifactImage,
     ArtifactTag,
+    EraOption,
     Exhibition,
     Museum,
     PendingArtifact,
 )
+from app.reference_data import WENWU_ERA_OPTIONS, WENWU_MUSEUM_OPTIONS
+from app.reference_data import WENWU_MUSEUM_COORDINATES
 from app.oss import upload_image
 from app.schemas import (
     ArtifactCreate,
@@ -43,11 +46,13 @@ from app.schemas import (
     BatchScanRequest,
     BatchScanResponse,
     CloudArtifactSubmitRequest,
+    EraOptionRead,
     ExhibitionCreate,
     ExhibitionRead,
     HealthRead,
     MuseumCreate,
     MuseumRead,
+    MuseumUpdate,
     PendingArtifactRead,
     PendingArtifactUpdate,
     UploadedImageRead,
@@ -82,6 +87,18 @@ class ArtifactMatchCandidate:
 def run_startup_migrations(connection) -> None:
     inspector = inspect(connection)
     table_names = set(inspector.get_table_names())
+
+    if "museums" in table_names:
+        museum_columns = {column["name"] for column in inspector.get_columns("museums")}
+        museum_column_definitions = {
+            "latitude": "DOUBLE PRECISION",
+            "longitude": "DOUBLE PRECISION",
+        }
+        for column_name, column_type in museum_column_definitions.items():
+            if column_name not in museum_columns:
+                connection.execute(
+                    text(f"ALTER TABLE museums ADD COLUMN {column_name} {column_type}")
+                )
 
     if "artifacts" not in table_names:
         return
@@ -218,6 +235,44 @@ def run_startup_migrations(connection) -> None:
         path.unlink(missing_ok=True)
 
 
+def sync_reference_options(connection) -> None:
+    for museum_name in WENWU_MUSEUM_OPTIONS:
+        latitude, longitude = WENWU_MUSEUM_COORDINATES.get(museum_name, (None, None))
+        connection.execute(
+            text(
+                """
+                INSERT INTO museums (name, description, latitude, longitude)
+                VALUES (:name, :description, :latitude, :longitude)
+                ON CONFLICT (name) DO UPDATE
+                SET latitude = COALESCE(museums.latitude, EXCLUDED.latitude),
+                    longitude = COALESCE(museums.longitude, EXCLUDED.longitude)
+                """
+            ),
+            {
+                "name": museum_name,
+                "description": "从 wenwu.tsx 参考数据同步",
+                "latitude": latitude,
+                "longitude": longitude,
+            },
+        )
+
+    for sort_order, era_name in enumerate(WENWU_ERA_OPTIONS, start=1):
+        connection.execute(
+            text(
+                """
+                INSERT INTO era_options (name, sort_order)
+                VALUES (:name, :sort_order)
+                ON CONFLICT (name) DO UPDATE
+                SET sort_order = EXCLUDED.sort_order
+                """
+            ),
+            {
+                "name": era_name,
+                "sort_order": sort_order,
+            },
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -228,6 +283,7 @@ async def lifespan(_: FastAPI):
             pass
         Base.metadata.create_all(bind=connection)
         run_startup_migrations(connection)
+        sync_reference_options(connection)
     yield
 
 
@@ -1411,14 +1467,24 @@ async def submit_pending(
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])
 def list_museums(
     q: str | None = Query(default=None),
-    limit: int = Query(default=20, ge=1, le=100),
+    limit: int = Query(default=20, ge=1, le=500),
     db: Session = Depends(get_db),
 ) -> list[Museum]:
-    query = select(Museum).options(selectinload(Museum.exhibitions)).order_by(Museum.name.asc())
+    query = (
+        select(Museum)
+        .options(selectinload(Museum.exhibitions), selectinload(Museum.artifacts))
+        .order_by(Museum.name.asc())
+    )
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.where(Museum.name.ilike(like))
     return list(db.scalars(query.limit(limit)))
+
+
+@app.get(f"{settings.api_prefix}/era-options", response_model=list[EraOptionRead])
+def list_era_options(db: Session = Depends(get_db)) -> list[EraOption]:
+    query = select(EraOption).order_by(EraOption.sort_order.asc(), EraOption.name.asc())
+    return list(db.scalars(query))
 
 
 @app.post(f"{settings.api_prefix}/museums", response_model=MuseumRead, status_code=201)
@@ -1432,6 +1498,41 @@ def create_museum(payload: MuseumCreate, db: Session = Depends(get_db)) -> Museu
     db.commit()
     db.refresh(museum)
     return museum
+
+
+@app.patch(f"{settings.api_prefix}/museums/{{museum_id}}", response_model=MuseumRead)
+def update_museum(
+    museum_id: int,
+    payload: MuseumUpdate,
+    db: Session = Depends(get_db),
+) -> Museum:
+    museum = db.get(Museum, museum_id)
+    if museum is None:
+        raise HTTPException(status_code=404, detail="Museum not found")
+
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Museum name is required")
+
+    existing = db.scalar(select(Museum).where(Museum.name == name, Museum.id != museum_id))
+    if existing is not None:
+        raise HTTPException(status_code=400, detail="Museum already exists")
+
+    museum.name = name
+    museum.location = optional_text(payload.location)
+    museum.latitude = payload.latitude
+    museum.longitude = payload.longitude
+    museum.description = optional_text(payload.description)
+    db.commit()
+
+    refreshed = db.scalar(
+        select(Museum)
+        .options(selectinload(Museum.exhibitions), selectinload(Museum.artifacts))
+        .where(Museum.id == museum_id)
+    )
+    if refreshed is None:
+        raise HTTPException(status_code=404, detail="Museum not found")
+    return refreshed
 
 
 @app.get(f"{settings.api_prefix}/exhibitions", response_model=list[ExhibitionRead])

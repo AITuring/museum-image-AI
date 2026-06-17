@@ -208,7 +208,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     if (!active) return
     setActiveImageIndex(0)
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !editing) setActive(null)
+      if (event.key === "Escape") setActive(null)
     }
     document.addEventListener("keydown", onKeyDown)
     const prevOverflow = document.body.style.overflow
@@ -217,7 +217,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       document.removeEventListener("keydown", onKeyDown)
       document.body.style.overflow = prevOverflow
     }
-  }, [active?.id, editing])
+  }, [active?.id])
 
   function handleSearch(event: FormEvent) {
     event.preventDefault()
@@ -242,7 +242,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setEditForm(null)
     setTagInput("")
     setSaveError(null)
-    setActive(null)
   }
 
   function addTags(rawValue: string) {
@@ -331,11 +330,17 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
 
       const updated = normalizeArtifact((await response.json()) as RawGalleryArtifact)
+      const nextIndex =
+        updated.images.findIndex((image) => image.id === editForm.imageId) >= 0
+          ? updated.images.findIndex((image) => image.id === editForm.imageId)
+          : 0
       setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+      setActive(updated)
+      setActiveImageIndex(nextIndex)
       setEditing(false)
       setEditForm(null)
       setTagInput("")
-      setActive(null)
+      setSaveNotice("已保存修改")
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "保存失败")
     } finally {
@@ -400,7 +405,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       {active
         ? createPortal(
-            <div className="gallery-modal" onClick={() => !editing && setActive(null)}>
+            <div className="gallery-modal" onClick={() => setActive(null)}>
               <div className="gallery-modal-body" onClick={(e) => e.stopPropagation()}>
                 {(() => {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
@@ -426,6 +431,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
                   return (
                     <>
+                      <button type="button" className="gallery-close" onClick={() => setActive(null)}>
+                        ×
+                      </button>
                       <div className="gallery-modal-media">
                         {currentImage ? (
                           <>
@@ -462,7 +470,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
                       <div className="gallery-modal-info">
                         <div className="gallery-detail-head">
-                          <div className="gallery-title-block">
+                          <div>
                             <h3 className="gallery-detail-title">{active.name}</h3>
                             {currentImage ? (
                               <p className="muted small">
@@ -477,31 +485,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 编辑资料
                               </button>
                             ) : (
-                              <>
-                                <button
-                                  type="button"
-                                  className="ghost"
-                                  onClick={handleCancelEdit}
-                                  disabled={saving}
-                                >
-                                  取消编辑
-                                </button>
-                                <button
-                                  type="submit"
-                                  form="gallery-edit-form"
-                                  className="primary"
-                                  disabled={saving}
-                                >
-                                  {saving ? "保存中..." : "保存修改"}
-                                </button>
-                              </>
+                              <button type="button" className="ghost" onClick={handleCancelEdit} disabled={saving}>
+                                取消编辑
+                              </button>
                             )}
-                            {currentImage && !editing ? (
+                            {currentImage ? (
                               <a
                                 href={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="gallery-link-button"
+                                className="primary small"
                               >
                                 查看原图
                               </a>
@@ -510,7 +503,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                         </div>
 
                         {editing && editForm ? (
-                          <form id="gallery-edit-form" className="gallery-edit-form" onSubmit={handleSave}>
+                          <form className="gallery-edit-form" onSubmit={handleSave}>
                             <p className="muted small gallery-edit-note">
                               名称、时代、馆藏、描述会更新整条文物记录；下方拍摄参数仅更新当前这张图片。
                             </p>
@@ -789,7 +782,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               ) : (
                                 <span />
                               )}
-                              <button type="submit" className="primary gallery-bottom-save" disabled={saving}>
+                              <button type="submit" className="primary" disabled={saving}>
                                 {saving ? "保存中..." : "保存修改"}
                               </button>
                             </div>
