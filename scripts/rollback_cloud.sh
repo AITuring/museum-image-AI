@@ -13,6 +13,7 @@ ROLLBACK_REF="${ROLLBACK_REF:-}"
 ROLLBACK_IMAGE="${ROLLBACK_IMAGE:-}"
 GHCR_USERNAME="${GHCR_USERNAME:-}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
+REPO_SSH_PRIVATE_KEY_B64="${REPO_SSH_PRIVATE_KEY_B64:-}"
 
 DEPLOY_STATE_DIR="$DEPLOY_PATH/.deploy"
 CURRENT_RELEASE_FILE="$DEPLOY_STATE_DIR/current_release.env"
@@ -39,6 +40,10 @@ require_command() {
 }
 
 setup_git_ssh() {
+  if [ -z "${REPO_SSH_PRIVATE_KEY:-}" ] && [ -n "$REPO_SSH_PRIVATE_KEY_B64" ]; then
+    REPO_SSH_PRIVATE_KEY="$(printf '%s' "$REPO_SSH_PRIVATE_KEY_B64" | base64 --decode)"
+  fi
+
   if [ -z "${REPO_SSH_PRIVATE_KEY:-}" ]; then
     return
   fi
