@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class MuseumCreate(BaseModel):
@@ -138,10 +138,13 @@ class ArtifactRead(BaseModel):
     description: str | None = None
     created_at: datetime
     museum_name: str
-    tags: list[str] = Field(default_factory=list, validation_alias="tag_names")
+    tags: list[str] = Field(
+        default_factory=list, validation_alias=AliasChoices("tag_names", "tags")
+    )
     images: list[ArtifactImageRead] = Field(default_factory=list)
     exhibitions: list[ExhibitionRead] = Field(
-        default_factory=list, validation_alias="exhibition_records"
+        default_factory=list,
+        validation_alias=AliasChoices("exhibition_records", "exhibitions"),
     )
 
     model_config = ConfigDict(from_attributes=True)

@@ -216,6 +216,7 @@ class ArtifactImage(Base):
         ForeignKey("artifacts.id"), nullable=False, index=True
     )
     url: Mapped[str] = mapped_column(String(512), nullable=False)
+    image_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     camera_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     lens_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     capture_museum_id: Mapped[int | None] = mapped_column(

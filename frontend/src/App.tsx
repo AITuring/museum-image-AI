@@ -885,10 +885,6 @@ function App() {
       if (!artifactForm.exhibitionName.trim() || artifactForm.exhibitionName.trim().startsWith("@")) {
         throw new Error("请填写或选择展览名称")
       }
-      if (matchedArtifact && sameArtifactDecision === null) {
-        throw new Error("后端检测到疑似同一件，请先确认是否为同一件")
-      }
-
       await fetchJson<unknown>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -899,7 +895,7 @@ function App() {
           era: artifactForm.era || null,
           description: artifactForm.description || null,
           existing_artifact_id:
-            sameArtifactDecision === "yes" && matchedArtifact ? matchedArtifact.artifact.id : null,
+            sameArtifactDecision === "no" ? null : matchedArtifact?.artifact.id ?? null,
           tags: artifactForm.tags,
           camera_model: artifactForm.cameraModel.trim() || null,
           lens_model: artifactForm.lensModel.trim() || null,
@@ -1344,9 +1340,9 @@ function App() {
               {sameArtifactDecision === "yes" ? (
                 <p className="success-text">后续你在表单里改名称、时代、描述，提交时会直接更新这条已有文物。</p>
               ) : sameArtifactDecision === "no" ? (
-                <p className="muted small">当前会按新文物入库，不会改动库里这条旧记录。</p>
+                <p className="muted small">如名称、时代、馆藏仍匹配，云端入库时仍会自动合并到这条已有文物。</p>
               ) : (
-                <p className="muted small">请先人工确认是否为同一件，再决定是更新旧记录还是新建文物。</p>
+                <p className="muted small">如不手动处理，提交时也会优先合并到这条已有文物，避免生成重复卡片。</p>
               )}
             </section>
           ) : null}
@@ -1690,7 +1686,7 @@ function App() {
           <button type="submit" className="primary" disabled={artifactSubmitting || !uploadedImage}>
             {artifactSubmitting
               ? "提交中..."
-              : sameArtifactDecision === "yes"
+              : matchedArtifact && sameArtifactDecision !== "no"
                 ? "更新已有文物并上传图片"
                 : "提交云端"}
           </button>

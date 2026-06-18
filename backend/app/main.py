@@ -161,6 +161,7 @@ def run_startup_migrations(connection) -> None:
         column["name"] for column in inspect(connection).get_columns("artifact_images")
     }
     image_column_definitions = {
+        "image_hash": "VARCHAR(64)",
         "camera_model": "VARCHAR(255)",
         "lens_model": "VARCHAR(255)",
         "capture_museum_id": "INTEGER",
@@ -178,6 +179,44 @@ def run_startup_migrations(connection) -> None:
             connection.execute(
                 text(f"ALTER TABLE artifact_images ADD COLUMN {column_name} {column_type}")
             )
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_artifact_images_image_hash "
+            "ON artifact_images (image_hash)"
+        )
+    )
+    legacy_image_rows = connection.execute(
+        text(
+            """
+            SELECT id, url
+            FROM artifact_images
+            WHERE image_hash IS NULL
+              AND url IS NOT NULL
+            ORDER BY id ASC
+            """
+        )
+    ).mappings()
+    with httpx.Client(timeout=20, follow_redirects=True) as client:
+        for row in legacy_image_rows:
+            url = str(row["url"]).strip()
+            if not url.startswith(("http://", "https://")):
+                continue
+            try:
+                response = client.get(url)
+                response.raise_for_status()
+                connection.execute(
+                    text(
+                        """
+                        UPDATE artifact_images
+                        SET image_hash = :image_hash
+                        WHERE id = :id
+                          AND image_hash IS NULL
+                        """
+                    ),
+                    {"id": row["id"], "image_hash": hash_bytes(response.content)},
+                )
+            except Exception as exc:  # noqa: BLE001 - keep startup resilient on legacy rows
+                logger.warning("backfill image hash for artifact image %s failed: %s", row["id"], exc)
 
     if "pending_artifacts" not in table_names:
         return
@@ -665,6 +704,63 @@ def hash_bytes(contents: bytes) -> str:
     return digest.hexdigest()
 
 
+def find_artifact_image_by_hash_local(db: Session, image_hash: str) -> ArtifactImage | None:
+    return db.scalar(artifact_image_query().where(ArtifactImage.image_hash == image_hash))
+
+
+def build_duplicate_image_detail(image: ArtifactImage | ArtifactImageRead) -> str:
+    meta: list[str] = []
+    museum_name = getattr(image, "museum_name", None)
+    era = getattr(image, "era", None)
+    if museum_name:
+        meta.append(str(museum_name))
+    if era:
+        meta.append(str(era))
+    suffix = f"（{' / '.join(meta)}）" if meta else ""
+    return f"这张图片已存在于文物「{image.artifact_name}」{suffix}，不能重复上传。"
+
+
+async def find_duplicate_artifact_image(
+    db: Session, image_hash: str
+) -> ArtifactImageRead | None:
+    if should_proxy_artifact_queries_to_cloud():
+        base = settings.cloud_api_base_url.rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+                response = await client.get(
+                    f"{base}{settings.api_prefix}/artifact-images/by-hash",
+                    params={"image_hash": image_hash},
+                )
+                if response.status_code == 404:
+                    images_response = await client.get(f"{base}{settings.api_prefix}/artifact-images")
+                    images_response.raise_for_status()
+                    for item in images_response.json():
+                        raw_url = str(item.get("url", "")).strip()
+                        if not raw_url:
+                            continue
+                        image_url = (
+                            raw_url
+                            if raw_url.startswith(("http://", "https://"))
+                            else f"{base}{raw_url}"
+                        )
+                        try:
+                            image_response = await client.get(image_url)
+                            image_response.raise_for_status()
+                        except Exception:  # noqa: BLE001 - skip unreadable legacy assets
+                            continue
+                        if hash_bytes(image_response.content) == image_hash:
+                            return ArtifactImageRead.model_validate(item)
+                    return None
+                response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - validation failures should surface clearly
+            raise HTTPException(status_code=502, detail=f"查询云端重复图片失败：{exc}") from exc
+        payload = response.json()
+        return ArtifactImageRead.model_validate(payload) if payload else None
+
+    match = find_artifact_image_by_hash_local(db, image_hash)
+    return ArtifactImageRead.model_validate(match) if match is not None else None
+
+
 def scan_pending_items(db: Session) -> list[PendingArtifact]:
     return list(db.scalars(select(PendingArtifact).order_by(PendingArtifact.created_at.desc())))
 
@@ -1018,15 +1114,29 @@ async def analyze_artifact_images_stream(payload: VisionAnalyzeRequest) -> Strea
 
 
 @app.post(f"{settings.api_prefix}/uploads/images", response_model=list[UploadedImageRead], status_code=201)
-async def upload_images(files: list[UploadFile] = File(...)) -> list[UploadedImageRead]:
+async def upload_images(
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+) -> list[UploadedImageRead]:
     uploaded_images: list[UploadedImageRead] = []
 
     for file in files:
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(status_code=400, detail="图片内容为空。")
+        image_hash = hash_bytes(contents)
+        pending_duplicate = db.scalar(
+            select(PendingArtifact).where(PendingArtifact.file_hash == image_hash)
+        )
+        if pending_duplicate is not None:
+            raise HTTPException(status_code=409, detail="这张图片已在待入库列表中，不能重复上传。")
+        duplicate_image = await find_duplicate_artifact_image(db, image_hash)
+        if duplicate_image is not None:
+            raise HTTPException(status_code=409, detail=build_duplicate_image_detail(duplicate_image))
+
         suffix = Path(file.filename or "").suffix.lower()
         generated_name = f"{uuid4().hex}{suffix}"
         target_path = UPLOADS_DIR / generated_name
-
-        contents = await file.read()
         target_path.write_bytes(contents)
         image_metadata = build_image_metadata(image_bytes=contents)
 
@@ -1080,10 +1190,11 @@ async def ingest_artifact(
     contents = await image.read()
     if not contents:
         raise HTTPException(status_code=400, detail="图片内容为空。")
+    image_hash = hash_bytes(contents)
+    duplicate_image = find_artifact_image_by_hash_local(db, image_hash)
+    if duplicate_image is not None:
+        raise HTTPException(status_code=409, detail=build_duplicate_image_detail(duplicate_image))
 
-    image_url = upload_image(
-        contents, image.filename or "image.jpg", image.content_type
-    )
     image_metadata = build_image_metadata(
         image_bytes=contents,
         camera_model=camera_model,
@@ -1107,10 +1218,25 @@ async def ingest_artifact(
         ),
     )
 
+    artifact: Artifact | None = None
     if existing_artifact_id is not None:
         artifact = db.scalar(artifact_detail_query().where(Artifact.id == existing_artifact_id))
         if artifact is None:
             raise HTTPException(status_code=404, detail="要更新的文物不存在。")
+    else:
+        existing_match = find_existing_artifact_match(
+            db,
+            name=name,
+            museum_name=museum_name,
+            era=era,
+        )
+        artifact = existing_match.artifact if existing_match is not None else None
+
+    image_url = upload_image(
+        contents, image.filename or "image.jpg", image.content_type
+    )
+
+    if artifact is not None:
         artifact.ai_status = "reviewed"
         artifact.museum_id = museum.id
         artifact.name = name.strip()
@@ -1146,6 +1272,7 @@ async def ingest_artifact(
     artifact.images.append(
         ArtifactImage(
             url=image_url,
+            image_hash=image_hash,
             capture_museum_id=capture_museum.id if capture_museum is not None else None,
             exhibition_id=exhibition.id if exhibition is not None else None,
             **image_metadata,
@@ -1859,6 +1986,29 @@ def list_artifact_images(
     if museum_id is not None:
         query = query.join(ArtifactImage.artifact).where(Artifact.museum_id == museum_id)
     return list(db.scalars(query))
+
+
+@app.get(f"{settings.api_prefix}/artifact-images/by-hash", response_model=ArtifactImageRead | None)
+def get_artifact_image_by_hash(
+    image_hash: str = Query(..., min_length=64, max_length=64),
+    db: Session = Depends(get_db),
+) -> ArtifactImageRead | None:
+    if should_proxy_artifact_queries_to_cloud():
+        base = settings.cloud_api_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                response = client.get(
+                    f"{base}{settings.api_prefix}/artifact-images/by-hash",
+                    params={"image_hash": image_hash},
+                )
+                response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - surface lookup failure to the caller
+            raise HTTPException(status_code=502, detail=f"查询云端重复图片失败：{exc}") from exc
+        payload = response.json()
+        return ArtifactImageRead.model_validate(payload) if payload else None
+
+    match = find_artifact_image_by_hash_local(db, image_hash)
+    return ArtifactImageRead.model_validate(match) if match is not None else None
 
 
 @app.post(
