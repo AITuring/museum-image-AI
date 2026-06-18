@@ -198,6 +198,7 @@ class PendingArtifact(Base):
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     analysis: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    existing_artifact_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cloud_artifact_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

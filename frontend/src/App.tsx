@@ -135,6 +135,12 @@ type MuseumOption = {
   name: string
 }
 
+type EraOption = {
+  id: number
+  name: string
+  sort_order: number
+}
+
 type ExistingArtifactImage = {
   id: number
   url: string
@@ -343,7 +349,12 @@ function App() {
   const [providerStreams, setProviderStreams] = useState<Record<string, ProviderStream>>({})
   const [unavailableProviders, setUnavailableProviders] = useState<string[]>([])
   const [selectedCandidateKey, setSelectedCandidateKey] = useState<string | null>(null)
+  const [artifactMuseumSuggestions, setArtifactMuseumSuggestions] = useState<MuseumOption[]>([])
+  const [showArtifactMuseumSuggestions, setShowArtifactMuseumSuggestions] = useState(false)
   const [museumSuggestions, setMuseumSuggestions] = useState<MuseumOption[]>([])
+  const [eraOptions, setEraOptions] = useState<EraOption[]>([])
+  const [eraSuggestions, setEraSuggestions] = useState<EraOption[]>([])
+  const [showEraSuggestions, setShowEraSuggestions] = useState(false)
   const [selectedCaptureMuseum, setSelectedCaptureMuseum] = useState<MuseumOption | null>(null)
   const [exhibitionSuggestions, setExhibitionSuggestions] = useState<ExhibitionOption[]>([])
   const [tagInput, setTagInput] = useState("")
@@ -424,6 +435,15 @@ function App() {
     } catch {
       setWebBridgeStatus(null)
       return null
+    }
+  }
+
+  async function loadEraOptions() {
+    try {
+      const data = await fetchJson<EraOption[]>(`${apiBaseUrl}/api/era-options`)
+      setEraOptions(data)
+    } catch {
+      setEraOptions([])
     }
   }
 
@@ -649,6 +669,7 @@ function App() {
       try {
         await loadHealth()
         await loadWebBridgeStatus()
+        await loadEraOptions()
       } catch (err) {
         setArtifactError(err instanceof Error ? err.message : "初始化失败")
       }
@@ -701,6 +722,32 @@ function App() {
   }, [submitNotice])
 
   useEffect(() => {
+    if (!showArtifactMuseumSuggestions) {
+      return
+    }
+    const q = artifactForm.museumName.trim()
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ limit: "8" })
+        if (q) params.set("q", q)
+        const data = await fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?${params.toString()}`, {
+          signal: controller.signal,
+        })
+        setArtifactMuseumSuggestions(data)
+      } catch {
+        if (!controller.signal.aborted) {
+          setArtifactMuseumSuggestions([])
+        }
+      }
+    }, 160)
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [apiBaseUrl, artifactForm.museumName, showArtifactMuseumSuggestions])
+
+  useEffect(() => {
     const rawQuery = artifactForm.captureMuseumName.trim()
     if (!rawQuery.startsWith("@")) {
       setMuseumSuggestions([])
@@ -728,6 +775,17 @@ function App() {
       window.clearTimeout(timer)
     }
   }, [artifactForm.captureMuseumName])
+
+  useEffect(() => {
+    if (!showEraSuggestions) {
+      return
+    }
+    const query = artifactForm.era.trim().toLowerCase()
+    const nextSuggestions = eraOptions
+      .filter((option) => !query || option.name.toLowerCase().includes(query))
+      .slice(0, 8)
+    setEraSuggestions(nextSuggestions)
+  }, [artifactForm.era, eraOptions, showEraSuggestions])
 
   useEffect(() => {
     const rawQuery = artifactForm.exhibitionName.trim()
@@ -854,7 +912,11 @@ function App() {
     setUnavailableProviders([])
     setSelectedCandidateKey(null)
     setSelectedCaptureMuseum(null)
+    setArtifactMuseumSuggestions([])
+    setShowArtifactMuseumSuggestions(false)
     setMuseumSuggestions([])
+    setEraSuggestions([])
+    setShowEraSuggestions(false)
     setExhibitionSuggestions([])
     setMatchedArtifact(null)
     setSameArtifactDecision(null)
@@ -947,9 +1009,10 @@ function App() {
       <header className="topbar">
         <div className="brand">
           <img className="brand-mark" src="/logo.png" alt="文物数据库" />
-          <div>
+          <div className="brand-copy">
+            <p className="eyebrow">Museum Image Archive</p>
             <h1>文物数据库</h1>
-
+            <p className="brand-lead">书卷式整理文物图像、展览信息与识别证据，让入库流程清楚、端正、可追溯。</p>
           </div>
         </div>
         <div className="topbar-actions">
@@ -976,18 +1039,20 @@ function App() {
         </div>
       </header>
 
-      <nav className="view-tabs">
-        {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
-          <button
-            type="button"
-            key={item.view}
-            className={view === item.view ? "active" : ""}
-            onClick={() => setView(item.view)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
+      <div className="view-tabs-shell">
+        <nav className="view-tabs">
+          {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
+            <button
+              type="button"
+              key={item.view}
+              className={view === item.view ? "active" : ""}
+              onClick={() => setView(item.view)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      </div>
 
       {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 
@@ -997,6 +1062,30 @@ function App() {
 
       {view === "single" && !cloudOnly ? (
       <>
+      <section className="hero-banner">
+        <div className="hero-copy">
+          <p className="eyebrow">Single Image Workflow</p>
+          <h2>从一张照片，到一条端正可信的文物记录</h2>
+          <p className="muted">
+            上传图片后自动调用多模型识别、检索佐证与结果裁决；你只需在统一表单里校订后提交。
+          </p>
+        </div>
+        <div className="hero-metrics" aria-label="流程说明">
+          <div className="hero-metric">
+            <span className="hero-metric-label">流程</span>
+            <strong>上传 / 识别 / 校订 / 入库</strong>
+          </div>
+          <div className="hero-metric">
+            <span className="hero-metric-label">风格</span>
+            <strong>书卷气 · 温润 · 清晰对齐</strong>
+          </div>
+          <div className="hero-metric">
+            <span className="hero-metric-label">结果</span>
+            <strong>图像、证据、元数据一处完成</strong>
+          </div>
+        </div>
+      </section>
+
       <ol className="flow-bar">
         {flowSteps.map((step, index) => (
           <li
@@ -1374,11 +1463,35 @@ function App() {
                   <span>博物馆名称</span>
                   <input
                     value={artifactForm.museumName}
-                    onChange={(event) =>
+                    onFocus={() => setShowArtifactMuseumSuggestions(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setShowArtifactMuseumSuggestions(false), 120)
+                    }}
+                    onChange={(event) => {
                       setArtifactForm((current) => ({ ...current, museumName: event.target.value }))
-                    }
+                      setShowArtifactMuseumSuggestions(true)
+                    }}
                     placeholder="例如：南京博物院"
                   />
+                  {showArtifactMuseumSuggestions && artifactMuseumSuggestions.length > 0 ? (
+                    <div className="suggestion-list">
+                      {artifactMuseumSuggestions.map((museum) => (
+                        <button
+                          key={`artifact-museum-${museum.id}`}
+                          type="button"
+                          className="suggestion-item"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            setArtifactForm((current) => ({ ...current, museumName: museum.name }))
+                            setArtifactMuseumSuggestions([])
+                            setShowArtifactMuseumSuggestions(false)
+                          }}
+                        >
+                          {museum.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </label>
                 <label className="field">
                   <span>文物名称</span>
@@ -1397,11 +1510,35 @@ function App() {
                   <span>时代</span>
                   <input
                     value={artifactForm.era}
-                    onChange={(event) =>
+                    onFocus={() => setShowEraSuggestions(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setShowEraSuggestions(false), 120)
+                    }}
+                    onChange={(event) => {
                       setArtifactForm((current) => ({ ...current, era: event.target.value }))
-                    }
+                      setShowEraSuggestions(true)
+                    }}
                     placeholder="例如：元代"
                   />
+                  {showEraSuggestions && eraSuggestions.length > 0 ? (
+                    <div className="suggestion-list">
+                      {eraSuggestions.map((era) => (
+                        <button
+                          key={`artifact-era-${era.id}`}
+                          type="button"
+                          className="suggestion-item"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            setArtifactForm((current) => ({ ...current, era: era.name }))
+                            setEraSuggestions([])
+                            setShowEraSuggestions(false)
+                          }}
+                        >
+                          {era.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </label>
                 <label className="field">
                   <span>标签</span>
@@ -1424,7 +1561,7 @@ function App() {
                       value={tagInput}
                       onChange={(event) => setTagInput(event.target.value)}
                       onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === "," || event.key === "，") {
+                        if (event.key === "Enter" || event.key === "," || event.key === "\uFF0C") {
                           event.preventDefault()
                           addTags(tagInput)
                         }

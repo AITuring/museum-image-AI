@@ -61,6 +61,17 @@ type GalleryEditFormState = {
   editMethod: string
 }
 
+type MuseumOption = {
+  id: number
+  name: string
+}
+
+type EraOption = {
+  id: number
+  name: string
+  sort_order: number
+}
+
 function toAbsoluteUrl(apiBaseUrl: string, url: string) {
   return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
 }
@@ -164,6 +175,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [query, setQuery] = useState("")
   const [submittedQuery, setSubmittedQuery] = useState("")
   const [items, setItems] = useState<GalleryArtifact[]>([])
+  const [museumOptions, setMuseumOptions] = useState<MuseumOption[]>([])
+  const [eraOptions, setEraOptions] = useState<EraOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState<GalleryArtifact | null>(null)
@@ -174,6 +187,23 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
+
+  const fetchJson = useCallback(async <T,>(input: string, init?: RequestInit): Promise<T> => {
+    const response = await fetch(input, init)
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`
+      try {
+        const payload = (await response.json()) as { detail?: string }
+        if (payload.detail) {
+          message = payload.detail
+        }
+      } catch {
+        // Ignore non-JSON error bodies.
+      }
+      throw new Error(message)
+    }
+    return (await response.json()) as T
+  }, [])
 
   const load = useCallback(
     async (q: string) => {
@@ -200,6 +230,21 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [load])
 
   useEffect(() => {
+    void (async () => {
+      try {
+        const [museums, eras] = await Promise.all([
+          fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?limit=200`),
+          fetchJson<EraOption[]>(`${apiBaseUrl}/api/era-options`),
+        ])
+        setMuseumOptions(museums)
+        setEraOptions(eras)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "加载联想选项失败")
+      }
+    })()
+  }, [apiBaseUrl, fetchJson])
+
+  useEffect(() => {
     setEditing(false)
     setEditForm(null)
     setTagInput("")
@@ -207,8 +252,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setSaveNotice(null)
     if (!active) return
     setActiveImageIndex(0)
+  }, [active?.id])
+
+  useEffect(() => {
+    if (!active) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setActive(null)
+      if (event.key === "Escape" && !editing) setActive(null)
     }
     document.addEventListener("keydown", onKeyDown)
     const prevOverflow = document.body.style.overflow
@@ -217,7 +266,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       document.removeEventListener("keydown", onKeyDown)
       document.body.style.overflow = prevOverflow
     }
-  }, [active?.id])
+  }, [active, editing])
 
   function handleSearch(event: FormEvent) {
     event.preventDefault()
@@ -405,10 +454,11 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       {active
         ? createPortal(
-            <div className="gallery-modal" onClick={() => setActive(null)}>
+            <div className="gallery-modal" onClick={() => !editing && setActive(null)}>
               <div className="gallery-modal-body" onClick={(e) => e.stopPropagation()}>
                 {(() => {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
+                  const editFormId = `gallery-edit-form-${active.id}`
                   const subjectTags = getSubjectTags(active.tags)
                   const equipmentMeta = [
                     currentImage?.camera_model ? `机型:${currentImage.camera_model}` : null,
@@ -431,7 +481,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
                   return (
                     <>
-                      <button type="button" className="gallery-close" onClick={() => setActive(null)}>
+                      <button
+                        type="button"
+                        className="gallery-close"
+                        onClick={() => !editing && setActive(null)}
+                        disabled={editing}
+                        aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
+                      >
                         ×
                       </button>
                       <div className="gallery-modal-media">
@@ -484,17 +540,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               <button type="button" className="ghost" onClick={handleStartEdit}>
                                 编辑资料
                               </button>
-                            ) : (
-                              <button type="button" className="ghost" onClick={handleCancelEdit} disabled={saving}>
-                                取消编辑
-                              </button>
-                            )}
+                            ) : null}
                             {currentImage ? (
                               <a
                                 href={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="primary small"
+                                className="primary small gallery-primary-button"
                               >
                                 查看原图
                               </a>
@@ -503,7 +555,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                         </div>
 
                         {editing && editForm ? (
-                          <form className="gallery-edit-form" onSubmit={handleSave}>
+                          <form id={editFormId} className="gallery-edit-form" onSubmit={handleSave}>
                             <p className="muted small gallery-edit-note">
                               名称、时代、馆藏、描述会更新整条文物记录；下方拍摄参数仅更新当前这张图片。
                             </p>
@@ -519,13 +571,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       <label className="field">
                                         <span>博物馆名称</span>
                                         <input
+                                          list="gallery-museum-options"
                                           value={editForm.museumName}
                                           onChange={(event) =>
                                             setEditForm((current) =>
                                               current ? { ...current, museumName: event.target.value } : current,
                                             )
                                           }
-                                          placeholder="例如：南京博物院"
+                                          placeholder={
+                                            museumOptions.length > 0 ? "输入或选择博物馆名称" : "加载博物馆选项中…"
+                                          }
                                         />
                                       </label>
                                       <label className="field">
@@ -545,13 +600,14 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       <label className="field">
                                         <span>时代</span>
                                         <input
+                                          list="gallery-era-options"
                                           value={editForm.era}
                                           onChange={(event) =>
                                             setEditForm((current) =>
                                               current ? { ...current, era: event.target.value } : current,
                                             )
                                           }
-                                          placeholder="例如：元代"
+                                          placeholder={eraOptions.length > 0 ? "输入或选择时代" : "加载时代选项中…"}
                                         />
                                       </label>
                                       <label className="field">
@@ -775,16 +831,28 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               </div>
                             </div>
                             <div className="form-footer gallery-form-footer">
-                              {saveError ? (
-                                <p className="error-text">{saveError}</p>
-                              ) : saveNotice ? (
-                                <p className="success-text">{saveNotice}</p>
-                              ) : (
-                                <span />
-                              )}
-                              <button type="submit" className="primary" disabled={saving}>
-                                {saving ? "保存中..." : "保存修改"}
-                              </button>
+                              <div className="gallery-form-status">
+                                {saveError ? (
+                                  <p className="error-text">{saveError}</p>
+                                ) : saveNotice ? (
+                                  <p className="success-text">{saveNotice}</p>
+                                ) : (
+                                  <span />
+                                )}
+                              </div>
+                              <div className="gallery-form-actions">
+                                <button
+                                  type="button"
+                                  className="ghost gallery-secondary-button"
+                                  onClick={handleCancelEdit}
+                                  disabled={saving}
+                                >
+                                  取消编辑
+                                </button>
+                                <button type="submit" className="primary gallery-primary-button" disabled={saving}>
+                                  {saving ? "保存中..." : "保存修改"}
+                                </button>
+                              </div>
                             </div>
                           </form>
                         ) : (
@@ -906,6 +974,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
             document.body,
           )
         : null}
+      <datalist id="gallery-museum-options">
+        {museumOptions.map((museum) => (
+          <option key={museum.id} value={museum.name} />
+        ))}
+      </datalist>
+      <datalist id="gallery-era-options">
+        {eraOptions.map((era) => (
+          <option key={era.id} value={era.name} />
+        ))}
+      </datalist>
     </section>
   )
 }

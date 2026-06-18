@@ -265,6 +265,7 @@ class PendingArtifactRead(BaseModel):
     confidence: float | None = None
     provider: str | None = None
     analysis: str | None = None
+    existing_artifact_id: int | None = None
     cloud_artifact_id: int | None = None
     created_at: datetime
     updated_at: datetime
@@ -296,6 +297,7 @@ class PendingArtifactUpdate(BaseModel):
     aperture: str | None = None
     iso: int | None = None
     edit_method: str | None = None
+    existing_artifact_id: int | None = None
 
 
 class BatchIdentifyRequest(BaseModel):

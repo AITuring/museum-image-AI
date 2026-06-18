@@ -25,6 +25,7 @@ type PendingArtifact = {
   confidence: number | null
   provider: string | null
   analysis: string | null
+  existing_artifact_id: number | null
   cloud_artifact_id: number | null
   created_at: string
   updated_at: string
@@ -82,6 +83,25 @@ type ExhibitionOption = {
   end_at: string | null
 }
 
+type ExistingArtifactImage = {
+  id: number
+  url: string
+}
+
+type ExistingArtifactMatch = {
+  artifact: {
+    id: number
+    name: string
+    era: string | null
+    description: string | null
+    museum_name: string
+    tags: string[]
+    images: ExistingArtifactImage[]
+  }
+  match_score: number
+  match_reason: string
+}
+
 type SubmitNotice = {
   type: "success" | "error"
   text: string
@@ -89,6 +109,34 @@ type SubmitNotice = {
 
 type FileWithRelativePath = File & {
   webkitRelativePath?: string
+}
+
+const DISMISSED_BATCH_IDS_KEY = "batch-dismissed-pending-ids"
+
+function readDismissedBatchIds() {
+  if (typeof window === "undefined") {
+    return new Set<number>()
+  }
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_BATCH_IDS_KEY)
+    if (!raw) {
+      return new Set<number>()
+    }
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) {
+      return new Set<number>()
+    }
+    return new Set(parsed.filter((value): value is number => typeof value === "number"))
+  } catch {
+    return new Set<number>()
+  }
+}
+
+function writeDismissedBatchIds(ids: Set<number>) {
+  if (typeof window === "undefined") {
+    return
+  }
+  window.localStorage.setItem(DISMISSED_BATCH_IDS_KEY, JSON.stringify(Array.from(ids)))
 }
 
 function normalizeTags(values: string[]) {
@@ -124,9 +172,13 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [tagInputs, setTagInputs] = useState<Record<number, string>>({})
   const [museumOptions, setMuseumOptions] = useState<MuseumOption[]>([])
   const [eraOptions, setEraOptions] = useState<EraOption[]>([])
+  const [museumSuggestions, setMuseumSuggestions] = useState<Record<number, MuseumOption[]>>({})
   const [exhibitionSuggestions, setExhibitionSuggestions] = useState<
     Record<number, ExhibitionOption[]>
   >({})
+  const [matchedArtifacts, setMatchedArtifacts] = useState<Record<number, ExistingArtifactMatch | null>>({})
+  const [sameArtifactDecisions, setSameArtifactDecisions] = useState<Record<number, "yes" | "no" | null>>({})
+  const [matchIdentityKeys, setMatchIdentityKeys] = useState<Record<number, string>>({})
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
   const folderInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -150,7 +202,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const loadPending = useCallback(async () => {
     const res = await fetch(`${apiBaseUrl}/api/batch/pending`)
     if (res.ok) {
-      setItems((await res.json()) as PendingArtifact[])
+      const dismissedIds = readDismissedBatchIds()
+      const nextItems = ((await res.json()) as PendingArtifact[]).filter((item) => !dismissedIds.has(item.id))
+      setItems(nextItems)
     }
   }, [apiBaseUrl])
 
@@ -187,8 +241,50 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   useEffect(() => {
     const cleanup: Array<() => void> = []
     items.forEach((item) => {
+      const rawQuery = item.capture_museum_name?.trim() ?? ""
+      if (!rawQuery.startsWith("@")) {
+        setMuseumSuggestions((current) => {
+          if (!current[item.id]?.length) return current
+          const next = { ...current }
+          delete next[item.id]
+          return next
+        })
+        return
+      }
+      const q = rawQuery.slice(1).trim()
+      const controller = new AbortController()
+      const timer = window.setTimeout(async () => {
+        try {
+          const params = new URLSearchParams({ limit: "8" })
+          if (q) params.set("q", q)
+          const data = await fetchJson<MuseumOption[]>(
+            `${apiBaseUrl}/api/museums?${params.toString()}`,
+            { signal: controller.signal },
+          )
+          setMuseumSuggestions((current) => ({ ...current, [item.id]: data }))
+        } catch {
+          if (!controller.signal.aborted) {
+            setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
+          }
+        }
+      }, 180)
+      cleanup.push(() => {
+        controller.abort()
+        window.clearTimeout(timer)
+      })
+    })
+    return () => {
+      cleanup.forEach((fn) => fn())
+    }
+  }, [apiBaseUrl, items])
+
+  useEffect(() => {
+    const cleanup: Array<() => void> = []
+    items.forEach((item) => {
       const selectedMuseum =
-        museumOptions.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ?? null
+        museumOptions.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ??
+        museumSuggestions[item.id]?.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ??
+        null
       const rawQuery = item.exhibition_name?.trim() ?? ""
       if (!selectedMuseum || !rawQuery.startsWith("@")) {
         setExhibitionSuggestions((current) => {
@@ -227,7 +323,83 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     return () => {
       cleanup.forEach((fn) => fn())
     }
-  }, [apiBaseUrl, items, museumOptions])
+  }, [apiBaseUrl, items, museumOptions, museumSuggestions])
+
+  useEffect(() => {
+    const cleanup: Array<() => void> = []
+    items.forEach((item) => {
+      const name = (item.name ?? "").trim()
+      const museumName = (item.museum_name ?? "").trim()
+      const era = (item.era ?? "").trim()
+      const identityKey = `${name}__${museumName}__${era}`
+      if (!name || !museumName || !era) {
+        setMatchedArtifacts((current) => {
+          if (!(item.id in current)) return current
+          return { ...current, [item.id]: null }
+        })
+        setSameArtifactDecisions((current) => {
+          if (!(item.id in current)) return current
+          return { ...current, [item.id]: null }
+        })
+        setMatchIdentityKeys((current) => {
+          if (!(item.id in current)) return current
+          const next = { ...current }
+          delete next[item.id]
+          return next
+        })
+        return
+      }
+
+      const controller = new AbortController()
+      const timer = window.setTimeout(async () => {
+        try {
+          const params = new URLSearchParams({ name })
+          params.set("museum_name", museumName)
+          params.set("era", era)
+          const matched = await fetchJson<ExistingArtifactMatch | null>(
+            `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
+            { signal: controller.signal },
+          )
+          if (controller.signal.aborted) {
+            return
+          }
+          setMatchedArtifacts((current) => ({ ...current, [item.id]: matched }))
+          setSameArtifactDecisions((current) => {
+            const previousKey = matchIdentityKeys[item.id]
+            if (previousKey === identityKey) {
+              return current
+            }
+            return { ...current, [item.id]: null }
+          })
+          setMatchIdentityKeys((current) => ({ ...current, [item.id]: identityKey }))
+          if (!matched && item.existing_artifact_id != null) {
+            patchLocal(item.id, { existing_artifact_id: null })
+          }
+        } catch {
+          if (!controller.signal.aborted) {
+            setMatchedArtifacts((current) => ({ ...current, [item.id]: null }))
+            setSameArtifactDecisions((current) => {
+              const previousKey = matchIdentityKeys[item.id]
+              if (previousKey === identityKey) {
+                return current
+              }
+              return { ...current, [item.id]: null }
+            })
+            setMatchIdentityKeys((current) => ({ ...current, [item.id]: identityKey }))
+          }
+        }
+      }, 220)
+
+      cleanup.push(() => {
+        controller.abort()
+        window.clearTimeout(timer)
+      })
+    })
+
+    return () => {
+      cleanup.forEach((fn) => fn())
+    }
+  }, [apiBaseUrl, items, matchIdentityKeys])
 
   function patchLocal(id: number, patch: Partial<PendingArtifact>) {
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)))
@@ -281,7 +453,8 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         throw new Error(detail.detail ?? `HTTP ${res.status}`)
       }
       const data = (await res.json()) as BatchScanResponse
-      setItems(data.items)
+      const dismissedIds = readDismissedBatchIds()
+      setItems(data.items.filter((item) => !dismissedIds.has(item.id)))
       setMessage(`扫描 ${data.scanned} 张，新增 ${data.added}，跳过 ${data.skipped}（已存在）`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "扫描失败")
@@ -371,6 +544,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         aperture: item.aperture,
         iso: item.iso,
         edit_method: item.edit_method,
+        existing_artifact_id: item.existing_artifact_id,
       }),
     })
     if (!res.ok) {
@@ -385,21 +559,27 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     setMessage(null)
     setSubmitNotice(null)
     try {
+      const matchedArtifact = matchedArtifacts[item.id] ?? null
+      const sameArtifactDecision = sameArtifactDecisions[item.id] ?? null
+      const normalizedItem: PendingArtifact = {
+        ...item,
+        existing_artifact_id:
+          sameArtifactDecision === "no" ? null : matchedArtifact?.artifact.id ?? item.existing_artifact_id ?? null,
+      }
       if (!(item.museum_name ?? "").trim()) {
         throw new Error("请填写或确认博物馆名称")
       }
       if (!(item.name ?? "").trim()) {
         throw new Error("请填写或确认文物名称")
       }
-      if (
-        !(item.capture_museum_name ?? "").trim()
-      ) {
-        throw new Error("请先选择拍摄时所在博物馆")
+      if (!(item.capture_museum_name ?? "").trim() || (item.capture_museum_name ?? "").trim().startsWith("@")) {
+        throw new Error("请填写或选择拍摄时所在博物馆")
       }
       if (!(item.exhibition_name ?? "").trim() || (item.exhibition_name ?? "").trim().startsWith("@")) {
         throw new Error("请填写或选择展览名称")
       }
-      await saveItem(item)
+      patchLocal(item.id, normalizedItem)
+      await saveItem(normalizedItem)
       patchLocal(item.id, { status: "submitting" })
       const res = await fetch(`${apiBaseUrl}/api/batch/pending/${item.id}/submit`, {
         method: "POST",
@@ -423,6 +603,39 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   async function handleDelete(id: number) {
     await fetch(`${apiBaseUrl}/api/batch/pending/${id}`, { method: "DELETE" })
     setItems((current) => current.filter((item) => item.id !== id))
+  }
+
+  async function handleClearAll() {
+    if (items.length === 0) {
+      return
+    }
+    const confirmed = window.confirm(`确认全部清除当前批量列表中的 ${items.length} 条记录吗？此操作不可撤销。`)
+    if (!confirmed) {
+      return
+    }
+    try {
+      setError(null)
+      setMessage(null)
+      setSubmitNotice(null)
+      const dismissedIds = readDismissedBatchIds()
+      items.forEach((item) => dismissedIds.add(item.id))
+      writeDismissedBatchIds(dismissedIds)
+      setItems([])
+      setTagInputs({})
+      setMuseumSuggestions({})
+      setExhibitionSuggestions({})
+      setMatchedArtifacts({})
+      setSameArtifactDecisions({})
+      setMatchIdentityKeys({})
+      setProgress(null)
+      setSelectedFolderLabel(null)
+      setMessage("已从前端列表全部清除当前批量记录")
+      setSubmitNotice({ type: "success", text: "已从前端列表全部清除当前批量记录" })
+    } catch (err) {
+      const clearError = err instanceof Error ? err.message : "全部清除失败"
+      setError(clearError)
+      setSubmitNotice({ type: "error", text: clearError })
+    }
   }
 
   const pendingCount = items.filter((i) => i.status === "pending" || i.status === "failed").length
@@ -474,6 +687,14 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         >
           {identifying ? "识别中…" : `开始识别（${pendingCount} 张待识别）`}
         </button>
+        <button
+          type="button"
+          className="ghost danger"
+          onClick={() => void handleClearAll()}
+          disabled={identifying || scanning || items.length === 0}
+        >
+          全部清除
+        </button>
         {progress ? (
           <span className="muted">
             进度 {progress.done}/{progress.total}
@@ -497,7 +718,11 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           const hasMuseumOptions = museumOptions.length > 0
           const hasEraOptions = eraOptions.length > 0
           const selectedMuseum =
-            museumOptions.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ?? null
+            museumOptions.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ??
+            museumSuggestions[item.id]?.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ??
+            null
+          const matchedArtifact = matchedArtifacts[item.id] ?? null
+          const sameArtifactDecision = sameArtifactDecisions[item.id] ?? null
 
           return (
           <article key={item.id} className="batch-card">
@@ -527,23 +752,16 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <div className="batch-core-grid">
                   <label className={`field ${isMissingValue(item.museum_name) ? "field-invalid" : ""}`}>
                     <span>博物馆 / 出土地</span>
-                    <select
+                    <input
+                      list="batch-museum-options"
                       value={item.museum_name ?? ""}
                       onChange={(e) => patchLocal(item.id, { museum_name: e.target.value || null })}
-                    >
-                      <option value="">
-                        {hasMuseumOptions ? "请选择博物馆 / 出土地" : "加载博物馆选项中…"}
-                      </option>
-                      {museumOptions.map((museum) => (
-                        <option key={museum.id} value={museum.name}>
-                          {museum.name}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder={hasMuseumOptions ? "输入或选择博物馆 / 出土地" : "加载博物馆选项中…"}
+                    />
                     {isMissingValue(item.museum_name) ? (
                       <span className="field-help error">请先确认文物所属博物馆或出土地。</span>
                     ) : (
-                      <span className="field-help">从数据库下拉选择，减少馆名不一致的问题。</span>
+                      <span className="field-help">支持直接输入，也可从联想候选中选择，减少馆名不一致的问题。</span>
                     )}
                   </label>
                   <label className={`field ${isMissingValue(item.name) ? "field-invalid" : ""}`}>
@@ -561,21 +779,16 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </label>
                   <label className={`field ${isMissingValue(item.era) ? "field-soft-missing" : ""}`}>
                     <span>时代</span>
-                    <select
+                    <input
+                      list="batch-era-options"
                       value={item.era ?? ""}
                       onChange={(e) => patchLocal(item.id, { era: e.target.value || null })}
-                    >
-                      <option value="">{hasEraOptions ? "请选择时代" : "加载时代选项中…"}</option>
-                      {eraOptions.map((era) => (
-                        <option key={era.id} value={era.name}>
-                          {era.name}
-                        </option>
-                      ))}
-                    </select>
+                      placeholder={hasEraOptions ? "输入或选择时代" : "加载时代选项中…"}
+                    />
                     <span className="field-help">
                       {isMissingValue(item.era)
-                        ? "时代改为数据库下拉选择，便于后续检索和筛选。"
-                        : "已按参考时代列表选择，可直接提交或继续补充其他字段。"}
+                        ? "支持直接输入，也可从参考时代中联想选择，便于后续检索和筛选。"
+                        : "可直接输入或从参考时代列表中联想选择。"}
                     </span>
                   </label>
                   <label
@@ -624,6 +837,93 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </div>
               </div>
 
+              {matchedArtifact ? (
+                <section className="backend-match-card">
+                  <div className="backend-match-head">
+                    <div>
+                      <h3>后端疑似同一件</h3>
+                      <p className="muted">
+                        {matchedArtifact.match_reason} 匹配度 {Math.round(matchedArtifact.match_score * 100)}%
+                      </p>
+                    </div>
+                    <span className="badge conf">{matchedArtifact.artifact.images.length} 张历史图片</span>
+                  </div>
+                  <div className="backend-match-meta">
+                    <span>名称：{matchedArtifact.artifact.name}</span>
+                    <span>时代：{matchedArtifact.artifact.era || "待确认"}</span>
+                    <span>馆藏：{matchedArtifact.artifact.museum_name}</span>
+                  </div>
+                  {matchedArtifact.artifact.tags.length > 0 ? (
+                    <div className="tag-row">
+                      {matchedArtifact.artifact.tags.map((tag) => (
+                        <span key={`batch-match-tag-${item.id}-${tag}`}>{tag}</span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {matchedArtifact.artifact.description ? (
+                    <p className="result-desc">{matchedArtifact.artifact.description}</p>
+                  ) : (
+                    <p className="muted small">库中这条记录暂无描述。</p>
+                  )}
+                  {matchedArtifact.artifact.images.length > 0 ? (
+                    <div className="existing-artifact-gallery">
+                      {matchedArtifact.artifact.images.map((image) => (
+                        <a
+                          key={image.id}
+                          href={`${apiBaseUrl}${image.url}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="existing-artifact-thumb"
+                        >
+                          <img src={`${apiBaseUrl}${image.url}`} alt={matchedArtifact.artifact.name} loading="lazy" />
+                        </a>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="backend-match-actions">
+                    <button
+                      type="button"
+                      className={`primary small ${sameArtifactDecision === "yes" ? "selected-action" : ""}`}
+                      onClick={() => {
+                        patchLocal(item.id, {
+                          museum_name: matchedArtifact.artifact.museum_name,
+                          name: matchedArtifact.artifact.name,
+                          era: matchedArtifact.artifact.era ?? "",
+                          description: matchedArtifact.artifact.description ?? "",
+                          tags: normalizeTags(matchedArtifact.artifact.tags),
+                          existing_artifact_id: matchedArtifact.artifact.id,
+                        })
+                        setTagInputs((current) => ({ ...current, [item.id]: "" }))
+                        setSameArtifactDecisions((current) => ({ ...current, [item.id]: "yes" }))
+                        setMessage(`已确认「${item.file_name}」与「${matchedArtifact.artifact.name}」是同一件`)
+                        setError(null)
+                      }}
+                    >
+                      是同一件
+                    </button>
+                    <button
+                      type="button"
+                      className={`ghost ${sameArtifactDecision === "no" ? "selected-action" : ""}`}
+                      onClick={() => {
+                        patchLocal(item.id, { existing_artifact_id: null })
+                        setSameArtifactDecisions((current) => ({ ...current, [item.id]: "no" }))
+                        setMessage(`已标记「${item.file_name}」不是同一件，提交时会新建文物记录`)
+                        setError(null)
+                      }}
+                    >
+                      不是同一件
+                    </button>
+                  </div>
+                  {sameArtifactDecision === "yes" ? (
+                    <p className="success-text">提交时会直接更新这条已有文物，并把当前图片作为新图追加。</p>
+                  ) : sameArtifactDecision === "no" ? (
+                    <p className="muted small">已按“不是同一件”处理，提交时会新建文物记录。</p>
+                  ) : (
+                    <p className="muted small">如不手动处理，提交时也会优先合并到这条已有文物，避免重复建档。</p>
+                  )}
+                </section>
+              ) : null}
+
               <div className="field-row">
                 <label className="field">
                   <span>标签</span>
@@ -668,11 +968,13 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </label>
                 <label
                   className={`field ${
-                    isMissingValue(item.capture_museum_name) ? "field-invalid" : ""
+                    isMissingValue(item.capture_museum_name) || needsSelection(item.capture_museum_name)
+                      ? "field-invalid"
+                      : ""
                   }`}
                 >
                   <span>拍摄时博物馆</span>
-                  <select
+                  <input
                     value={item.capture_museum_name ?? ""}
                     onChange={(e) => {
                       const value = e.target.value
@@ -684,21 +986,38 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                             : item.exhibition_name,
                       })
                     }}
-                  >
-                    <option value="">
-                      {hasMuseumOptions ? "请选择拍摄时博物馆" : "加载博物馆选项中…"}
-                    </option>
-                    {museumOptions.map((museum) => (
-                      <option key={museum.id} value={museum.name}>
-                        {museum.name}
-                      </option>
-                    ))}
-                  </select>
-                  {isMissingValue(item.capture_museum_name) ? (
+                    placeholder={hasMuseumOptions ? "输入 @ 后联想检索，例如：@南博" : "加载博物馆选项中…"}
+                  />
+                  {needsSelection(item.capture_museum_name) ? (
+                    <span className="field-help error">请输入 `@关键词` 后，从下方结果选择拍摄时所在博物馆。</span>
+                  ) : isMissingValue(item.capture_museum_name) ? (
                     <span className="field-help error">提交前必须确认拍摄时所在博物馆。</span>
                   ) : (
-                    <span className="field-help">已改为数据库下拉选择，馆名会保持一致。</span>
+                    <span className="field-help">支持直接输入，也可通过 `@关键词` 联想选择标准馆名。</span>
                   )}
+                  {(museumSuggestions[item.id] ?? []).length > 0 ? (
+                    <div className="suggestion-list">
+                      {(museumSuggestions[item.id] ?? []).map((museum) => (
+                        <button
+                          key={museum.id}
+                          type="button"
+                          className="suggestion-item"
+                          onClick={() => {
+                            setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
+                            patchLocal(item.id, {
+                              capture_museum_name: museum.name,
+                              exhibition_name:
+                                (item.exhibition_name ?? "").trim().startsWith("@") || !(item.exhibition_name ?? "").trim()
+                                  ? "常设"
+                                  : item.exhibition_name,
+                            })
+                          }}
+                        >
+                          {museum.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </label>
               </div>
 
@@ -840,7 +1159,11 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   onClick={() => void handleSubmit(item)}
                   disabled={item.status === "submitting" || item.status === "submitted"}
                 >
-                  {item.status === "submitted" ? "已入库" : "提交云端"}
+                  {item.status === "submitted"
+                    ? "已入库"
+                    : matchedArtifact && sameArtifactDecision !== "no"
+                      ? "更新已有文物并上传图片"
+                      : "提交云端"}
                 </button>
                 <button type="button" className="ghost danger" onClick={() => void handleDelete(item.id)}>
                   删除
@@ -851,6 +1174,16 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           )
         })}
       </div>
+      <datalist id="batch-museum-options">
+        {museumOptions.map((museum) => (
+          <option key={museum.id} value={museum.name} />
+        ))}
+      </datalist>
+      <datalist id="batch-era-options">
+        {eraOptions.map((era) => (
+          <option key={era.id} value={era.name} />
+        ))}
+      </datalist>
       {submitNotice ? (
         <div className={`submit-toast ${submitNotice.type}`}>
           <div className="submit-toast-body">

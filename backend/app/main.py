@@ -238,6 +238,7 @@ def run_startup_migrations(connection) -> None:
         "aperture": "VARCHAR(64)",
         "iso": "INTEGER",
         "edit_method": "VARCHAR(32)",
+        "existing_artifact_id": "INTEGER",
     }
     for column_name, column_type in pending_column_definitions.items():
         if column_name not in pending_columns:
@@ -1608,6 +1609,11 @@ async def submit_pending(
                     "aperture": row.aperture or "",
                     "iso": "" if row.iso is None else str(row.iso),
                     "edit_method": row.edit_method or "",
+                    **(
+                        {"existing_artifact_id": str(row.existing_artifact_id)}
+                        if row.existing_artifact_id is not None
+                        else {}
+                    ),
                 },
                 headers={"Authorization": f"Bearer {settings.ingest_token}"},
             )
