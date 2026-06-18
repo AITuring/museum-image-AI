@@ -125,6 +125,17 @@ def enabled_sites() -> list[WebChatSite]:
 _PLAYWRIGHT = None
 _CONTEXT = None
 _BROWSER_LOCK = asyncio.Lock()
+_NEW_CHAT_BUTTON_TEXT = "新建对话"
+
+
+@dataclass
+class _SharedWebPageSession:
+    site_key: str
+    page: object
+    turn_count: int = 0
+
+
+_SHARED_WEB_PAGES: dict[str, _SharedWebPageSession] = {}
 
 
 async def _get_context():
@@ -433,13 +444,17 @@ async def _upload_image(page, site: WebChatSite, image_path: Path) -> None:
     an attach control and catching the file chooser.
     """
     await page.wait_for_function(
-        """() => {
+        """([composerSelector, attachName]) => {
             return Boolean(
-                document.querySelector('[contenteditable="true"], textarea') ||
+                document.querySelector(composerSelector) ||
                 document.querySelector('input[type="file"]') ||
-                document.querySelector('button[aria-label="添加附件"], [role="button"][aria-label="添加附件"]')
+                (attachName &&
+                    document.querySelector(
+                        `button[aria-label="${attachName}"], [role="button"][aria-label="${attachName}"]`
+                    ))
             );
         }""",
+        arg=[site.composer_selector, site.attach_name],
         timeout=40000,
     )
 
@@ -472,7 +487,143 @@ async def _upload_image(page, site: WebChatSite, image_path: Path) -> None:
     )
 
 
-async def _wait_for_answer(page, site: WebChatSite) -> str:
+async def _count_answer_nodes(page, selector: str) -> int:
+    return int(
+        await page.evaluate(
+            """(sel) => {
+                return [...document.querySelectorAll(sel)]
+                    .map((node) => (node.innerText || "").trim())
+                    .filter(Boolean).length;
+            }""",
+            selector,
+        )
+    )
+
+
+async def _clear_composer(page, site: WebChatSite) -> None:
+    composer = page.locator(site.composer_selector).first
+    await composer.click()
+
+    for shortcut in ("Meta+A", "Control+A"):
+        try:
+            await composer.press(shortcut)
+            await composer.press("Backspace")
+        except Exception:
+            continue
+
+    try:
+        await page.evaluate(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return;
+                if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+                    el.value = "";
+                    el.dispatchEvent(new Event("input", { bubbles: true }));
+                    el.dispatchEvent(new Event("change", { bubbles: true }));
+                    return;
+                }
+                el.textContent = "";
+                el.dispatchEvent(new InputEvent("input", {
+                    bubbles: true,
+                    data: "",
+                    inputType: "deleteContentBackward",
+                }));
+            }""",
+            site.composer_selector,
+        )
+    except Exception:
+        pass
+
+
+async def _start_new_conversation(page, site: WebChatSite) -> bool:
+    candidates = (
+        page.get_by_role("button", name=_NEW_CHAT_BUTTON_TEXT).first,
+        page.locator(
+            f'button:has-text("{_NEW_CHAT_BUTTON_TEXT}"), [role="button"]:has-text("{_NEW_CHAT_BUTTON_TEXT}")'
+        ).first,
+    )
+    for candidate in candidates:
+        try:
+            await candidate.wait_for(state="visible", timeout=3000)
+            await candidate.click(force=True)
+            await page.wait_for_timeout(1500)
+            await page.wait_for_function(
+                """(sel) => Boolean(document.querySelector(sel))""",
+                arg=site.composer_selector,
+                timeout=15000,
+            )
+            return True
+        except Exception:
+            continue
+    return False
+
+
+async def _open_chat_page(context, site: WebChatSite):
+    page = await context.new_page()
+    await page.goto(site.url, wait_until="domcontentloaded")
+    await page.wait_for_timeout(7000)
+    await page.wait_for_function(
+        """(sel) => Boolean(document.querySelector(sel))""",
+        arg=site.composer_selector,
+        timeout=40000,
+    )
+    return page
+
+
+async def _invalidate_shared_chat_page(site_key: str, page=None) -> None:
+    session = _SHARED_WEB_PAGES.get(site_key)
+    if session is None:
+        return
+    if page is not None and session.page is not page:
+        return
+    _SHARED_WEB_PAGES.pop(site_key, None)
+    try:
+        if not session.page.is_closed():
+            await session.page.close()
+    except Exception:
+        pass
+
+
+async def _get_shared_chat_page(site: WebChatSite) -> _SharedWebPageSession:
+    context = await _get_context()
+
+    cookies = _load_cookies(site.storage_state)
+    if cookies:
+        await context.add_cookies(cookies)
+    else:
+        logger.warning(
+            "web bridge %s: storage_state %s 不存在或无 cookie，将以未登录态访问，"
+            "可能无法获取结果。请运行 scripts/web_bridge_login.py 登录。",
+            site.key,
+            site.storage_state,
+        )
+
+    session = _SHARED_WEB_PAGES.get(site.key)
+    rotate_after = max(1, settings.web_reuse_conversation_max_turns)
+    if session is not None and session.page.is_closed():
+        _SHARED_WEB_PAGES.pop(site.key, None)
+        session = None
+
+    if session is None:
+        page = await _open_chat_page(context, site)
+        session = _SharedWebPageSession(site_key=site.key, page=page)
+        _SHARED_WEB_PAGES[site.key] = session
+        return session
+
+    if session.turn_count >= rotate_after:
+        rotated = await _start_new_conversation(session.page, site)
+        if not rotated:
+            await _invalidate_shared_chat_page(site.key, session.page)
+            page = await _open_chat_page(context, site)
+            session = _SharedWebPageSession(site_key=site.key, page=page)
+            _SHARED_WEB_PAGES[site.key] = session
+            return session
+        session.turn_count = 0
+
+    return session
+
+
+async def _wait_for_answer(page, site: WebChatSite, previous_answer_count: int) -> str:
     """Wait for the agent to finish and return the last rendered answer text.
 
     Heuristic: poll the last answer block; when its text stops changing for a few
@@ -486,12 +637,14 @@ async def _wait_for_answer(page, site: WebChatSite) -> str:
     while asyncio.get_event_loop().time() < deadline:
         await asyncio.sleep(2.0)
         current = await page.evaluate(
-            """(sel) => {
-                const nodes = [...document.querySelectorAll(sel)];
-                if (!nodes.length) return "";
-                return (nodes[nodes.length - 1].innerText || "").trim();
+            """({ sel, previousCount }) => {
+                const texts = [...document.querySelectorAll(sel)]
+                    .map((node) => (node.innerText || "").trim())
+                    .filter(Boolean);
+                if (texts.length <= previousCount) return "";
+                return texts[texts.length - 1];
             }""",
-            site.answer_selector,
+            {"sel": site.answer_selector, "previousCount": previous_answer_count},
         )
 
         if current:
@@ -526,28 +679,15 @@ async def _wait_for_answer(page, site: WebChatSite) -> str:
 
 async def _fetch_answer(site: WebChatSite, image_path: Path, prompt: str) -> str:
     """Drive the web app once and return the raw answer prose."""
-    context = await _get_context()
-
-    cookies = _load_cookies(site.storage_state)
-    if cookies:
-        await context.add_cookies(cookies)
-    else:
-        logger.warning(
-            "web bridge %s: storage_state %s 不存在或无 cookie，将以未登录态访问，"
-            "可能无法获取结果。请运行 scripts/web_bridge_login.py 登录。",
-            site.key,
-            site.storage_state,
-        )
-
-    page = await context.new_page()
+    session = await _get_shared_chat_page(site)
+    page = session.page
     try:
-        await page.goto(site.url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(7000)
-
+        previous_answer_count = await _count_answer_nodes(page, site.answer_selector)
         await _upload_image(page, site, image_path)
         await page.wait_for_timeout(5000)  # let the upload/thumbnail register
 
         composer = page.locator(site.composer_selector).first
+        await _clear_composer(page, site)
         await composer.click()
         # contenteditable composers ignore Locator.fill, so type the keystrokes.
         await page.keyboard.type(prompt)
@@ -558,9 +698,12 @@ async def _fetch_answer(site: WebChatSite, image_path: Path, prompt: str) -> str
         else:
             await composer.press("Enter")
 
-        return await _wait_for_answer(page, site)
-    finally:
-        await page.close()
+        answer_text = await _wait_for_answer(page, site, previous_answer_count)
+        session.turn_count += 1
+        return answer_text
+    except Exception:
+        await _invalidate_shared_chat_page(site.key, page)
+        raise
 
 
 async def _fetch_answer_remote(site: WebChatSite, image_path: Path, prompt: str) -> str:
@@ -678,9 +821,27 @@ def _parse_tag_tokens(value: str) -> list[str]:
     return tags
 
 
+def _collect_block_lines(lines: list[str], start_index: int) -> list[str]:
+    collected: list[str] = []
+    for remainder in lines[start_index:]:
+        stripped = remainder.strip()
+        if not stripped:
+            break
+        if re.match(
+            r"^(?:说明|备注|理由|依据|补充|器型与材质|纹饰与工艺|用途与历史背景|出土与墓葬信息|"
+            r"详细描述|描述|名称|时代|馆藏|博物馆|判断依据|结论)[:：]?$",
+            stripped,
+        ):
+            break
+        collected.append(stripped)
+    return collected
+
+
 def _extract_tag_block(answer_text: str) -> tuple[list[str], str]:
     marker = re.compile(
-        r"^(?:适合入库的)?(?:(?:入库|推荐|建议)\s*)?标签(?:建议|如下)?\s*[:：]?\s*(.*)$"
+        r"^(?:适合入库的|可(?:入库|检索)的?)?"
+        r"(?:(?:入库|推荐|建议|检索)\s*)?"
+        r"(?:标签|关键词|要点)(?:建议|如下|信息点)?\s*[:：]?\s*(.*)$"
     )
     lines = answer_text.split("\n")
     for index, line in enumerate(lines):
@@ -688,14 +849,7 @@ def _extract_tag_block(answer_text: str) -> tuple[list[str], str]:
         if not match:
             continue
         tag_lines = [match.group(1).strip()] if match.group(1).strip() else []
-        remainder_lines = lines[index + 1 :]
-        for remainder in remainder_lines:
-            stripped = remainder.strip()
-            if not stripped:
-                break
-            if re.match(r"^(?:说明|备注|理由|依据|补充|器型与材质|纹饰与工艺|用途与历史背景|出土与墓葬信息)[:：]?$", stripped):
-                break
-            tag_lines.append(stripped)
+        tag_lines.extend(_collect_block_lines(lines, index + 1))
         description_lines = lines[:index]
         description = "\n".join(description_lines).strip()
         tags = _parse_tag_tokens("\n".join(tag_lines))
@@ -705,10 +859,40 @@ def _extract_tag_block(answer_text: str) -> tuple[list[str], str]:
 
 def _derive_tags(answer_text: str, artifact_name: str, era: str, museum_name: str) -> list[str]:
     tags: list[str] = []
-    for keyword in ["青铜器", "礼器", "铭文", "龙纹", "簋", "鼎", "尊", "陶器", "瓷器", "佛像"]:
+    for keyword in [
+        "青铜器",
+        "金器",
+        "银器",
+        "玉器",
+        "陶器",
+        "瓷器",
+        "石器",
+        "佛像",
+        "礼器",
+        "摆件",
+        "铭文",
+        "龙纹",
+        "凤纹",
+        "兽面纹",
+        "鎏金",
+        "彩绘",
+        "越窑",
+        "秘色瓷",
+        "红山文化",
+        "墓葬",
+        "出土文物",
+        "祭祀",
+        "陪葬",
+        "陶俑",
+        "石雕",
+        "玉璧",
+        "玉猪龙",
+        "经函",
+        "舍利",
+    ]:
         if keyword in answer_text and keyword not in tags:
             tags.append(keyword)
-        if len(tags) >= 6:
+        if len(tags) >= 8:
             break
     return sanitize_generated_tags(tags, artifact_name, era, museum_name)
 

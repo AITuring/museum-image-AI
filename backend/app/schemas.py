@@ -116,6 +116,7 @@ class CloudArtifactSubmitRequest(BaseModel):
     era: str | None = None
     description: str | None = None
     existing_artifact_id: int | None = None
+    skip_existing_match: bool = False
     tags: list[str] = Field(default_factory=list)
     camera_model: str | None = None
     lens_model: str | None = None
@@ -303,3 +304,7 @@ class PendingArtifactUpdate(BaseModel):
 class BatchIdentifyRequest(BaseModel):
     # Specific pending ids to (re)identify; empty = all rows in pending/failed state.
     ids: list[int] = Field(default_factory=list)
+
+
+class PendingArtifactSubmitRequest(BaseModel):
+    skip_existing_match: bool = False

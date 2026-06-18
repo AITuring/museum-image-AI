@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 type PendingArtifact = {
   id: number
   source_path: string
+  image_url: string
   file_name: string
   status: string
   error: string | null
@@ -31,20 +32,23 @@ type PendingArtifact = {
   updated_at: string
 }
 
-type BatchScanResponse = {
-  scanned: number
-  added: number
-  skipped: number
-  items: PendingArtifact[]
+type VisionCandidate = {
+  provider: string
+  model: string
+  artifact_name: string
+  era: string | null
+  museum_name: string | null
+  tags: string[]
+  description: string
+  confidence: number | null
+  analysis: string | null
+  reasoning: string | null
 }
 
-type StreamEvent = {
-  stage: string
-  total?: number
-  id?: number
-  file_name?: string
-  item?: PendingArtifact
-  message?: string
+type VisionAnalyzeResponse = {
+  candidates: VisionCandidate[]
+  unavailable_providers: string[]
+  failed_providers: string[]
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -111,32 +115,8 @@ type FileWithRelativePath = File & {
   webkitRelativePath?: string
 }
 
-const DISMISSED_BATCH_IDS_KEY = "batch-dismissed-pending-ids"
-
-function readDismissedBatchIds() {
-  if (typeof window === "undefined") {
-    return new Set<number>()
-  }
-  try {
-    const raw = window.localStorage.getItem(DISMISSED_BATCH_IDS_KEY)
-    if (!raw) {
-      return new Set<number>()
-    }
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) {
-      return new Set<number>()
-    }
-    return new Set(parsed.filter((value): value is number => typeof value === "number"))
-  } catch {
-    return new Set<number>()
-  }
-}
-
-function writeDismissedBatchIds(ids: Set<number>) {
-  if (typeof window === "undefined") {
-    return
-  }
-  window.localStorage.setItem(DISMISSED_BATCH_IDS_KEY, JSON.stringify(Array.from(ids)))
+function buildLocalFileFingerprint(file: File) {
+  return `${file.name}__${file.size}__${file.lastModified}`
 }
 
 function normalizeTags(values: string[]) {
@@ -151,6 +131,88 @@ function normalizeTags(values: string[]) {
     tags.push(tag)
   }
   return tags
+}
+
+function deriveTagsFromAnalysis(
+  analysis: string | null | undefined,
+  options?: { artifactName?: string | null; era?: string | null; museumName?: string | null },
+) {
+  const text = (analysis ?? "").trim()
+  if (!text) {
+    return []
+  }
+
+  const lines = text.replace(/\r\n/g, "\n").split("\n").map((line) => line.trim())
+  const marker = /^(?:适合入库的|可(?:入库|检索)的?)?(?:(?:入库|推荐|建议)\s*)?(?:标签|关键词)(?:建议|如下)?\s*[:：]?\s*(.*)$/
+  const stopMarker = /^(?:说明|备注|理由|依据|补充|器型与材质|纹饰与工艺|用途与历史背景|出土与墓葬信息|详细描述|描述|名称|时代|馆藏|博物馆)[:：]?$/
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    const match = line.match(marker)
+    if (!match) {
+      continue
+    }
+    const tagLines = [match[1]?.trim() ?? ""].filter(Boolean)
+    for (const remainder of lines.slice(index + 1)) {
+      if (!remainder) break
+      if (stopMarker.test(remainder)) break
+      tagLines.push(remainder)
+    }
+    const tags = normalizeTags(
+      tagLines
+        .join("\n")
+        .split(/[,\n，、；;|/]+/)
+        .map((tag) => tag.replace(/^\d+[.)、]\s*/, "").trim().replace(/[【】[\]<>《》"'']/g, "")),
+    )
+    if (tags.length > 0) {
+      const blocked = new Set(
+        [options?.artifactName, options?.era, options?.museumName]
+          .map((value) => (value ?? "").trim().toLowerCase())
+          .filter(Boolean),
+      )
+      return tags.filter((tag) => !blocked.has(tag.toLowerCase()))
+    }
+  }
+
+  const keywordCandidates = [
+    "青铜器",
+    "金器",
+    "银器",
+    "玉器",
+    "陶器",
+    "瓷器",
+    "石器",
+    "佛像",
+    "礼器",
+    "摆件",
+    "铭文",
+    "龙纹",
+    "凤纹",
+    "兽面纹",
+    "鎏金",
+    "彩绘",
+    "秘色瓷",
+    "越窑",
+    "红山文化",
+    "墓葬",
+    "出土文物",
+  ]
+  const derived = keywordCandidates.filter((keyword) => text.includes(keyword)).slice(0, 8)
+  return normalizeTags(derived)
+}
+
+function enrichPendingItemTags(item: PendingArtifact): PendingArtifact {
+  if ((item.tags ?? []).length > 0) {
+    return item
+  }
+  const derivedTags = deriveTagsFromAnalysis(item.analysis, {
+    artifactName: item.name,
+    era: item.era,
+    museumName: item.museum_name,
+  })
+  if (derivedTags.length === 0) {
+    return item
+  }
+  return { ...item, tags: derivedTags }
 }
 
 function isMissingValue(value: string | null | undefined) {
@@ -181,6 +243,10 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [matchIdentityKeys, setMatchIdentityKeys] = useState<Record<number, string>>({})
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
   const folderInputRef = useRef<HTMLInputElement | null>(null)
+  const fileStoreRef = useRef<Map<number, File>>(new Map())
+  const previewUrlStoreRef = useRef<Map<number, string>>(new Map())
+  const matchingIdsRef = useRef<Set<number>>(new Set())
+  const submittingIdsRef = useRef<Set<number>>(new Set())
 
   async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
     const response = await fetch(input, init)
@@ -199,18 +265,13 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     return (await response.json()) as T
   }
 
-  const loadPending = useCallback(async () => {
-    const res = await fetch(`${apiBaseUrl}/api/batch/pending`)
-    if (res.ok) {
-      const dismissedIds = readDismissedBatchIds()
-      const nextItems = ((await res.json()) as PendingArtifact[]).filter((item) => !dismissedIds.has(item.id))
-      setItems(nextItems)
-    }
-  }, [apiBaseUrl])
-
   useEffect(() => {
-    void loadPending()
-  }, [loadPending])
+    return () => {
+      previewUrlStoreRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl))
+      previewUrlStoreRef.current.clear()
+      fileStoreRef.current.clear()
+    }
+  }, [])
 
   useEffect(() => {
     void (async () => {
@@ -325,84 +386,106 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }, [apiBaseUrl, items, museumOptions, museumSuggestions])
 
-  useEffect(() => {
-    const cleanup: Array<() => void> = []
-    items.forEach((item) => {
-      const name = (item.name ?? "").trim()
-      const museumName = (item.museum_name ?? "").trim()
-      const era = (item.era ?? "").trim()
-      const identityKey = `${name}__${museumName}__${era}`
-      if (!name || !museumName || !era) {
-        setMatchedArtifacts((current) => {
-          if (!(item.id in current)) return current
-          return { ...current, [item.id]: null }
-        })
-        setSameArtifactDecisions((current) => {
-          if (!(item.id in current)) return current
-          return { ...current, [item.id]: null }
-        })
-        setMatchIdentityKeys((current) => {
-          if (!(item.id in current)) return current
-          const next = { ...current }
-          delete next[item.id]
-          return next
-        })
-        return
-      }
-
-      const controller = new AbortController()
-      const timer = window.setTimeout(async () => {
-        try {
-          const params = new URLSearchParams({ name })
-          params.set("museum_name", museumName)
-          params.set("era", era)
-          const matched = await fetchJson<ExistingArtifactMatch | null>(
-            `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
-            { signal: controller.signal },
-          )
-          if (controller.signal.aborted) {
-            return
-          }
-          setMatchedArtifacts((current) => ({ ...current, [item.id]: matched }))
-          setSameArtifactDecisions((current) => {
-            const previousKey = matchIdentityKeys[item.id]
-            if (previousKey === identityKey) {
-              return current
-            }
-            return { ...current, [item.id]: null }
-          })
-          setMatchIdentityKeys((current) => ({ ...current, [item.id]: identityKey }))
-          if (!matched && item.existing_artifact_id != null) {
-            patchLocal(item.id, { existing_artifact_id: null })
-          }
-        } catch {
-          if (!controller.signal.aborted) {
-            setMatchedArtifacts((current) => ({ ...current, [item.id]: null }))
-            setSameArtifactDecisions((current) => {
-              const previousKey = matchIdentityKeys[item.id]
-              if (previousKey === identityKey) {
-                return current
-              }
-              return { ...current, [item.id]: null }
-            })
-            setMatchIdentityKeys((current) => ({ ...current, [item.id]: identityKey }))
-          }
-        }
-      }, 220)
-
-      cleanup.push(() => {
-        controller.abort()
-        window.clearTimeout(timer)
-      })
-    })
-
-    return () => {
-      cleanup.forEach((fn) => fn())
-    }
-  }, [apiBaseUrl, items, matchIdentityKeys])
-
   function patchLocal(id: number, patch: Partial<PendingArtifact>) {
-    setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)))
+    setItems((current) =>
+      current.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              ...patch,
+              updated_at: patch.updated_at ?? new Date().toISOString(),
+            }
+          : item,
+      ),
+    )
+  }
+
+  function buildIdentityKey(item: PendingArtifact) {
+    const name = (item.name ?? "").trim()
+    const museumName = (item.museum_name ?? "").trim()
+    const era = (item.era ?? "").trim()
+    if (!name || !museumName || !era) {
+      return null
+    }
+    return `${name}__${museumName}__${era}`
+  }
+
+  function clearMatchState(id: number) {
+    setMatchedArtifacts((current) => {
+      if (!(id in current)) return current
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    setSameArtifactDecisions((current) => {
+      if (!(id in current)) return current
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    setMatchIdentityKeys((current) => {
+      if (!(id in current)) return current
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+  }
+
+  async function lookupMatchForItem(item: PendingArtifact) {
+    const identityKey = buildIdentityKey(item)
+    if (!identityKey) {
+      clearMatchState(item.id)
+      return null
+    }
+
+    const previousIdentityKey = matchIdentityKeys[item.id]
+    if (previousIdentityKey === identityKey && item.id in matchedArtifacts) {
+      return matchedArtifacts[item.id] ?? null
+    }
+    if (matchingIdsRef.current.has(item.id)) {
+      return matchedArtifacts[item.id] ?? null
+    }
+
+    matchingIdsRef.current.add(item.id)
+    try {
+      const params = new URLSearchParams({ name: (item.name ?? "").trim() })
+      params.set("museum_name", (item.museum_name ?? "").trim())
+      params.set("era", (item.era ?? "").trim())
+      const matched = await fetchJson<ExistingArtifactMatch | null>(
+        `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
+      )
+      setMatchedArtifacts((current) => ({ ...current, [item.id]: matched }))
+      setSameArtifactDecisions((current) => {
+        if (previousIdentityKey === identityKey) {
+          return current
+        }
+        return { ...current, [item.id]: null }
+      })
+      setMatchIdentityKeys((current) => ({ ...current, [item.id]: identityKey }))
+      if (!matched && item.existing_artifact_id != null) {
+        patchLocal(item.id, { existing_artifact_id: null })
+      }
+      return matched
+    } catch (err) {
+      setMatchedArtifacts((current) => ({ ...current, [item.id]: null }))
+      setMatchIdentityKeys((current) => ({ ...current, [item.id]: identityKey }))
+      throw err
+    } finally {
+      matchingIdsRef.current.delete(item.id)
+    }
+  }
+
+  function pickPreferredCandidate(candidates: VisionCandidate[]) {
+    return candidates.find((candidate) => candidate.provider === "qwen_web") ?? candidates[0] ?? null
+  }
+
+  function releaseLocalImage(item: PendingArtifact) {
+    const previewUrl = previewUrlStoreRef.current.get(item.id)
+    if (previewUrl?.startsWith("blob:")) {
+      URL.revokeObjectURL(previewUrl)
+    }
+    previewUrlStoreRef.current.delete(item.id)
+    fileStoreRef.current.delete(item.id)
   }
 
   function addTags(id: number, rawValue: string) {
@@ -436,26 +519,59 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     setMessage(null)
     try {
       const uploadFiles = Array.from(files)
-      const formData = new FormData()
-      for (const file of uploadFiles) {
-        formData.append("files", file)
-      }
       const firstFile = uploadFiles[0] as FileWithRelativePath
       const folderName = firstFile.webkitRelativePath?.split("/")[0] || "已选文件夹"
       setSelectedFolderLabel(`${folderName} · ${uploadFiles.length} 个文件`)
-
-      const res = await fetch(`${apiBaseUrl}/api/batch/scan-files`, {
-        method: "POST",
-        body: formData,
+      const now = new Date().toISOString()
+      const existingFingerprints = new Set(
+        Array.from(fileStoreRef.current.values()).map((file) => buildLocalFileFingerprint(file)),
+      )
+      const acceptedFiles: FileWithRelativePath[] = []
+      const nextItems = uploadFiles.flatMap((file, index) => {
+        const fingerprint = buildLocalFileFingerprint(file)
+        if (existingFingerprints.has(fingerprint)) {
+          return []
+        }
+        existingFingerprints.add(fingerprint)
+        acceptedFiles.push(file as FileWithRelativePath)
+        const previewUrl = URL.createObjectURL(file)
+        const itemId = Date.now() + index
+        fileStoreRef.current.set(itemId, file)
+        previewUrlStoreRef.current.set(itemId, previewUrl)
+        return enrichPendingItemTags({
+          id: itemId,
+          source_path: (file as FileWithRelativePath).webkitRelativePath || file.name,
+          image_url: previewUrl,
+          file_name: file.name,
+          status: "pending",
+          error: null,
+          museum_name: null,
+          name: null,
+          era: null,
+          description: null,
+          tags: [],
+          camera_model: null,
+          lens_model: null,
+          capture_museum_name: null,
+          exhibition_name: "常设",
+          latitude: null,
+          longitude: null,
+          captured_at: null,
+          shutter_speed: null,
+          aperture: null,
+          iso: null,
+          edit_method: null,
+          confidence: null,
+          provider: null,
+          analysis: null,
+          existing_artifact_id: null,
+          cloud_artifact_id: null,
+          created_at: now,
+          updated_at: now,
+        })
       })
-      if (!res.ok) {
-        const detail = (await res.json().catch(() => ({}))) as { detail?: string }
-        throw new Error(detail.detail ?? `HTTP ${res.status}`)
-      }
-      const data = (await res.json()) as BatchScanResponse
-      const dismissedIds = readDismissedBatchIds()
-      setItems(data.items.filter((item) => !dismissedIds.has(item.id)))
-      setMessage(`扫描 ${data.scanned} 张，新增 ${data.added}，跳过 ${data.skipped}（已存在）`)
+      setItems((current) => [...nextItems, ...current])
+      setMessage(`已加入 ${acceptedFiles.length} 张到前端暂存，提交云端前不会入库`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "扫描失败")
     } finally {
@@ -473,47 +589,52 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     setProgress(null)
     let done = 0
     try {
-      const res = await fetch(`${apiBaseUrl}/api/batch/identify/stream`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
-      })
-      if (!res.ok || !res.body) {
-        const detail = (await res.json().catch(() => ({}))) as { detail?: string }
-        throw new Error(detail.detail ?? `HTTP ${res.status}`)
-      }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-      while (true) {
-        const { done: streamDone, value } = await reader.read()
-        if (streamDone) break
-        buffer += decoder.decode(value, { stream: true })
-        const chunks = buffer.split("\n\n")
-        buffer = chunks.pop() ?? ""
-        for (const chunk of chunks) {
-          const line = chunk.trim()
-          if (!line.startsWith("data:")) continue
-          let event: StreamEvent
-          try {
-            event = JSON.parse(line.replace(/^data:\s*/, "")) as StreamEvent
-          } catch {
-            continue
+      const targets = items.filter((item) =>
+        ids.length > 0 ? ids.includes(item.id) : item.status === "pending" || item.status === "failed",
+      )
+      setProgress({ done: 0, total: targets.length })
+      for (const item of targets) {
+        patchLocal(item.id, { status: "identifying", error: null })
+        try {
+          const file = fileStoreRef.current.get(item.id)
+          if (!file) {
+            throw new Error("当前图片文件已丢失，请重新选择文件夹")
           }
-          if (event.stage === "meta") {
-            setProgress({ done: 0, total: event.total ?? 0 })
-          } else if (event.stage === "start" && event.id != null) {
-            patchLocal(event.id, { status: "identifying" })
-          } else if (event.stage === "item" && event.item) {
-            patchLocal(event.item.id, event.item)
-            done += 1
-            setProgress((p) => (p ? { ...p, done } : { done, total: done }))
-          } else if (event.stage === "item_error" && event.id != null) {
-            patchLocal(event.id, { status: "failed", error: event.message ?? "识别失败" })
-            done += 1
-            setProgress((p) => (p ? { ...p, done } : { done, total: done }))
+          const formData = new FormData()
+          formData.append("file", file, file.name)
+          formData.append("image_name", item.file_name)
+          const response = await fetchJson<VisionAnalyzeResponse>(`${apiBaseUrl}/api/vision/analyze/file`, {
+            method: "POST",
+            body: formData,
+          })
+          const candidate = pickPreferredCandidate(response.candidates)
+          if (!candidate) {
+            throw new Error("未获得识别结果")
           }
+          patchLocal(
+            item.id,
+            enrichPendingItemTags({
+              ...item,
+              museum_name: candidate.museum_name ?? item.museum_name,
+              name: candidate.artifact_name ?? item.name,
+              era: candidate.era ?? item.era,
+              description: candidate.description ?? item.description,
+              tags: normalizeTags(candidate.tags ?? []),
+              confidence: candidate.confidence,
+              provider: candidate.provider,
+              analysis: candidate.analysis ?? item.analysis,
+              status: "identified",
+              error: null,
+            }),
+          )
+        } catch (identifyError) {
+          patchLocal(item.id, {
+            status: "failed",
+            error: identifyError instanceof Error ? identifyError.message : "识别失败",
+          })
         }
+        done += 1
+        setProgress((p) => (p ? { ...p, done } : { done, total: targets.length }))
       }
       setMessage("识别完成，请逐条核对后提交云端")
     } catch (err) {
@@ -524,42 +645,48 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   async function saveItem(item: PendingArtifact) {
-    const res = await fetch(`${apiBaseUrl}/api/batch/pending/${item.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        museum_name: item.museum_name,
-        name: item.name,
-        era: item.era,
-        description: item.description,
-        tags: item.tags,
-        camera_model: item.camera_model,
-        lens_model: item.lens_model,
-        capture_museum_name: item.capture_museum_name,
-        exhibition_name: item.exhibition_name,
-        latitude: item.latitude,
-        longitude: item.longitude,
-        captured_at: item.captured_at,
-        shutter_speed: item.shutter_speed,
-        aperture: item.aperture,
-        iso: item.iso,
-        edit_method: item.edit_method,
-        existing_artifact_id: item.existing_artifact_id,
-      }),
-    })
-    if (!res.ok) {
-      const detail = (await res.json().catch(() => ({}))) as { detail?: string }
-      throw new Error(detail.detail ?? `HTTP ${res.status}`)
-    }
-    return (await res.json()) as PendingArtifact
+    return { ...item, updated_at: new Date().toISOString() }
   }
 
-  async function handleSubmit(item: PendingArtifact) {
+  async function handleSave(item: PendingArtifact) {
     setError(null)
     setMessage(null)
     setSubmitNotice(null)
     try {
-      const matchedArtifact = matchedArtifacts[item.id] ?? null
+      const matched = await lookupMatchForItem(item)
+      const saved = await saveItem(item)
+      patchLocal(item.id, saved)
+      if (matched) {
+        setMessage(`已保存「${saved.name ?? saved.file_name}」，下方列出了疑似冲突记录`)
+        setSubmitNotice({
+          type: "success",
+          text: `已保存「${saved.name ?? saved.file_name}」，下方列出了疑似冲突记录`,
+        })
+      } else {
+        setMessage(`已保存「${saved.name ?? saved.file_name}」`)
+        setSubmitNotice({
+          type: "success",
+          text: `已保存「${saved.name ?? saved.file_name}」`,
+        })
+      }
+    } catch (err) {
+      const saveError = err instanceof Error ? err.message : "保存失败"
+      setError(saveError)
+      setSubmitNotice({ type: "error", text: saveError })
+    }
+  }
+
+  async function handleSubmit(item: PendingArtifact) {
+    if (submittingIdsRef.current.has(item.id) || item.status === "submitting" || item.status === "submitted") {
+      return
+    }
+
+    submittingIdsRef.current.add(item.id)
+    setError(null)
+    setMessage(null)
+    setSubmitNotice(null)
+    try {
+      const matchedArtifact = await lookupMatchForItem(item)
       const sameArtifactDecision = sameArtifactDecisions[item.id] ?? null
       const normalizedItem: PendingArtifact = {
         ...item,
@@ -578,31 +705,70 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       if (!(item.exhibition_name ?? "").trim() || (item.exhibition_name ?? "").trim().startsWith("@")) {
         throw new Error("请填写或选择展览名称")
       }
-      patchLocal(item.id, normalizedItem)
-      await saveItem(normalizedItem)
-      patchLocal(item.id, { status: "submitting" })
-      const res = await fetch(`${apiBaseUrl}/api/batch/pending/${item.id}/submit`, {
+      if (matchedArtifact && sameArtifactDecision == null) {
+        throw new Error("发现疑似同一件文物，请先在下方确认“是同一件”还是“不是同一件”后再提交。")
+      }
+      patchLocal(item.id, { ...normalizedItem, status: "submitting", error: null })
+      const saved = await saveItem({ ...normalizedItem, status: "submitting", error: null })
+      patchLocal(item.id, saved)
+      const file = fileStoreRef.current.get(item.id)
+      if (!file) {
+        throw new Error("当前图片文件已丢失，请重新选择文件夹")
+      }
+      const formData = new FormData()
+      formData.append("file", file, file.name)
+      formData.append("museum_name", normalizedItem.museum_name ?? "")
+      formData.append("name", normalizedItem.name ?? "")
+      formData.append("era", normalizedItem.era ?? "")
+      formData.append("description", normalizedItem.description ?? "")
+      formData.append("skip_existing_match", String(sameArtifactDecision === "no"))
+      formData.append("tags", JSON.stringify(normalizedItem.tags ?? []))
+      formData.append("camera_model", normalizedItem.camera_model ?? "")
+      formData.append("lens_model", normalizedItem.lens_model ?? "")
+      formData.append("capture_museum_name", normalizedItem.capture_museum_name ?? "")
+      formData.append("exhibition_name", normalizedItem.exhibition_name ?? "")
+      formData.append("latitude", normalizedItem.latitude == null ? "" : String(normalizedItem.latitude))
+      formData.append("longitude", normalizedItem.longitude == null ? "" : String(normalizedItem.longitude))
+      formData.append("captured_at", normalizedItem.captured_at ?? "")
+      formData.append("shutter_speed", normalizedItem.shutter_speed ?? "")
+      formData.append("aperture", normalizedItem.aperture ?? "")
+      formData.append("iso", normalizedItem.iso == null ? "" : String(normalizedItem.iso))
+      formData.append("edit_method", normalizedItem.edit_method ?? "")
+      if (normalizedItem.existing_artifact_id != null) {
+        formData.append("existing_artifact_id", String(normalizedItem.existing_artifact_id))
+      }
+      const res = await fetch(`${apiBaseUrl}/api/artifacts/submit-cloud-file`, {
         method: "POST",
+        body: formData,
       })
       if (!res.ok) {
         const detail = (await res.json().catch(() => ({}))) as { detail?: string }
         throw new Error(detail.detail ?? `HTTP ${res.status}`)
       }
-      const updated = (await res.json()) as PendingArtifact
-      patchLocal(item.id, updated)
-      setMessage(`「${updated.name}」已提交云端`)
-      setSubmitNotice({ type: "success", text: `「${updated.name}」已提交云端` })
+      const created = (await res.json()) as { id: number; name: string }
+      patchLocal(item.id, {
+        status: "submitted",
+        cloud_artifact_id: created.id,
+        error: null,
+      })
+      setMessage(`「${created.name}」已提交云端`)
+      setSubmitNotice({ type: "success", text: `「${created.name}」已提交云端` })
     } catch (err) {
       const submitError = err instanceof Error ? err.message : "提交失败"
       patchLocal(item.id, { status: "failed", error: submitError })
       setError(submitError)
       setSubmitNotice({ type: "error", text: submitError })
+    } finally {
+      submittingIdsRef.current.delete(item.id)
     }
   }
 
   async function handleDelete(id: number) {
-    await fetch(`${apiBaseUrl}/api/batch/pending/${id}`, { method: "DELETE" })
-    setItems((current) => current.filter((item) => item.id !== id))
+    const current = items.find((item) => item.id === id)
+    if (current) {
+      releaseLocalImage(current)
+    }
+    setItems((drafts) => drafts.filter((item) => item.id !== id))
   }
 
   async function handleClearAll() {
@@ -617,9 +783,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       setError(null)
       setMessage(null)
       setSubmitNotice(null)
-      const dismissedIds = readDismissedBatchIds()
-      items.forEach((item) => dismissedIds.add(item.id))
-      writeDismissedBatchIds(dismissedIds)
+      items.forEach((item) => releaseLocalImage(item))
       setItems([])
       setTagInputs({})
       setMuseumSuggestions({})
@@ -629,8 +793,8 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       setMatchIdentityKeys({})
       setProgress(null)
       setSelectedFolderLabel(null)
-      setMessage("已从前端列表全部清除当前批量记录")
-      setSubmitNotice({ type: "success", text: "已从前端列表全部清除当前批量记录" })
+      setMessage("已清空当前页面中的批量图片与草稿")
+      setSubmitNotice({ type: "success", text: "已清空当前页面中的批量图片与草稿" })
     } catch (err) {
       const clearError = err instanceof Error ? err.message : "全部清除失败"
       setError(clearError)
@@ -659,7 +823,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
             onClick={() => folderInputRef.current?.click()}
             disabled={scanning}
           >
-            {scanning ? "扫描中…" : "选择文件夹并扫描"}
+            {scanning ? "上传中…" : "选择文件夹并上传"}
           </button>
           <input
             ref={folderInputRef}
@@ -673,9 +837,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
             {selectedFolderLabel ?? "点击按钮后直接选择本地文件夹，无需再手填路径。"}
           </span>
         </div>
-        <button type="button" className="ghost" onClick={() => void loadPending()} disabled={identifying || scanning}>
-          刷新列表
-        </button>
       </div>
 
       <div className="upload-actions">
@@ -721,14 +882,21 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
             museumOptions.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ??
             museumSuggestions[item.id]?.find((museum) => museum.name === (item.capture_museum_name ?? "").trim()) ??
             null
-          const matchedArtifact = matchedArtifacts[item.id] ?? null
-          const sameArtifactDecision = sameArtifactDecisions[item.id] ?? null
+          const activeIdentityKey = buildIdentityKey(item)
+          const matchedArtifact =
+            activeIdentityKey && matchIdentityKeys[item.id] === activeIdentityKey
+              ? matchedArtifacts[item.id] ?? null
+              : null
+          const sameArtifactDecision =
+            activeIdentityKey && matchIdentityKeys[item.id] === activeIdentityKey
+              ? sameArtifactDecisions[item.id] ?? null
+              : null
 
           return (
           <article key={item.id} className="batch-card">
             <div className="batch-thumb">
               <img
-                src={`${apiBaseUrl}/api/batch/pending/${item.id}/image`}
+                src={item.image_url}
                 alt={item.file_name}
                 loading="lazy"
               />
@@ -1134,22 +1302,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <button
                   type="button"
                   className="ghost"
-                  onClick={() =>
-                    void saveItem(item)
-                      .then((saved) => {
-                        patchLocal(item.id, saved)
-                        setMessage(`已保存「${saved.name ?? saved.file_name}」`)
-                        setSubmitNotice({
-                          type: "success",
-                          text: `已保存「${saved.name ?? saved.file_name}」`,
-                        })
-                      })
-                      .catch((err) => {
-                        const saveError = err instanceof Error ? err.message : "保存失败"
-                        setError(saveError)
-                        setSubmitNotice({ type: "error", text: saveError })
-                      })
-                  }
+                  onClick={() => void handleSave(item)}
                 >
                   保存
                 </button>

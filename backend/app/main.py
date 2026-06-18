@@ -54,6 +54,7 @@ from app.schemas import (
     MuseumRead,
     MuseumUpdate,
     PendingArtifactRead,
+    PendingArtifactSubmitRequest,
     PendingArtifactUpdate,
     WebBridgeLoginStartRead,
     WebBridgeStatusRead,
@@ -721,6 +722,158 @@ def build_duplicate_image_detail(image: ArtifactImage | ArtifactImageRead) -> st
     return f"这张图片已存在于文物「{image.artifact_name}」{suffix}，不能重复上传。"
 
 
+def extract_http_error_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            return detail.strip()
+    text_body = response.text.strip()
+    if text_body:
+        return text_body
+    return f"HTTP {response.status_code}"
+
+
+def write_temp_image_file(contents: bytes, filename: str | None = None) -> Path:
+    suffix = Path(filename or "").suffix.lower() or ".jpg"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.write(contents)
+    tmp.close()
+    return Path(tmp.name)
+
+
+async def run_vision_analysis(image_urls: list[str], image_name: str | None) -> VisionAnalyzeResponse:
+    if not image_urls:
+        raise HTTPException(status_code=400, detail="No image urls provided")
+
+    providers, unavailable_providers = get_enabled_providers()
+    web_sites = enabled_sites()
+    if not providers and not web_sites:
+        raise HTTPException(
+            status_code=400,
+            detail="No vision provider configured. Please set DASHSCOPE_API_KEY or VOLCENGINE_API_KEY.",
+        )
+
+    tasks = [
+        request_provider_analysis(provider, image_urls, DATA_DIR, image_name)
+        for provider in providers
+    ]
+    task_names = [provider.name for provider in providers]
+    for site in web_sites:
+        tasks.append(request_web_candidate(site, image_urls, DATA_DIR, image_name))
+        task_names.append(site.key)
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    candidates = []
+    failed_providers = []
+    for name, result in zip(task_names, results, strict=False):
+        if isinstance(result, Exception):
+            failed_providers.append(name)
+            logger.warning(
+                "Vision provider %s failed: %s",
+                name,
+                result,
+                exc_info=result,
+            )
+            continue
+        candidates.append(result)
+
+    candidates.sort(
+        key=lambda item: (
+            item.confidence if item.confidence is not None else -1,
+            len(item.tags),
+        ),
+        reverse=True,
+    )
+
+    return VisionAnalyzeResponse(
+        candidates=candidates,
+        unavailable_providers=unavailable_providers,
+        failed_providers=failed_providers,
+    )
+
+
+async def submit_artifact_to_cloud(
+    *,
+    image_bytes: bytes,
+    image_name: str,
+    content_type: str,
+    museum_name: str,
+    name: str,
+    era: str | None,
+    description: str | None,
+    existing_artifact_id: int | None,
+    skip_existing_match: bool,
+    tags: list[str],
+    camera_model: str | None,
+    lens_model: str | None,
+    capture_museum_name: str | None,
+    exhibition_name: str | None,
+    latitude: float | None,
+    longitude: float | None,
+    captured_at: datetime | None,
+    shutter_speed: str | None,
+    aperture: str | None,
+    iso: int | None,
+    edit_method: str | None,
+) -> ArtifactRead:
+    if not settings.cloud_api_base_url:
+        raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
+    if not settings.ingest_token:
+        raise HTTPException(status_code=400, detail="未配置 INGEST_TOKEN。")
+    if not museum_name.strip():
+        raise HTTPException(status_code=400, detail="请填写或确认博物馆名称。")
+    if not name.strip():
+        raise HTTPException(status_code=400, detail="请填写或确认文物名称。")
+
+    base = settings.cloud_api_base_url.rstrip("/")
+    submit_data = {
+        "museum_name": museum_name.strip(),
+        "name": name.strip(),
+        "era": era or "",
+        "description": description or "",
+        "skip_existing_match": "true" if skip_existing_match else "false",
+        "tags": json.dumps(tags, ensure_ascii=False),
+        "camera_model": camera_model or "",
+        "lens_model": lens_model or "",
+        "capture_museum_name": capture_museum_name or "",
+        "exhibition_name": normalize_exhibition_name(exhibition_name),
+        "latitude": "" if latitude is None else str(latitude),
+        "longitude": "" if longitude is None else str(longitude),
+        "captured_at": captured_at.isoformat() if captured_at else "",
+        "shutter_speed": shutter_speed or "",
+        "aperture": aperture or "",
+        "iso": "" if iso is None else str(iso),
+        "edit_method": edit_method or "",
+    }
+    if existing_artifact_id is not None:
+        submit_data["existing_artifact_id"] = str(existing_artifact_id)
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                f"{base}{settings.api_prefix}/ingest/artifacts",
+                files={"image": (image_name, image_bytes, content_type)},
+                data=submit_data,
+                headers={"Authorization": f"Bearer {settings.ingest_token}"},
+            )
+            if not response.is_success:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"提交云端失败：{extract_http_error_detail(response)}",
+                )
+    except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
+        if isinstance(exc, HTTPException):
+            raise exc
+        raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
+
+    return ArtifactRead.model_validate(response.json())
+
+
 async def find_duplicate_artifact_image(
     db: Session, image_hash: str
 ) -> ArtifactImageRead | None:
@@ -973,57 +1126,28 @@ def start_web_bridge_login_helper() -> WebBridgeLoginStartRead:
     response_model=VisionAnalyzeResponse,
 )
 async def analyze_artifact_images(payload: VisionAnalyzeRequest) -> VisionAnalyzeResponse:
-    if not payload.image_urls:
-        raise HTTPException(status_code=400, detail="No image urls provided")
+    return await run_vision_analysis(payload.image_urls, payload.image_name)
 
-    providers, unavailable_providers = get_enabled_providers()
-    web_sites = enabled_sites()
-    if not providers and not web_sites:
-        raise HTTPException(
-            status_code=400,
-            detail="No vision provider configured. Please set DASHSCOPE_API_KEY or VOLCENGINE_API_KEY.",
+
+@app.post(
+    f"{settings.api_prefix}/vision/analyze/file",
+    response_model=VisionAnalyzeResponse,
+)
+async def analyze_artifact_image_file(
+    file: UploadFile = File(...),
+    image_name: str | None = Form(None),
+) -> VisionAnalyzeResponse:
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="图片内容为空。")
+    temp_path = write_temp_image_file(contents, file.filename or image_name)
+    try:
+        return await run_vision_analysis(
+            [str(temp_path)],
+            image_name or file.filename or temp_path.name,
         )
-
-    tasks = [
-        request_provider_analysis(provider, payload.image_urls, DATA_DIR, payload.image_name)
-        for provider in providers
-    ]
-    task_names = [provider.name for provider in providers]
-    for site in web_sites:
-        tasks.append(
-            request_web_candidate(site, payload.image_urls, DATA_DIR, payload.image_name)
-        )
-        task_names.append(site.key)
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    candidates = []
-    failed_providers = []
-    for name, result in zip(task_names, results, strict=False):
-        if isinstance(result, Exception):
-            failed_providers.append(name)
-            logger.warning(
-                "Vision provider %s failed: %s",
-                name,
-                result,
-                exc_info=result,
-            )
-            continue
-        candidates.append(result)
-
-    candidates.sort(
-        key=lambda item: (
-            item.confidence if item.confidence is not None else -1,
-            len(item.tags),
-        ),
-        reverse=True,
-    )
-
-    return VisionAnalyzeResponse(
-        candidates=candidates,
-        unavailable_providers=unavailable_providers,
-        failed_providers=failed_providers,
-    )
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 @app.post(f"{settings.api_prefix}/vision/analyze/stream")
@@ -1126,11 +1250,6 @@ async def upload_images(
         if not contents:
             raise HTTPException(status_code=400, detail="图片内容为空。")
         image_hash = hash_bytes(contents)
-        pending_duplicate = db.scalar(
-            select(PendingArtifact).where(PendingArtifact.file_hash == image_hash)
-        )
-        if pending_duplicate is not None:
-            raise HTTPException(status_code=409, detail="这张图片已在待入库列表中，不能重复上传。")
         duplicate_image = await find_duplicate_artifact_image(db, image_hash)
         if duplicate_image is not None:
             raise HTTPException(status_code=409, detail=build_duplicate_image_detail(duplicate_image))
@@ -1155,6 +1274,12 @@ async def upload_images(
     return uploaded_images
 
 
+@app.delete(f"{settings.api_prefix}/uploads/images", status_code=204)
+def delete_uploaded_image(url: str = Query(..., min_length=1)) -> None:
+    path = resolve_uploaded_file_path(url)
+    path.unlink(missing_ok=True)
+
+
 # ── Cloud ingest (Alibaba Cloud server): receive a reviewed record + image ────────
 
 
@@ -1170,6 +1295,7 @@ async def ingest_artifact(
     era: str | None = Form(None),
     description: str | None = Form(None),
     existing_artifact_id: int | None = Form(None),
+    skip_existing_match: bool = Form(False),
     tags: str = Form(""),
     camera_model: str | None = Form(None),
     lens_model: str | None = Form(None),
@@ -1224,7 +1350,7 @@ async def ingest_artifact(
         artifact = db.scalar(artifact_detail_query().where(Artifact.id == existing_artifact_id))
         if artifact is None:
             raise HTTPException(status_code=404, detail="要更新的文物不存在。")
-    else:
+    elif not skip_existing_match:
         existing_match = find_existing_artifact_match(
             db,
             name=name,
@@ -1289,52 +1415,92 @@ async def ingest_artifact(
     status_code=201,
 )
 async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -> Artifact:
-    if not settings.cloud_api_base_url:
-        raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
-    if not settings.ingest_token:
-        raise HTTPException(status_code=400, detail="未配置 INGEST_TOKEN。")
-    if not payload.museum_name.strip():
-        raise HTTPException(status_code=400, detail="请填写或确认博物馆名称。")
-    if not payload.name.strip():
-        raise HTTPException(status_code=400, detail="请填写或确认文物名称。")
-
     image_path = resolve_uploaded_file_path(payload.image_url)
     content_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
-    base = settings.cloud_api_base_url.rstrip("/")
-    submit_data = {
-        "museum_name": payload.museum_name.strip(),
-        "name": payload.name.strip(),
-        "era": payload.era or "",
-        "description": payload.description or "",
-        "tags": json.dumps(payload.tags, ensure_ascii=False),
-        "camera_model": payload.camera_model or "",
-        "lens_model": payload.lens_model or "",
-        "capture_museum_name": payload.capture_museum_name or "",
-        "exhibition_name": normalize_exhibition_name(payload.exhibition_name),
-        "latitude": "" if payload.latitude is None else str(payload.latitude),
-        "longitude": "" if payload.longitude is None else str(payload.longitude),
-        "captured_at": payload.captured_at.isoformat() if payload.captured_at else "",
-        "shutter_speed": payload.shutter_speed or "",
-        "aperture": payload.aperture or "",
-        "iso": "" if payload.iso is None else str(payload.iso),
-        "edit_method": payload.edit_method or "",
-    }
-    if payload.existing_artifact_id is not None:
-        submit_data["existing_artifact_id"] = str(payload.existing_artifact_id)
+    return await submit_artifact_to_cloud(
+        image_bytes=image_path.read_bytes(),
+        image_name=image_path.name,
+        content_type=content_type,
+        museum_name=payload.museum_name,
+        name=payload.name,
+        era=payload.era,
+        description=payload.description,
+        existing_artifact_id=payload.existing_artifact_id,
+        skip_existing_match=payload.skip_existing_match,
+        tags=payload.tags,
+        camera_model=payload.camera_model,
+        lens_model=payload.lens_model,
+        capture_museum_name=payload.capture_museum_name,
+        exhibition_name=payload.exhibition_name,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        captured_at=payload.captured_at,
+        shutter_speed=payload.shutter_speed,
+        aperture=payload.aperture,
+        iso=payload.iso,
+        edit_method=payload.edit_method,
+    )
 
+
+@app.post(
+    f"{settings.api_prefix}/artifacts/submit-cloud-file",
+    response_model=ArtifactRead,
+    status_code=201,
+)
+async def submit_single_artifact_file_to_cloud(
+    file: UploadFile = File(...),
+    museum_name: str = Form(...),
+    name: str = Form(...),
+    era: str | None = Form(None),
+    description: str | None = Form(None),
+    existing_artifact_id: int | None = Form(None),
+    skip_existing_match: bool = Form(False),
+    tags: str = Form("[]"),
+    camera_model: str | None = Form(None),
+    lens_model: str | None = Form(None),
+    capture_museum_name: str | None = Form(None),
+    exhibition_name: str | None = Form(None),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
+    captured_at: datetime | None = Form(None),
+    shutter_speed: str | None = Form(None),
+    aperture: str | None = Form(None),
+    iso: int | None = Form(None),
+    edit_method: str | None = Form(None),
+) -> ArtifactRead:
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="图片内容为空。")
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                f"{base}{settings.api_prefix}/ingest/artifacts",
-                files={"image": (image_path.name, image_path.read_bytes(), content_type)},
-                data=submit_data,
-                headers={"Authorization": f"Bearer {settings.ingest_token}"},
-            )
-            response.raise_for_status()
-    except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
-        raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
-
-    return ArtifactRead.model_validate(response.json())
+        parsed_tags = json.loads(tags or "[]")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="标签格式不正确。") from exc
+    if not isinstance(parsed_tags, list):
+        raise HTTPException(status_code=400, detail="标签格式不正确。")
+    normalized_tags = [str(tag).strip() for tag in parsed_tags if str(tag).strip()]
+    return await submit_artifact_to_cloud(
+        image_bytes=contents,
+        image_name=file.filename or "batch-upload.jpg",
+        content_type=file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg",
+        museum_name=museum_name,
+        name=name,
+        era=era,
+        description=description,
+        existing_artifact_id=existing_artifact_id,
+        skip_existing_match=skip_existing_match,
+        tags=normalized_tags,
+        camera_model=camera_model,
+        lens_model=lens_model,
+        capture_museum_name=capture_museum_name,
+        exhibition_name=exhibition_name,
+        latitude=latitude,
+        longitude=longitude,
+        captured_at=captured_at,
+        shutter_speed=shutter_speed,
+        aperture=aperture,
+        iso=iso,
+        edit_method=edit_method,
+    )
 
 
 # ── Batch identification (local operator machine) ─────────────────────────────────
@@ -1570,7 +1736,9 @@ async def batch_identify_stream(payload: BatchIdentifyRequest) -> StreamingRespo
     response_model=PendingArtifactRead,
 )
 async def submit_pending(
-    pending_id: int, db: Session = Depends(get_db)
+    pending_id: int,
+    payload: PendingArtifactSubmitRequest | None = None,
+    db: Session = Depends(get_db),
 ) -> PendingArtifact:
     if not settings.cloud_api_base_url:
         raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
@@ -1578,6 +1746,10 @@ async def submit_pending(
     row = db.get(PendingArtifact, pending_id)
     if row is None:
         raise HTTPException(status_code=404, detail="记录不存在。")
+    if row.status == "submitted":
+        return row
+    if row.status == "submitting":
+        raise HTTPException(status_code=409, detail="该记录正在提交中，请稍候刷新。")
     if not (row.name and row.name.strip()) or not (row.museum_name and row.museum_name.strip()):
         raise HTTPException(status_code=400, detail="请先填写文物名称和博物馆名称。")
 
@@ -1609,6 +1781,9 @@ async def submit_pending(
                     "aperture": row.aperture or "",
                     "iso": "" if row.iso is None else str(row.iso),
                     "edit_method": row.edit_method or "",
+                    "skip_existing_match": (
+                        "true" if payload is not None and payload.skip_existing_match else "false"
+                    ),
                     **(
                         {"existing_artifact_id": str(row.existing_artifact_id)}
                         if row.existing_artifact_id is not None
@@ -1617,13 +1792,21 @@ async def submit_pending(
                 },
                 headers={"Authorization": f"Bearer {settings.ingest_token}"},
             )
-            response.raise_for_status()
+            if not response.is_success:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"提交云端失败：{extract_http_error_detail(response)}",
+                )
             created = response.json()
     except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
         logger.warning("submit pending %s failed: %s", pending_id, exc, exc_info=exc)
         row.status = "failed"
-        row.error = f"提交云端失败：{exc}"
+        row.error = (
+            exc.detail if isinstance(exc, HTTPException) else f"提交云端失败：{exc}"
+        )
         db.commit()
+        if isinstance(exc, HTTPException):
+            raise HTTPException(status_code=exc.status_code, detail=row.error) from exc
         raise HTTPException(status_code=502, detail=row.error) from exc
 
     row.cloud_artifact_id = created.get("id")
