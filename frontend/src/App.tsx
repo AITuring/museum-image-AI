@@ -3,7 +3,7 @@ import { createPortal } from "react-dom"
 import "./App.css"
 import BatchConsole from "./BatchConsole"
 import Gallery from "./Gallery"
-import MuseumConsole from "./MuseumConsole"
+import MuseumBrowser from "./MuseumBrowser"
 
 type HealthResponse = {
   status: string
@@ -1056,7 +1056,7 @@ function App() {
 
       {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 
-      {view === "museums" ? <MuseumConsole apiBaseUrl={apiBaseUrl} /> : null}
+      {view === "museums" ? <MuseumBrowser apiBaseUrl={apiBaseUrl} /> : null}
 
       {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 
