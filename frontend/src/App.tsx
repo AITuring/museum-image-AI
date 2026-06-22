@@ -1039,20 +1039,22 @@ function App() {
         </div>
       </header>
 
-      <div className="view-tabs-shell">
-        <nav className="view-tabs">
-          {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
-            <button
-              type="button"
-              key={item.view}
-              className={view === item.view ? "active" : ""}
-              onClick={() => setView(item.view)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      {!cloudOnly ? (
+        <div className="view-tabs-shell">
+          <nav className="view-tabs">
+            {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
+              <button
+                type="button"
+                key={item.view}
+                className={view === item.view ? "active" : ""}
+                onClick={() => setView(item.view)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      ) : null}
 
       {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 

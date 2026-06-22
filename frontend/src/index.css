@@ -1,11 +1,78 @@
 :root {
+  --color-canvas: #f2efeb;
+  --color-canvas-soft: #ebe6e0;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f8f5f1;
+  --color-surface-soft: #f7eee9;
+  --color-surface-strong: #fde0d3;
+  --color-text: #25201b;
+  --color-text-soft: #685f57;
+  --color-text-faint: #958a80;
+  --color-line: rgba(255, 106, 61, 0.12);
+  --color-line-strong: rgba(255, 106, 61, 0.24);
+  --color-accent: #ff6a3d;
+  --color-accent-strong: #f25d31;
+  --color-accent-deep: #d9481b;
+  --color-accent-soft: #ffe1d6;
+  --color-accent-wash: #fff1eb;
+  --color-ok: #4f8f79;
+  --color-danger: #b96052;
+  --shadow-sm: 0 12px 24px rgba(42, 31, 23, 0.06);
+  --shadow-md: 0 18px 36px rgba(42, 31, 23, 0.09);
+  --shadow-lg: 0 26px 56px rgba(42, 31, 23, 0.14);
+  --ring: 0 0 0 4px rgba(255, 106, 61, 0.14);
+  --ui-canvas: var(--color-canvas);
+  --ui-canvas-soft: var(--color-canvas-soft);
+  --ui-surface-default: var(--color-surface);
+  --ui-surface-muted: var(--color-surface-muted);
+  --ui-surface-accent: var(--color-surface-soft);
+  --ui-surface-accent-strong: var(--color-surface-strong);
+  --ui-surface-wash: var(--color-accent-wash);
+  --ui-surface-tint: var(--color-accent-soft);
+  --ui-surface-success: #f3f8f5;
+  --ui-surface-danger: #fff6f3;
+  --ui-text-primary: var(--color-text);
+  --ui-text-secondary: var(--color-text-soft);
+  --ui-text-tertiary: var(--color-text-faint);
+  --ui-text-on-accent: #fff8f5;
+  --ui-primary: var(--color-accent);
+  --ui-primary-hover: #ff5c2d;
+  --ui-primary-strong: var(--color-accent-strong);
+  --ui-primary-deep: var(--color-accent-deep);
+  --ui-secondary-bg: var(--color-accent-wash);
+  --ui-secondary-hover: var(--color-accent-soft);
+  --ui-secondary-text: var(--color-accent-deep);
+  --ui-line-subtle: var(--color-line);
+  --ui-line-strong: var(--color-line-strong);
+  --ui-line-accent: rgba(255, 106, 61, 0.16);
+  --ui-success: var(--color-ok);
+  --ui-success-bg: rgba(79, 143, 121, 0.12);
+  --ui-success-line: rgba(79, 143, 121, 0.24);
+  --ui-danger: var(--color-danger);
+  --ui-danger-bg: rgba(185, 96, 82, 0.1);
+  --ui-danger-line: rgba(185, 96, 82, 0.16);
+  --ui-overlay: rgba(37, 32, 27, 0.48);
+  --ui-media-dark: #241f1a;
+  --ui-shadow-soft: var(--shadow-sm);
+  --ui-shadow-card: var(--shadow-md);
+  --ui-shadow-float: var(--shadow-lg);
+  --ui-shadow-accent: 0 12px 24px rgba(255, 106, 61, 0.22);
+  --ui-shadow-accent-hover: 0 16px 30px rgba(255, 106, 61, 0.26);
+  --ui-shadow-hover: 0 18px 32px rgba(42, 31, 23, 0.14);
+  --ui-shadow-selected: 0 20px 38px rgba(42, 31, 23, 0.14);
+  --ui-ring: var(--ring);
+  --ui-radius-sm: 10px;
+  --ui-radius-md: 14px;
+  --ui-radius-lg: 16px;
+  --ui-radius-xl: 18px;
+  --ui-radius-pill: 999px;
   font-family: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color: #292018;
+  color: var(--color-text);
   background:
-    radial-gradient(circle at top, rgba(181, 152, 120, 0.12), transparent 32%),
-    linear-gradient(180deg, #f4efe7 0%, #efe8de 48%, #eae1d4 100%);
+    radial-gradient(circle at top, rgba(255, 106, 61, 0.08), transparent 28%),
+    linear-gradient(180deg, #f7f4f0 0%, var(--color-canvas) 52%, #ece8e2 100%);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -25,11 +92,11 @@ body,
 
 body {
   min-width: 320px;
-  color: #292018;
+  color: var(--color-text);
   background:
-    linear-gradient(180deg, rgba(255, 251, 245, 0.36), rgba(255, 251, 245, 0)),
-    radial-gradient(circle at top, rgba(181, 152, 120, 0.1), transparent 28%),
-    linear-gradient(180deg, #f4efe7 0%, #efe8de 48%, #eae1d4 100%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0)),
+    radial-gradient(circle at top, rgba(255, 106, 61, 0.08), transparent 28%),
+    linear-gradient(180deg, #f7f4f0 0%, var(--color-canvas) 54%, #ece8e2 100%);
 }
 
 body::before {
@@ -37,8 +104,8 @@ body::before {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  opacity: 0.28;
-  background-image: linear-gradient(rgba(123, 90, 67, 0.03) 1px, transparent 1px);
+  opacity: 0.22;
+  background-image: linear-gradient(rgba(255, 106, 61, 0.03) 1px, transparent 1px);
   background-size: 100% 32px;
   -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 80%);
   mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.35), transparent 80%);
