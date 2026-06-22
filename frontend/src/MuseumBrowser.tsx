@@ -249,6 +249,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<number | null>(null)
+  const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [artifactStore, setArtifactStore] = useState<Record<number, MuseumArtifact[]>>({})
   const [artifactLoadingId, setArtifactLoadingId] = useState<number | null>(null)
   const [artifactErrors, setArtifactErrors] = useState<Record<number, string | null>>({})
@@ -341,6 +342,25 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     if (Object.prototype.hasOwnProperty.call(artifactStore, activeMuseum.id)) return
     void loadMuseumArtifacts(activeMuseum.id)
   }, [activeMuseum, artifactStore, loadMuseumArtifacts])
+
+  useEffect(() => {
+    if (!detailModalOpen) return
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setDetailModalOpen(false)
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [detailModalOpen])
+
+  useEffect(() => {
+    if (mode !== "cards" && detailModalOpen) {
+      setDetailModalOpen(false)
+    }
+  }, [detailModalOpen, mode])
 
   useEffect(() => {
     if (folders.length === 0) {
@@ -654,20 +674,29 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       <section className="museum-stage">
         <header className="museum-stage-head">
           <div className="museum-stage-copy">
-            <h3>{activeMuseum.name}</h3>
-            <p className="museum-stage-meta-line">
-              {activeMuseum.artifact_count} 件文物 · {activeMuseum.exhibition_count} 个展览 · {activeMuseum.location || "地点未记录"}
-            </p>
-            <p className="muted">
-              {activeMuseum.description?.trim() || activeMuseum.location?.trim() || "暂无简介，先通过图片浏览这座馆的拍摄记录。"}
-            </p>
+            <div className="museum-stage-title-row">
+              <div>
+                <h3 id="museum-detail-title">{activeMuseum.name}</h3>
+                <p className="museum-stage-meta-line">
+                  {activeMuseum.description?.trim() || activeMuseum.location?.trim() || "暂无简介，先通过图片浏览这座馆的拍摄记录。"}
+                </p>
+              </div>
+              <div className="museum-stage-stats" aria-label="博物馆概况">
+                <span>{activeMuseum.artifact_count} 件文物</span>
+                <span>{activeMuseum.exhibition_count} 个展览</span>
+                <span>{activeMuseum.location || "地点未记录"}</span>
+              </div>
+            </div>
           </div>
         </header>
 
         <div className="museum-stage-body">
-          <div className="museum-folder-column">
+          <aside className="museum-folder-column">
             <div className="museum-folder-column-head">
-              <strong>展览文件夹</strong>
+              <div>
+                <strong>展览文件夹</strong>
+                <p className="muted small">按展览组织这座馆的拍摄记录</p>
+              </div>
               <span className="muted small">{folders.length} 组</span>
             </div>
 
@@ -686,7 +715,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
               </div>
             ) : null}
 
-            <div className="museum-folder-grid">
+            <div className="museum-folder-list">
               {folders.map((folder) => (
                 <button
                   type="button"
@@ -702,9 +731,9 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </button>
               ))}
             </div>
-          </div>
+          </aside>
 
-          <div className="museum-image-panel">
+          <main className="museum-image-panel">
             {activeFolder ? (
               <>
                 <div className="museum-image-panel-head">
@@ -712,7 +741,10 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                     <h4>{activeFolder.name}</h4>
                     <p className="muted">{activeFolder.period}</p>
                   </div>
-                  <span className="museum-image-panel-count">{activeFolder.imageCount} 张图片</span>
+                  <div className="museum-image-panel-meta">
+                    <span className="museum-image-panel-count">{activeFolder.imageCount} 张图片</span>
+                    <span className="museum-image-panel-count subtle">{activeFolder.artifactCount} 件文物</span>
+                  </div>
                 </div>
 
                 <div className="museum-image-grid">
@@ -740,7 +772,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <p className="muted">这里会按展览展开该博物馆的图片，并保留文物名称与拍摄时间。</p>
               </div>
             )}
-          </div>
+          </main>
         </div>
       </section>
     )
@@ -798,16 +830,18 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       ) : null}
 
       {!loading && filteredMuseums.length > 0 && mode === "cards" ? (
-        <>
-          <div className="museum-card-grid">
-            {filteredMuseums.map((museum) => {
+        <div className="museum-card-grid">
+          {filteredMuseums.map((museum) => {
               const previewStack = getMuseumPreviewStack(apiBaseUrl, artifactStore[museum.id] ?? [])
               return (
                 <button
                   type="button"
                   key={museum.id}
                   className={`museum-summary-card ${activeMuseum?.id === museum.id ? "active" : ""}`}
-                  onClick={() => setActiveId(museum.id)}
+                  onClick={() => {
+                    setActiveId(museum.id)
+                    setDetailModalOpen(true)
+                  }}
                   onMouseEnter={() => ensureMuseumArtifacts(museum.id)}
                   onFocus={() => ensureMuseumArtifacts(museum.id)}
                 >
@@ -849,10 +883,8 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </div>
                 </button>
               )
-            })}
-          </div>
-          {renderMuseumStage()}
-        </>
+          })}
+        </div>
       ) : null}
 
       {!loading && filteredMuseums.length > 0 && mode === "map" ? (
@@ -881,6 +913,26 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           </section>
 
           {renderMuseumStage()}
+        </div>
+      ) : null}
+
+      {detailModalOpen && activeMuseum && mode === "cards" ? (
+        <div className="museum-detail-modal" role="dialog" aria-modal="true" aria-labelledby="museum-detail-title">
+          <button
+            type="button"
+            className="museum-detail-modal-backdrop"
+            aria-label="关闭博物馆详情弹窗"
+            onClick={() => setDetailModalOpen(false)}
+          />
+          <div className="museum-detail-modal-body">
+            <div className="museum-detail-modal-bar">
+              <span className="museum-detail-modal-kicker">博物馆详情</span>
+              <button type="button" className="museum-detail-modal-close" onClick={() => setDetailModalOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <div className="museum-detail-modal-content">{renderMuseumStage()}</div>
+          </div>
         </div>
       ) : null}
     </section>
