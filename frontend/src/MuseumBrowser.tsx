@@ -231,6 +231,17 @@ function buildMuseumFolders(apiBaseUrl: string, artifacts: MuseumArtifact[]) {
     .sort((left, right) => right.imageCount - left.imageCount || left.name.localeCompare(right.name, "zh-CN"))
 }
 
+function getMuseumPreviewStack(apiBaseUrl: string, artifacts: MuseumArtifact[], max = 3) {
+  const previews: string[] = []
+  for (const artifact of artifacts) {
+    for (const image of artifact.images) {
+      previews.push(getDisplayImageUrl(apiBaseUrl, image.url, "thumb"))
+      if (previews.length >= max) return previews
+    }
+  }
+  return previews
+}
+
 export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [mode, setMode] = useState<MuseumMode>("cards")
   const [query, setQuery] = useState("")
@@ -311,6 +322,14 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
     },
     [apiBaseUrl],
+  )
+
+  const ensureMuseumArtifacts = useCallback(
+    (museumId: number) => {
+      if (Object.prototype.hasOwnProperty.call(artifactStore, museumId)) return
+      void loadMuseumArtifacts(museumId)
+    },
+    [artifactStore, loadMuseumArtifacts],
   )
 
   useEffect(() => {
@@ -781,24 +800,56 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       {!loading && filteredMuseums.length > 0 && mode === "cards" ? (
         <>
           <div className="museum-card-grid">
-            {filteredMuseums.map((museum) => (
-              <button
-                type="button"
-                key={museum.id}
-                className={`museum-summary-card ${activeMuseum?.id === museum.id ? "active" : ""}`}
-                onClick={() => setActiveId(museum.id)}
-              >
-                <div className="museum-summary-card-head">
-                  <strong>{museum.name}</strong>
-                  <span>{museum.artifact_count} 件</span>
-                </div>
-                <p>{museum.description?.trim() || museum.location?.trim() || "暂无简介，先从展览文件夹进入。"}</p>
-                <div className="museum-summary-card-foot">
-                  <span>{museum.exhibition_count} 个展览</span>
-                  <span>{museum.latitude != null && museum.longitude != null ? "已记录坐标" : "未记录坐标"}</span>
-                </div>
-              </button>
-            ))}
+            {filteredMuseums.map((museum) => {
+              const previewStack = getMuseumPreviewStack(apiBaseUrl, artifactStore[museum.id] ?? [])
+              return (
+                <button
+                  type="button"
+                  key={museum.id}
+                  className={`museum-summary-card ${activeMuseum?.id === museum.id ? "active" : ""}`}
+                  onClick={() => setActiveId(museum.id)}
+                  onMouseEnter={() => ensureMuseumArtifacts(museum.id)}
+                  onFocus={() => ensureMuseumArtifacts(museum.id)}
+                >
+                  <div className={`museum-summary-photo-stack ${previewStack.length === 0 ? "empty" : ""}`} aria-hidden="true">
+                    {previewStack.length > 0 ? (
+                      previewStack.map((previewUrl, index) => (
+                        <img
+                          key={`${museum.id}-preview-${index}`}
+                          className={`museum-summary-photo photo-${index + 1}`}
+                          src={previewUrl}
+                          alt=""
+                          loading="lazy"
+                        />
+                      ))
+                    ) : (
+                      <svg
+                        className="museum-summary-empty-icon"
+                        viewBox="0 0 1024 1024"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          className="museum-summary-empty-icon-shape"
+                          d="M831.7 369.4H193.6L64 602v290.3h897.2V602L831.7 369.4zM626.6 604.6c0 62.9-51 113.9-114 113.9s-114-51-114-113.9H117.5l103.8-198h582.5l103.8 198h-281zM502.2 131h39.1v140.6h-39.1zM236.855 200.802l27.647-27.647 99.419 99.418-27.648 27.648zM667.547 272.637l99.418-99.419 27.648 27.648-99.418 99.418z"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                  <div className="museum-summary-card-copy">
+                    <div className="museum-summary-card-head">
+                      <strong>{museum.name}</strong>
+                      <span>{museum.artifact_count} 件</span>
+                    </div>
+                    <p>{museum.description?.trim() || museum.location?.trim() || "暂无简介，先从展览文件夹进入。"}</p>
+                    <div className="museum-summary-card-foot">
+                      <span>{museum.exhibition_count} 个展览</span>
+                      <span>{museum.latitude != null && museum.longitude != null ? "已记录坐标" : "未记录坐标"}</span>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
           </div>
           {renderMuseumStage()}
         </>
