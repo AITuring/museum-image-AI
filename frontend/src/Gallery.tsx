@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { createPortal } from "react-dom"
+import { Aperture, Building2, Camera, Clock3, Sparkles, Tag } from "lucide-react"
 
 type GalleryImage = {
   id: number
@@ -70,6 +71,11 @@ type EraOption = {
   id: number
   name: string
   sort_order: number
+}
+
+type MediaMetaItem = {
+  icon: "camera" | "lens" | "museum" | "exhibition" | "capturedAt" | "editMethod"
+  value: string
 }
 
 function toAbsoluteUrl(apiBaseUrl: string, url: string) {
@@ -256,20 +262,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   useEffect(() => {
     if (!active) return
-    // #region debug-point A:effect-register
-    fetch("http://127.0.0.1:7777/event", {
-      method: "POST",
-      body: JSON.stringify({
-        sessionId: "gallery-arrow-keys",
-        runId: "pre-fix",
-        hypothesisId: "A",
-        location: "Gallery.tsx:257",
-        msg: "[DEBUG] gallery key listener effect mounted",
-        data: { activeId: active.id, imageCount: active.images.length, editing },
-        ts: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target
       const isEditableTarget =
@@ -279,84 +271,18 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           target.tagName === "TEXTAREA" ||
           target.tagName === "SELECT")
 
-      // #region debug-point B:keydown-received
-      fetch("http://127.0.0.1:7777/event", {
-        method: "POST",
-        body: JSON.stringify({
-          sessionId: "gallery-arrow-keys",
-          runId: "pre-fix",
-          hypothesisId: "B",
-          location: "Gallery.tsx:260",
-          msg: "[DEBUG] keydown received in gallery modal",
-          data: {
-            key: event.key,
-            targetTag: target instanceof HTMLElement ? target.tagName : String(target),
-            isEditableTarget,
-            editing,
-            activeId: active.id,
-            imageCount: active.images.length,
-          },
-          ts: Date.now(),
-        }),
-      }).catch(() => {})
-      // #endregion
-
-      if (isEditableTarget) {
-        // #region debug-point C:editable-skip
-        fetch("http://127.0.0.1:7777/event", {
-          method: "POST",
-          body: JSON.stringify({
-            sessionId: "gallery-arrow-keys",
-            runId: "pre-fix",
-            hypothesisId: "C",
-            location: "Gallery.tsx:268",
-            msg: "[DEBUG] keydown ignored because target is editable",
-            data: { key: event.key, targetTag: target instanceof HTMLElement ? target.tagName : String(target) },
-            ts: Date.now(),
-          }),
-        }).catch(() => {})
-        // #endregion
-        return
-      }
+      if (isEditableTarget) return
       if (event.key === "Escape") {
         if (!editing) setActive(null)
         return
       }
       if (editing || active.images.length < 2) return
       if (event.key === "ArrowRight") {
-        // #region debug-point D:arrow-right-branch
-        fetch("http://127.0.0.1:7777/event", {
-          method: "POST",
-          body: JSON.stringify({
-            sessionId: "gallery-arrow-keys",
-            runId: "pre-fix",
-            hypothesisId: "D",
-            location: "Gallery.tsx:274",
-            msg: "[DEBUG] arrow-right branch reached",
-            data: { key: event.key, activeId: active.id, imageCount: active.images.length },
-            ts: Date.now(),
-          }),
-        }).catch(() => {})
-        // #endregion
         event.preventDefault()
         setActiveImageIndex((current) => (current + 1) % active.images.length)
         return
       }
       if (event.key === "ArrowLeft") {
-        // #region debug-point E:arrow-left-branch
-        fetch("http://127.0.0.1:7777/event", {
-          method: "POST",
-          body: JSON.stringify({
-            sessionId: "gallery-arrow-keys",
-            runId: "pre-fix",
-            hypothesisId: "E",
-            location: "Gallery.tsx:286",
-            msg: "[DEBUG] arrow-left branch reached",
-            data: { key: event.key, activeId: active.id, imageCount: active.images.length },
-            ts: Date.now(),
-          }),
-        }).catch(() => {})
-        // #endregion
         event.preventDefault()
         setActiveImageIndex((current) => (current - 1 + active.images.length) % active.images.length)
       }
@@ -365,42 +291,10 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = "hidden"
     return () => {
-      // #region debug-point A:effect-cleanup
-      fetch("http://127.0.0.1:7777/event", {
-        method: "POST",
-        body: JSON.stringify({
-          sessionId: "gallery-arrow-keys",
-          runId: "pre-fix",
-          hypothesisId: "A",
-          location: "Gallery.tsx:290",
-          msg: "[DEBUG] gallery key listener effect cleaned up",
-          data: { activeId: active.id },
-          ts: Date.now(),
-        }),
-      }).catch(() => {})
-      // #endregion
       window.removeEventListener("keydown", onKeyDown)
       document.body.style.overflow = prevOverflow
     }
   }, [active, editing])
-
-  useEffect(() => {
-    if (!active) return
-    // #region debug-point D:image-index-change
-    fetch("http://127.0.0.1:7777/event", {
-      method: "POST",
-      body: JSON.stringify({
-        sessionId: "gallery-arrow-keys",
-        runId: "pre-fix",
-        hypothesisId: "D",
-        location: "Gallery.tsx:299",
-        msg: "[DEBUG] active image index changed",
-        data: { activeId: active.id, activeImageIndex, imageCount: active.images.length },
-        ts: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
-  }, [active, activeImageIndex])
 
   function handleSearch(event: { preventDefault(): void }) {
     event.preventDefault()
@@ -596,10 +490,10 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
                   const editFormId = `gallery-edit-form-${active.id}`
                   const subjectTags = getSubjectTags(active.tags)
-                  const equipmentMeta = [
-                    currentImage?.camera_model ? `机型:${currentImage.camera_model}` : null,
-                    currentImage?.lens_model ? `镜头:${currentImage.lens_model}` : null,
-                  ].filter((item): item is string => Boolean(item))
+                  const equipmentMeta: MediaMetaItem[] = [
+                    currentImage?.camera_model ? { icon: "camera", value: currentImage.camera_model } : null,
+                    currentImage?.lens_model ? { icon: "lens", value: currentImage.lens_model } : null,
+                  ].filter((item): item is MediaMetaItem => Boolean(item))
                   const captureMuseumName = formatMetaValue(currentImage?.capture_museum_name)
                   const exhibitionName = formatMetaValue(currentImage?.exhibition_name)
                   const capturedAt = formatMetaDate(currentImage?.captured_at)
@@ -614,13 +508,21 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                   const shutterSpeed = formatMetaValue(currentImage?.shutter_speed)
                   const aperture = formatMetaValue(currentImage?.aperture)
                   const iso = formatMetaValue(currentImage?.iso)
-                  const mediaMeta = [
+                  const mediaMeta: MediaMetaItem[] = [
                     ...equipmentMeta,
-                    captureMuseumName ? `拍摄馆 ${captureMuseumName}` : null,
-                    exhibitionName ? `展览 ${exhibitionName}` : null,
-                    capturedAt ? `拍摄时间 ${capturedAt}` : null,
-                    currentImage?.edit_method ? `修图 ${currentImage.edit_method}` : null,
-                  ].filter((item): item is string => Boolean(item))
+                    captureMuseumName ? { icon: "museum", value: captureMuseumName } : null,
+                    exhibitionName ? { icon: "exhibition", value: exhibitionName } : null,
+                    capturedAt ? { icon: "capturedAt", value: capturedAt } : null,
+                    currentImage?.edit_method ? { icon: "editMethod", value: currentImage.edit_method } : null,
+                  ].filter((item): item is MediaMetaItem => Boolean(item))
+                  const mediaMetaIconMap = {
+                    camera: Camera,
+                    lens: Aperture,
+                    museum: Building2,
+                    exhibition: Tag,
+                    capturedAt: Clock3,
+                    editMethod: Sparkles,
+                  } as const
 
                   return (
                     <>
@@ -666,7 +568,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     {mediaMeta.length > 0 ? (
                                       <div className="gallery-media-meta">
                                         {mediaMeta.map((item) => (
-                                          <span key={item}>{item}</span>
+                                          <span key={`${item.icon}-${item.value}`}>
+                                            {(() => {
+                                              const Icon = mediaMetaIconMap[item.icon]
+                                              return <Icon className="gallery-media-meta-icon" size={12} aria-hidden="true" />
+                                            })()}
+                                            <span>{item.value}</span>
+                                          </span>
                                         ))}
                                       </div>
                                     ) : null}
