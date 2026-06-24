@@ -245,9 +245,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [apiBaseUrl, fetchJson])
 
   useEffect(() => {
-    // #region debug-point D:active-id-reset
-    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"edit-entry-flash",runId:"pre-fix",hypothesisId:"D",location:"Gallery.tsx:247",msg:"[DEBUG] active id effect fired",data:{activeId:active?.id ?? null,editing,hasEditForm:Boolean(editForm)},ts:Date.now()})}).catch(()=>{})
-    // #endregion
     setEditing(false)
     setEditForm(null)
     setTagInput("")
@@ -259,23 +256,151 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   useEffect(() => {
     if (!active) return
+    // #region debug-point A:effect-register
+    fetch("http://127.0.0.1:7777/event", {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: "gallery-arrow-keys",
+        runId: "pre-fix",
+        hypothesisId: "A",
+        location: "Gallery.tsx:257",
+        msg: "[DEBUG] gallery key listener effect mounted",
+        data: { activeId: active.id, imageCount: active.images.length, editing },
+        ts: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !editing) setActive(null)
+      const target = event.target
+      const isEditableTarget =
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT")
+
+      // #region debug-point B:keydown-received
+      fetch("http://127.0.0.1:7777/event", {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: "gallery-arrow-keys",
+          runId: "pre-fix",
+          hypothesisId: "B",
+          location: "Gallery.tsx:260",
+          msg: "[DEBUG] keydown received in gallery modal",
+          data: {
+            key: event.key,
+            targetTag: target instanceof HTMLElement ? target.tagName : String(target),
+            isEditableTarget,
+            editing,
+            activeId: active.id,
+            imageCount: active.images.length,
+          },
+          ts: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
+
+      if (isEditableTarget) {
+        // #region debug-point C:editable-skip
+        fetch("http://127.0.0.1:7777/event", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: "gallery-arrow-keys",
+            runId: "pre-fix",
+            hypothesisId: "C",
+            location: "Gallery.tsx:268",
+            msg: "[DEBUG] keydown ignored because target is editable",
+            data: { key: event.key, targetTag: target instanceof HTMLElement ? target.tagName : String(target) },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        return
+      }
+      if (event.key === "Escape") {
+        if (!editing) setActive(null)
+        return
+      }
+      if (editing || active.images.length < 2) return
+      if (event.key === "ArrowRight") {
+        // #region debug-point D:arrow-right-branch
+        fetch("http://127.0.0.1:7777/event", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: "gallery-arrow-keys",
+            runId: "pre-fix",
+            hypothesisId: "D",
+            location: "Gallery.tsx:274",
+            msg: "[DEBUG] arrow-right branch reached",
+            data: { key: event.key, activeId: active.id, imageCount: active.images.length },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        event.preventDefault()
+        setActiveImageIndex((current) => (current + 1) % active.images.length)
+        return
+      }
+      if (event.key === "ArrowLeft") {
+        // #region debug-point E:arrow-left-branch
+        fetch("http://127.0.0.1:7777/event", {
+          method: "POST",
+          body: JSON.stringify({
+            sessionId: "gallery-arrow-keys",
+            runId: "pre-fix",
+            hypothesisId: "E",
+            location: "Gallery.tsx:286",
+            msg: "[DEBUG] arrow-left branch reached",
+            data: { key: event.key, activeId: active.id, imageCount: active.images.length },
+            ts: Date.now(),
+          }),
+        }).catch(() => {})
+        // #endregion
+        event.preventDefault()
+        setActiveImageIndex((current) => (current - 1 + active.images.length) % active.images.length)
+      }
     }
-    document.addEventListener("keydown", onKeyDown)
+    window.addEventListener("keydown", onKeyDown)
     const prevOverflow = document.body.style.overflow
     document.body.style.overflow = "hidden"
     return () => {
-      document.removeEventListener("keydown", onKeyDown)
+      // #region debug-point A:effect-cleanup
+      fetch("http://127.0.0.1:7777/event", {
+        method: "POST",
+        body: JSON.stringify({
+          sessionId: "gallery-arrow-keys",
+          runId: "pre-fix",
+          hypothesisId: "A",
+          location: "Gallery.tsx:290",
+          msg: "[DEBUG] gallery key listener effect cleaned up",
+          data: { activeId: active.id },
+          ts: Date.now(),
+        }),
+      }).catch(() => {})
+      // #endregion
+      window.removeEventListener("keydown", onKeyDown)
       document.body.style.overflow = prevOverflow
     }
   }, [active, editing])
 
   useEffect(() => {
-    // #region debug-point B:editing-state-change
-    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"edit-entry-flash",runId:"pre-fix",hypothesisId:"B",location:"Gallery.tsx:257",msg:"[DEBUG] editing state changed",data:{activeId:active?.id ?? null,editing,hasEditForm:Boolean(editForm),activeImageIndex},ts:Date.now()})}).catch(()=>{})
+    if (!active) return
+    // #region debug-point D:image-index-change
+    fetch("http://127.0.0.1:7777/event", {
+      method: "POST",
+      body: JSON.stringify({
+        sessionId: "gallery-arrow-keys",
+        runId: "pre-fix",
+        hypothesisId: "D",
+        location: "Gallery.tsx:299",
+        msg: "[DEBUG] active image index changed",
+        data: { activeId: active.id, activeImageIndex, imageCount: active.images.length },
+        ts: Date.now(),
+      }),
+    }).catch(() => {})
     // #endregion
-  }, [active?.id, activeImageIndex, editForm, editing])
+  }, [active, activeImageIndex])
 
   function handleSearch(event: { preventDefault(): void }) {
     event.preventDefault()
@@ -284,9 +409,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   function handleStartEdit(event?: { preventDefault?: () => void; stopPropagation?: () => void }) {
-    // #region debug-point B:start-edit-click
-    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"edit-entry-flash",runId:"pre-fix",hypothesisId:"B",location:"Gallery.tsx:279",msg:"[DEBUG] handleStartEdit invoked",data:{activeId:active?.id ?? null,editing,hasEditForm:Boolean(editForm),activeImageIndex},ts:Date.now()})}).catch(()=>{})
-    // #endregion
     event?.preventDefault?.()
     event?.stopPropagation?.()
     if (!active) {
@@ -298,9 +420,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setSaveError(null)
     setSaveNotice(null)
     setEditing(true)
-    // #region debug-point B:start-edit-after-set
-    fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"edit-entry-flash",runId:"pre-fix",hypothesisId:"B",location:"Gallery.tsx:292",msg:"[DEBUG] handleStartEdit scheduled state update",data:{activeId:active.id,imageId:image?.id ?? null,nextHasEditForm:true,nextEditing:true},ts:Date.now()})}).catch(()=>{})
-    // #endregion
   }
 
   function handleCancelEdit() {
@@ -471,12 +590,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       {active
         ? createPortal(
-            <div className="gallery-modal" onClick={() => {
-              // #region debug-point A:modal-overlay-click
-              fetch("http://127.0.0.1:7777/event",{method:"POST",body:JSON.stringify({sessionId:"edit-entry-flash",runId:"pre-fix",hypothesisId:"A",location:"Gallery.tsx:468",msg:"[DEBUG] modal overlay click received",data:{activeId:active?.id ?? null,editing,hasEditForm:Boolean(editForm)},ts:Date.now()})}).catch(()=>{})
-              // #endregion
-              !editing && setActive(null)
-            }}>
+            <div className="gallery-modal" onClick={() => !editing && setActive(null)}>
               <div className="gallery-modal-body" onClick={(e) => e.stopPropagation()}>
                 {(() => {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
@@ -500,82 +614,75 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                   const shutterSpeed = formatMetaValue(currentImage?.shutter_speed)
                   const aperture = formatMetaValue(currentImage?.aperture)
                   const iso = formatMetaValue(currentImage?.iso)
+                  const mediaMeta = [
+                    ...equipmentMeta,
+                    captureMuseumName ? `拍摄馆 ${captureMuseumName}` : null,
+                    exhibitionName ? `展览 ${exhibitionName}` : null,
+                    capturedAt ? `拍摄时间 ${capturedAt}` : null,
+                    currentImage?.edit_method ? `修图 ${currentImage.edit_method}` : null,
+                  ].filter((item): item is string => Boolean(item))
 
                   return (
                     <>
-                      <div className="gallery-modal-media">
+                      <div className={`gallery-modal-media ${currentImage ? "has-image" : ""}`}>
                         {currentImage ? (
                           <>
-                            <div className="gallery-modal-stage">
-                              <div className="gallery-media-bar">
-                                <span className="gallery-media-kicker">馆藏影像</span>
-                                <span className="gallery-media-count">
-                                  {activeImageIndex + 1} / {active.images.length}
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                className="gallery-close"
-                                onClick={() => !editing && setActive(null)}
-                                disabled={editing}
-                                aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
-                              >
-                                ×
-                              </button>
-                              <img
-                                className="gallery-modal-main-img"
-                                src={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
-                                alt={active.name}
-                              />
-                            </div>
+                            <img
+                              className="gallery-modal-main-img"
+                              src={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
+                              alt={active.name}
+                            />
                             <div className="gallery-media-foot">
-                              <div className="gallery-media-meta">
-                                {capturedAt ? <span>拍摄于 {capturedAt}</span> : null}
-                                {!capturedAt && uploadedAt ? <span>上传于 {uploadedAt}</span> : null}
-                                {editing ? <span>编辑时暂不切换图片</span> : null}
-                              </div>
-                              {active.images.length > 1 ? (
-                                <div className={`gallery-modal-thumbs ${editing ? "edit-lock" : ""}`}>
-                                  {active.images.map((image, index) => (
-                                    <button
-                                      type="button"
-                                      key={image.id}
-                                      className={`gallery-modal-thumb ${index === activeImageIndex ? "active" : ""}`}
-                                      onClick={() => setActiveImageIndex(index)}
-                                      aria-label={`查看第 ${index + 1} 张`}
-                                      disabled={editing || saving}
-                                    >
-                                      <img
-                                        src={getDisplayImageUrl(apiBaseUrl, image.url, "thumb")}
-                                        alt={active.name}
-                                        loading="lazy"
-                                      />
-                                    </button>
-                                  ))}
-                                </div>
+                              {active.images.length > 1 || mediaMeta.length > 0 ? (
+                                <>
+                                  {active.images.length > 1 ? (
+                                    <div className={`gallery-modal-thumbs ${editing ? "edit-lock" : ""}`}>
+                                      {active.images.map((image, index) => (
+                                        <button
+                                          type="button"
+                                          key={image.id}
+                                          className={`gallery-modal-thumb ${index === activeImageIndex ? "active" : ""}`}
+                                          onClick={() => setActiveImageIndex(index)}
+                                          aria-label={`查看第 ${index + 1} 张`}
+                                          disabled={editing || saving}
+                                        >
+                                          <img
+                                            src={getDisplayImageUrl(apiBaseUrl, image.url, "thumb")}
+                                            alt={active.name}
+                                            loading="lazy"
+                                          />
+                                        </button>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <div />
+                                  )}
+                                  <div className="gallery-media-aside">
+                                    {currentImage ? (
+                                      <span className="gallery-media-page-indicator">
+                                        {activeImageIndex + 1} / {active.images.length}
+                                      </span>
+                                    ) : null}
+                                    {mediaMeta.length > 0 ? (
+                                      <div className="gallery-media-meta">
+                                        {mediaMeta.map((item) => (
+                                          <span key={item}>{item}</span>
+                                        ))}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </>
                               ) : null}
                             </div>
                           </>
                         ) : (
-                          <div className="gallery-modal-stage">
-                            <button
-                              type="button"
-                              className="gallery-close"
-                              onClick={() => !editing && setActive(null)}
-                              disabled={editing}
-                              aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
-                            >
-                              ×
-                            </button>
-                            <div className="gallery-modal-empty">暂无图片</div>
-                          </div>
+                          <div className="gallery-modal-empty">暂无图片</div>
                         )}
                       </div>
 
                       <div className="gallery-modal-info">
                         <div className="gallery-detail-head">
                           <div className="gallery-detail-heading">
-                            <span className="gallery-detail-kicker">馆藏编目</span>
                             <h3 className="gallery-detail-title">{active.name}</h3>
                             {currentImage ? (
                               <p className="muted small gallery-detail-meta">
@@ -585,22 +692,50 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                             ) : null}
                           </div>
                           <div className="gallery-actions" onClick={(event) => event.stopPropagation()}>
-                            {!editing ? (
-                              <button type="button" className="gallery-toolbar-button" onClick={handleStartEdit}>
-                                编辑资料
-                              </button>
-                            ) : null}
-                            {currentImage ? (
-                              <a
-                                href={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="gallery-toolbar-button gallery-toolbar-link"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                查看原图
-                              </a>
-                            ) : null}
+                            {editing ? (
+                              <>
+                                <button
+                                  type="button"
+                                  className="ghost gallery-secondary-button"
+                                  onClick={handleCancelEdit}
+                                  disabled={saving}
+                                >
+                                  取消
+                                </button>
+                                <button
+                                  type="submit"
+                                  form={editFormId}
+                                  className="primary gallery-primary-button"
+                                  disabled={saving}
+                                >
+                                  {saving ? "保存中..." : "保存"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="gallery-close"
+                                  onClick={() => !editing && setActive(null)}
+                                  disabled={editing}
+                                  aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
+                                >
+                                  ×
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button type="button" className="gallery-toolbar-button" onClick={handleStartEdit}>
+                                  编辑资料
+                                </button>
+                                <button
+                                  type="button"
+                                  className="gallery-close"
+                                  onClick={() => !editing && setActive(null)}
+                                  disabled={editing}
+                                  aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
+                                >
+                                  ×
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
 
@@ -888,30 +1023,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 </section>
                               </div>
                             </div>
-                            <div className="form-footer gallery-form-footer">
-                              <div className="gallery-form-status">
-                                {saveError ? (
+                            {saveError ? (
+                              <div className="form-footer gallery-form-footer">
+                                <div className="gallery-form-status">
                                   <p className="error-text">{saveError}</p>
-                                ) : saveNotice ? (
-                                  <p className="success-text">{saveNotice}</p>
-                                ) : (
-                                  <span />
-                                )}
+                                </div>
                               </div>
-                              <div className="gallery-form-actions">
-                                <button
-                                  type="button"
-                                  className="ghost gallery-secondary-button"
-                                  onClick={handleCancelEdit}
-                                  disabled={saving}
-                                >
-                                  取消
-                                </button>
-                                <button type="submit" className="primary gallery-primary-button" disabled={saving}>
-                                  {saving ? "保存中..." : "保存"}
-                                </button>
-                              </div>
-                            </div>
+                            ) : null}
                           </form>
                         ) : (
                           <div className="gallery-detail-lines">
@@ -950,46 +1068,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       </span>
                                     ))}
                                   </div>
-                                </div>
-                              ) : null}
-                            </section>
-                            <section className="gallery-detail-section">
-                              <div className="gallery-detail-section-head">
-                                <span className="gallery-detail-kicker">当前图片</span>
-                                <h4>拍摄概览</h4>
-                              </div>
-                              {equipmentMeta.length > 0 ? (
-                                <div className="gallery-detail-line">
-                                  <span className="gallery-detail-label">设备</span>
-                                  <div className="tag-row">
-                                    {equipmentMeta.map((tag) => (
-                                      <span key={tag}>{tag}</span>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-                              {captureMuseumName ? (
-                                <div className="gallery-detail-line">
-                                  <span className="gallery-detail-label">拍摄馆</span>
-                                  <span className="gallery-detail-value">{captureMuseumName}</span>
-                                </div>
-                              ) : null}
-                              {exhibitionName ? (
-                                <div className="gallery-detail-line">
-                                  <span className="gallery-detail-label">展览</span>
-                                  <span className="gallery-detail-value">{exhibitionName}</span>
-                                </div>
-                              ) : null}
-                              {capturedAt ? (
-                                <div className="gallery-detail-line">
-                                  <span className="gallery-detail-label">拍摄时间</span>
-                                  <span className="gallery-detail-value">{capturedAt}</span>
-                                </div>
-                              ) : null}
-                              {currentImage?.edit_method ? (
-                                <div className="gallery-detail-line">
-                                  <span className="gallery-detail-label">修图方式</span>
-                                  <span className="gallery-detail-value">{currentImage.edit_method}</span>
                                 </div>
                               ) : null}
                             </section>
