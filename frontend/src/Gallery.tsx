@@ -5,17 +5,10 @@ import {
   Building2,
   Camera,
   Clock3,
-  FlipHorizontal2,
-  FlipVertical2,
-  Minus,
-  Plus,
-  RotateCcw,
-  RotateCw,
   Sparkles,
   Tag,
-  Undo2,
-  X,
 } from "lucide-react"
+import GalleryImagePreview from "./GalleryImagePreview"
 
 type GalleryImage = {
   id: number
@@ -203,10 +196,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [active, setActive] = useState<GalleryArtifact | null>(null)
   const [activeImageIndex, setActiveImageIndex] = useState(0)
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
-  const [previewScale, setPreviewScale] = useState(1)
-  const [previewRotation, setPreviewRotation] = useState(0)
-  const [previewFlipX, setPreviewFlipX] = useState(false)
-  const [previewFlipY, setPreviewFlipY] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<GalleryEditFormState | null>(null)
   const [tagInput, setTagInput] = useState("")
@@ -280,20 +269,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     if (!active) return
     setActiveImageIndex(0)
   }, [active?.id])
-
-  useEffect(() => {
-    if (!imagePreviewOpen) {
-      setPreviewScale(1)
-      setPreviewRotation(0)
-      setPreviewFlipX(false)
-      setPreviewFlipY(false)
-      return
-    }
-    setPreviewScale(1)
-    setPreviewRotation(0)
-    setPreviewFlipX(false)
-    setPreviewFlipY(false)
-  }, [imagePreviewOpen, active?.id, activeImageIndex])
 
   useEffect(() => {
     if (!active) return
@@ -572,11 +547,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                     capturedAt: Clock3,
                     editMethod: Sparkles,
                   } as const
-                  const previewTransform = [
-                    `rotate(${previewRotation}deg)`,
-                    `scale(${previewFlipX ? -previewScale : previewScale}, ${previewFlipY ? -previewScale : previewScale})`,
-                  ].join(" ")
-
                   return (
                     <>
                       <div className={`gallery-modal-media ${currentImage ? "has-image" : ""}`}>
@@ -1097,97 +1067,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                       </div>
 
                       {imagePreviewOpen && currentImage ? (
-                        <div className="gallery-modal-preview" onClick={() => setImagePreviewOpen(false)}>
-                          <div className="gallery-image-preview-stage" onClick={(event) => event.stopPropagation()}>
-                            <div className="gallery-image-preview-viewport">
-                              <img
-                                className="gallery-image-preview-img"
-                                src={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
-                                alt={active.name}
-                                style={{ transform: previewTransform }}
-                              />
-                            </div>
-                            <div className="gallery-image-preview-toolbar">
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action"
-                                onClick={() => setPreviewScale((current) => Math.max(0.4, current - 0.2))}
-                                aria-label="缩小"
-                                data-tooltip="缩小"
-                              >
-                                <Minus size={16} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action"
-                                onClick={() => setPreviewScale((current) => Math.min(8, current + 0.2))}
-                                aria-label="放大"
-                                data-tooltip="放大"
-                              >
-                                <Plus size={16} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action"
-                                onClick={() => setPreviewRotation((current) => current - 90)}
-                                aria-label="左转"
-                                data-tooltip="左转"
-                              >
-                                <RotateCcw size={16} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action"
-                                onClick={() => setPreviewRotation((current) => current + 90)}
-                                aria-label="右转"
-                                data-tooltip="右转"
-                              >
-                                <RotateCw size={16} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action"
-                                onClick={() => setPreviewFlipX((current) => !current)}
-                                aria-label="水平翻转"
-                                data-tooltip="水平翻转"
-                              >
-                                <FlipHorizontal2 size={16} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action"
-                                onClick={() => setPreviewFlipY((current) => !current)}
-                                aria-label="垂直翻转"
-                                data-tooltip="垂直翻转"
-                              >
-                                <FlipVertical2 size={16} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action"
-                                onClick={() => {
-                                  setPreviewScale(1)
-                                  setPreviewRotation(0)
-                                  setPreviewFlipX(false)
-                                  setPreviewFlipY(false)
-                                }}
-                                aria-label="重置"
-                                data-tooltip="重置"
-                              >
-                                <Undo2 size={16} aria-hidden="true" />
-                              </button>
-                              <button
-                                type="button"
-                                className="gallery-image-preview-action close"
-                                onClick={() => setImagePreviewOpen(false)}
-                                aria-label="关闭原比例预览"
-                                data-tooltip="关闭"
-                              >
-                                <X size={16} aria-hidden="true" />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
+                        <GalleryImagePreview
+                          open={imagePreviewOpen}
+                          src={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
+                          alt={active.name}
+                          onClose={() => setImagePreviewOpen(false)}
+                        />
                       ) : null}
                     </>
                   )
