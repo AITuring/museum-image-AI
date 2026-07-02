@@ -59,6 +59,7 @@ class ArtifactImageCreate(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = None
+    capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     captured_at: datetime | None = None
@@ -84,6 +85,7 @@ class ArtifactCreate(BaseModel):
     museum_id: int
     name: str
     era: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     images: list[ArtifactImageCreate] = Field(default_factory=list)
@@ -93,6 +95,7 @@ class ArtifactUpdate(BaseModel):
     museum_name: str
     name: str
     era: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     image_id: int | None = None
@@ -100,6 +103,7 @@ class ArtifactUpdate(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = "常设"
+    capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     captured_at: datetime | None = None
@@ -114,6 +118,7 @@ class CloudArtifactSubmitRequest(BaseModel):
     museum_name: str
     name: str
     era: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     existing_artifact_id: int | None = None
     skip_existing_match: bool = False
@@ -122,6 +127,7 @@ class CloudArtifactSubmitRequest(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = "常设"
+    capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     captured_at: datetime | None = None
@@ -136,6 +142,7 @@ class ArtifactRead(BaseModel):
     museum_id: int
     name: str
     era: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     created_at: datetime
     museum_name: str

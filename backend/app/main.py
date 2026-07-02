@@ -136,6 +136,14 @@ def run_startup_migrations(connection) -> None:
         if "summary" in artifact_columns:
             connection.execute(text("UPDATE artifacts SET description = summary WHERE description IS NULL"))
 
+    if "unearthed_place" in artifact_columns and "Place_of_Excavation" not in artifact_columns:
+        connection.execute(text('ALTER TABLE artifacts RENAME COLUMN unearthed_place TO "Place_of_Excavation"'))
+        artifact_columns.remove("unearthed_place")
+        artifact_columns.add("Place_of_Excavation")
+
+    if "Place_of_Excavation" not in artifact_columns:
+        connection.execute(text('ALTER TABLE artifacts ADD COLUMN "Place_of_Excavation" VARCHAR(255)'))
+
     refreshed_columns = {column["name"] for column in inspect(connection).get_columns("artifacts")}
     if "image_path" in refreshed_columns and "artifact_images" in set(inspect(connection).get_table_names()):
         connection.execute(
@@ -167,6 +175,7 @@ def run_startup_migrations(connection) -> None:
         "lens_model": "VARCHAR(255)",
         "capture_museum_id": "INTEGER",
         "exhibition_id": "INTEGER",
+        "capture_location": "VARCHAR(255)",
         "latitude": "DOUBLE PRECISION",
         "longitude": "DOUBLE PRECISION",
         "captured_at": "TIMESTAMP",
@@ -232,6 +241,7 @@ def run_startup_migrations(connection) -> None:
         "lens_model": "VARCHAR(255)",
         "capture_museum_name": "VARCHAR(255)",
         "exhibition_name": "VARCHAR(255)",
+        "capture_location": "VARCHAR(255)",
         "latitude": "DOUBLE PRECISION",
         "longitude": "DOUBLE PRECISION",
         "captured_at": "TIMESTAMP",
@@ -805,6 +815,7 @@ async def submit_artifact_to_cloud(
     museum_name: str,
     name: str,
     era: str | None,
+    Place_of_Excavation: str | None,
     description: str | None,
     existing_artifact_id: int | None,
     skip_existing_match: bool,
@@ -813,6 +824,7 @@ async def submit_artifact_to_cloud(
     lens_model: str | None,
     capture_museum_name: str | None,
     exhibition_name: str | None,
+    capture_location: str | None,
     latitude: float | None,
     longitude: float | None,
     captured_at: datetime | None,
@@ -835,6 +847,7 @@ async def submit_artifact_to_cloud(
         "museum_name": museum_name.strip(),
         "name": name.strip(),
         "era": era or "",
+        "Place_of_Excavation": Place_of_Excavation or "",
         "description": description or "",
         "skip_existing_match": "true" if skip_existing_match else "false",
         "tags": json.dumps(tags, ensure_ascii=False),
@@ -842,6 +855,7 @@ async def submit_artifact_to_cloud(
         "lens_model": lens_model or "",
         "capture_museum_name": capture_museum_name or "",
         "exhibition_name": normalize_exhibition_name(exhibition_name),
+        "capture_location": capture_location or "",
         "latitude": "" if latitude is None else str(latitude),
         "longitude": "" if longitude is None else str(longitude),
         "captured_at": captured_at.isoformat() if captured_at else "",
@@ -1293,6 +1307,7 @@ async def ingest_artifact(
     museum_name: str = Form(...),
     name: str = Form(...),
     era: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
     description: str | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
@@ -1301,6 +1316,7 @@ async def ingest_artifact(
     lens_model: str | None = Form(None),
     capture_museum_name: str | None = Form(None),
     exhibition_name: str | None = Form("常设"),
+    capture_location: str | None = Form(None),
     latitude: str | None = Form(None),
     longitude: str | None = Form(None),
     captured_at: str | None = Form(None),
@@ -1368,6 +1384,7 @@ async def ingest_artifact(
         artifact.museum_id = museum.id
         artifact.name = name.strip()
         artifact.era = optional_text(era)
+        artifact.Place_of_Excavation = optional_text(Place_of_Excavation)
         artifact.description = optional_text(description)
         existing_tag_names = {tag.name for tag in artifact.tags}
         for tag in merged_tags:
@@ -1379,6 +1396,7 @@ async def ingest_artifact(
             museum_id=museum.id,
             name=name.strip(),
             era=(era or None),
+            Place_of_Excavation=optional_text(Place_of_Excavation),
             description=(description or None),
             ai_status="reviewed",
         )
@@ -1402,6 +1420,7 @@ async def ingest_artifact(
             image_hash=image_hash,
             capture_museum_id=capture_museum.id if capture_museum is not None else None,
             exhibition_id=exhibition.id if exhibition is not None else None,
+            capture_location=optional_text(capture_location),
             **image_metadata,
         )
     )
@@ -1424,6 +1443,7 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
         museum_name=payload.museum_name,
         name=payload.name,
         era=payload.era,
+        Place_of_Excavation=payload.Place_of_Excavation,
         description=payload.description,
         existing_artifact_id=payload.existing_artifact_id,
         skip_existing_match=payload.skip_existing_match,
@@ -1432,6 +1452,7 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
         lens_model=payload.lens_model,
         capture_museum_name=payload.capture_museum_name,
         exhibition_name=payload.exhibition_name,
+        capture_location=payload.capture_location,
         latitude=payload.latitude,
         longitude=payload.longitude,
         captured_at=payload.captured_at,
@@ -1452,6 +1473,7 @@ async def submit_single_artifact_file_to_cloud(
     museum_name: str = Form(...),
     name: str = Form(...),
     era: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
     description: str | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
@@ -1460,6 +1482,7 @@ async def submit_single_artifact_file_to_cloud(
     lens_model: str | None = Form(None),
     capture_museum_name: str | None = Form(None),
     exhibition_name: str | None = Form(None),
+    capture_location: str | None = Form(None),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
     captured_at: datetime | None = Form(None),
@@ -1485,6 +1508,8 @@ async def submit_single_artifact_file_to_cloud(
         museum_name=museum_name,
         name=name,
         era=era,
+        Place_of_Excavation=Place_of_Excavation,
+        description=description,
         description=description,
         existing_artifact_id=existing_artifact_id,
         skip_existing_match=skip_existing_match,
@@ -1493,6 +1518,7 @@ async def submit_single_artifact_file_to_cloud(
         lens_model=lens_model,
         capture_museum_name=capture_museum_name,
         exhibition_name=exhibition_name,
+        capture_location=capture_location,
         latitude=latitude,
         longitude=longitude,
         captured_at=captured_at,
@@ -1983,6 +2009,7 @@ def list_artifacts(
                 Artifact.name.ilike(like),
                 Artifact.description.ilike(like),
                 Artifact.era.ilike(like),
+                Artifact.Place_of_Excavation.ilike(like),
                 Museum.name.ilike(like),
                 ArtifactImage.camera_model.ilike(like),
                 ArtifactImage.lens_model.ilike(like),
@@ -2027,6 +2054,7 @@ def update_artifact(
     artifact.museum_id = museum.id
     artifact.name = payload.name.strip()
     artifact.era = optional_text(payload.era)
+    artifact.Place_of_Excavation = optional_text(payload.Place_of_Excavation)
     artifact.description = optional_text(payload.description)
 
     target_image = None
@@ -2047,6 +2075,7 @@ def update_artifact(
         target_image.lens_model = optional_text(payload.lens_model)
         target_image.capture_museum_id = capture_museum.id if capture_museum is not None else None
         target_image.exhibition_id = exhibition.id if exhibition is not None else None
+        target_image.capture_location = optional_text(payload.capture_location)
         target_image.latitude = payload.latitude
         target_image.longitude = payload.longitude
         target_image.captured_at = payload.captured_at
@@ -2117,6 +2146,7 @@ def create_artifact(payload: ArtifactCreate, db: Session = Depends(get_db)) -> A
         museum_id=payload.museum_id,
         name=payload.name,
         era=payload.era,
+        Place_of_Excavation=payload.Place_of_Excavation,
         description=payload.description,
     )
     db.add(artifact)
@@ -2142,6 +2172,7 @@ def create_artifact(payload: ArtifactCreate, db: Session = Depends(get_db)) -> A
                 lens_model=image.lens_model,
                 capture_museum_id=capture_museum.id if capture_museum is not None else None,
                 exhibition_id=exhibition.id if exhibition is not None else None,
+                capture_location=optional_text(image.capture_location),
                 latitude=image.latitude,
                 longitude=image.longitude,
                 captured_at=image.captured_at,
@@ -2222,6 +2253,7 @@ def create_artifact_image(
         lens_model=payload.lens_model,
         capture_museum_id=capture_museum.id if capture_museum is not None else None,
         exhibition_id=exhibition.id if exhibition is not None else None,
+        capture_location=optional_text(payload.capture_location),
         latitude=payload.latitude,
         longitude=payload.longitude,
         captured_at=payload.captured_at,

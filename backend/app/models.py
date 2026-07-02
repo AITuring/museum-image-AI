@@ -67,6 +67,7 @@ class Artifact(Base):
     museum_id: Mapped[int] = mapped_column(ForeignKey("museums.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     era: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    Place_of_Excavation: Mapped[str | None] = mapped_column("Place_of_Excavation", String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -186,6 +187,7 @@ class PendingArtifact(Base):
     lens_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     capture_museum_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     exhibition_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    capture_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
@@ -226,6 +228,7 @@ class ArtifactImage(Base):
     exhibition_id: Mapped[int | None] = mapped_column(
         ForeignKey("exhibitions.id"), nullable=True, index=True
     )
+    capture_location: Mapped[str | None] = mapped_column(String(255), nullable=True)
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     captured_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
