@@ -1738,7 +1738,6 @@ async def submit_single_artifact_file_to_cloud(
         era=era,
         Place_of_Excavation=Place_of_Excavation,
         description=description,
-        description=description,
         existing_artifact_id=existing_artifact_id,
         skip_existing_match=skip_existing_match,
         tags=normalized_tags,
