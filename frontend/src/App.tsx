@@ -174,6 +174,13 @@ type SubmitNotice = {
   text: string
 }
 
+type ArtifactSubmitResult = {
+  id: number
+  name: string
+  duplicate_image_skipped?: boolean
+  duplicate_image_detail?: string | null
+}
+
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? "" : "http://localhost:8000")).replace(/\/$/, "")
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
@@ -947,7 +954,7 @@ function App() {
       if (!artifactForm.exhibitionName.trim() || artifactForm.exhibitionName.trim().startsWith("@")) {
         throw new Error("请填写或选择展览名称")
       }
-      await fetchJson<unknown>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
+      const result = await fetchJson<ArtifactSubmitResult>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -974,7 +981,12 @@ function App() {
       })
 
       resetCurrentImage()
-      setSubmitNotice({ type: "success", text: "已提交云端，图片已上传 OSS" })
+      setSubmitNotice({
+        type: "success",
+        text: result.duplicate_image_skipped
+          ? (result.duplicate_image_detail ?? `「${result.name}」已有相同图片，已跳过重复上传`)
+          : "已提交云端，图片已上传 OSS",
+      })
     } catch (err) {
       setSubmitNotice({
         type: "error",

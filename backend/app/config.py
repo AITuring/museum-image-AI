@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # Accessible name of the attach/upload control (file inputs are created lazily).
     qwen_web_attach_name: str = "添加附件"
 
+    # Google Photos import (local operator machine).
+    google_photos_client_id: str = ""
+    google_photos_client_secret: str = ""
+    google_photos_redirect_uri: str = ""
+    google_photos_token_path: str = "/data/google_photos_token.json"
+
     # Downscale local images before sending to the model (longest side, px). 0 disables.
     vision_max_image_dimension: int = 1280
     vision_image_jpeg_quality: int = 85

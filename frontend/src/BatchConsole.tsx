@@ -32,6 +32,8 @@ type PendingArtifact = {
   updated_at: string
 }
 
+type RawPendingArtifact = Omit<PendingArtifact, "image_url">
+
 type VisionCandidate = {
   provider: string
   model: string
@@ -115,8 +117,68 @@ type FileWithRelativePath = File & {
   webkitRelativePath?: string
 }
 
-function buildLocalFileFingerprint(file: File) {
-  return `${file.name}__${file.size}__${file.lastModified}`
+type GooglePhotosStatus = {
+  enabled: boolean
+  auth_configured: boolean
+  connected: boolean
+  detail: string | null
+}
+
+type GooglePhotosAlbum = {
+  id: string
+  title: string
+  media_items_count: number | null
+  cover_photo_base_url: string | null
+  cover_photo_url: string | null
+  is_writeable: boolean | null
+}
+
+type GooglePhotosMediaItem = {
+  id: string
+  filename: string
+  base_url: string
+  product_url: string | null
+  mime_type: string | null
+  width: number | null
+  height: number | null
+  creation_time: string | null
+  thumbnail_url: string | null
+}
+
+type GooglePhotosMediaList = {
+  items: GooglePhotosMediaItem[]
+  next_page_token: string | null
+}
+
+type GooglePhotosImportResult = {
+  imported: number
+  skipped: number
+  warnings: string[]
+  items: RawPendingArtifact[]
+}
+
+type BatchScanResponse = {
+  scanned: number
+  added: number
+  skipped: number
+  items: RawPendingArtifact[]
+}
+
+type PendingArtifactSubmitResult = {
+  item: RawPendingArtifact
+  duplicate_image_skipped: boolean
+  duplicate_image_detail: string | null
+}
+
+function buildPendingPreviewUrl(apiBaseUrl: string, id: number) {
+  return `${apiBaseUrl}/api/batch/pending/${id}/image`
+}
+
+function normalizePersistedPendingItem(apiBaseUrl: string, item: RawPendingArtifact): PendingArtifact {
+  return {
+    ...item,
+    image_url: buildPendingPreviewUrl(apiBaseUrl, item.id),
+  }
 }
 
 function normalizeTags(values: string[]) {
@@ -225,8 +287,15 @@ function needsSelection(value: string | null | undefined) {
 
 export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [items, setItems] = useState<PendingArtifact[]>([])
+  const [googlePhotosStatus, setGooglePhotosStatus] = useState<GooglePhotosStatus | null>(null)
+  const [googlePhotosAlbums, setGooglePhotosAlbums] = useState<GooglePhotosAlbum[]>([])
+  const [googlePhotosAlbumId, setGooglePhotosAlbumId] = useState("")
+  const [googlePhotosMedia, setGooglePhotosMedia] = useState<GooglePhotosMediaItem[]>([])
+  const [googlePhotosSelectedIds, setGooglePhotosSelectedIds] = useState<string[]>([])
+  const [googlePhotosNextPageToken, setGooglePhotosNextPageToken] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
   const [identifying, setIdentifying] = useState(false)
+  const [googlePhotosBusy, setGooglePhotosBusy] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -265,6 +334,214 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     return (await response.json()) as T
   }
 
+  async function refreshGooglePhotosStatus() {
+    try {
+      const status = await fetchJson<GooglePhotosStatus>(`${apiBaseUrl}/api/google-photos/status`)
+      setGooglePhotosStatus(status)
+      return status
+    } catch (err) {
+      const nextError = err instanceof Error ? err.message : "读取 Google Photos 状态失败"
+      setError(nextError)
+      return null
+    }
+  }
+
+  async function loadGooglePhotosAlbums() {
+    const albums = await fetchJson<GooglePhotosAlbum[]>(`${apiBaseUrl}/api/google-photos/albums?page_size=50`)
+    setGooglePhotosAlbums(albums)
+    return albums
+  }
+
+  async function loadGooglePhotosMedia(options?: { albumId?: string; pageToken?: string | null; append?: boolean }) {
+    const params = new URLSearchParams({ page_size: "60" })
+    const albumId = options?.albumId ?? googlePhotosAlbumId
+    if (albumId) {
+      params.set("album_id", albumId)
+    }
+    if (options?.pageToken) {
+      params.set("page_token", options.pageToken)
+    }
+    const payload = await fetchJson<GooglePhotosMediaList>(
+      `${apiBaseUrl}/api/google-photos/media-items?${params.toString()}`,
+    )
+    setGooglePhotosMedia((current) => (options?.append ? [...current, ...payload.items] : payload.items))
+    setGooglePhotosNextPageToken(payload.next_page_token)
+    return payload
+  }
+
+  async function handleConnectGooglePhotos() {
+    setGooglePhotosBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const { auth_url: authUrl } = await fetchJson<{ auth_url: string }>(
+        `${apiBaseUrl}/api/google-photos/auth/start`,
+      )
+      const popup = window.open(authUrl, "google-photos-auth", "width=640,height=760")
+      if (!popup) {
+        throw new Error("浏览器拦截了授权弹窗，请允许弹窗后重试。")
+      }
+      await new Promise<void>((resolve, reject) => {
+        let settled = false
+        const finish = (callback: () => void) => {
+          if (settled) return
+          settled = true
+          window.removeEventListener("message", onMessage)
+          window.clearInterval(timer)
+          callback()
+        }
+        const onMessage = (event: MessageEvent) => {
+          const data = event.data as { source?: string; success?: boolean; message?: string } | null
+          if (data?.source !== "google-photos-oauth") {
+            return
+          }
+          finish(() => {
+            if (data.success) {
+              resolve()
+              return
+            }
+            reject(new Error(data.message || "Google Photos 连接失败"))
+          })
+        }
+        const timer = window.setInterval(() => {
+          if (popup.closed) {
+            finish(() => resolve())
+          }
+        }, 500)
+        window.addEventListener("message", onMessage)
+      })
+      const status = await refreshGooglePhotosStatus()
+      if (!status?.connected) {
+        throw new Error(status?.detail || "Google Photos 尚未连接成功")
+      }
+      const albums = await loadGooglePhotosAlbums()
+      const nextAlbumId = albums[0]?.id ?? ""
+      setGooglePhotosAlbumId(nextAlbumId)
+      setGooglePhotosSelectedIds([])
+      if (nextAlbumId) {
+        await loadGooglePhotosMedia({ albumId: nextAlbumId })
+      } else {
+        setGooglePhotosMedia([])
+        setGooglePhotosNextPageToken(null)
+      }
+      setMessage("Google Photos 已连接，可选择相册并导入图片。")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "连接 Google Photos 失败")
+    } finally {
+      setGooglePhotosBusy(false)
+    }
+  }
+
+  function isPersistedPendingItem(item: PendingArtifact) {
+    return !fileStoreRef.current.has(item.id)
+  }
+
+  async function savePersistedPendingItem(item: PendingArtifact) {
+    const payload = await fetchJson<RawPendingArtifact>(`${apiBaseUrl}/api/batch/pending/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        museum_name: item.museum_name?.trim() || null,
+        name: item.name?.trim() || null,
+        era: item.era?.trim() || null,
+        description: item.description?.trim() || null,
+        tags: normalizeTags(item.tags ?? []),
+        camera_model: item.camera_model?.trim() || null,
+        lens_model: item.lens_model?.trim() || null,
+        capture_museum_name: item.capture_museum_name?.trim() || null,
+        exhibition_name: item.exhibition_name?.trim() || null,
+        latitude: item.latitude,
+        longitude: item.longitude,
+        captured_at: item.captured_at?.trim() || null,
+        shutter_speed: item.shutter_speed?.trim() || null,
+        aperture: item.aperture?.trim() || null,
+        iso: item.iso,
+        edit_method: item.edit_method || null,
+        existing_artifact_id: item.existing_artifact_id,
+      }),
+    })
+    return enrichPendingItemTags(normalizePersistedPendingItem(apiBaseUrl, payload))
+  }
+
+  async function identifyPersistedPendingItem(id: number) {
+    const response = await fetch(`${apiBaseUrl}/api/batch/identify/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: [id] }),
+    })
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => ({}))) as { detail?: string }
+      throw new Error(payload.detail || `HTTP ${response.status}`)
+    }
+    if (!response.body) {
+      throw new Error("识别流未返回内容")
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let result: PendingArtifact | null = null
+    let itemError: string | null = null
+
+    while (true) {
+      const { value, done } = await reader.read()
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+      const events = buffer.split("\n\n")
+      buffer = events.pop() ?? ""
+      for (const eventText of events) {
+        for (const line of eventText.split("\n")) {
+          if (!line.startsWith("data: ")) continue
+          const payload = JSON.parse(line.slice(6)) as {
+            stage?: string
+            id?: number
+            message?: string
+            item?: RawPendingArtifact
+          }
+          if (payload.stage === "item" && payload.id === id && payload.item) {
+            result = enrichPendingItemTags(normalizePersistedPendingItem(apiBaseUrl, payload.item))
+          }
+          if (payload.stage === "item_error" && payload.id === id) {
+            itemError = payload.message || "识别失败"
+          }
+        }
+      }
+      if (done) break
+    }
+    if (result) {
+      return result
+    }
+    if (itemError) {
+      throw new Error(itemError)
+    }
+    throw new Error("未获得识别结果")
+  }
+
+  async function importGooglePhotosSelection() {
+    if (googlePhotosSelectedIds.length === 0) {
+      setError("请先选择要导入的 Google Photos 图片")
+      return
+    }
+    setGooglePhotosBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const payload = await fetchJson<GooglePhotosImportResult>(`${apiBaseUrl}/api/google-photos/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media_item_ids: googlePhotosSelectedIds }),
+      })
+      const importedItems = payload.items
+        .map((item) => enrichPendingItemTags(normalizePersistedPendingItem(apiBaseUrl, item)))
+      setItems((current) => [...importedItems, ...current.filter((item) => !importedItems.some((next) => next.id === item.id))])
+      setGooglePhotosSelectedIds([])
+      const warningText = payload.warnings.length > 0 ? `；${payload.warnings.join("；")}` : ""
+      setMessage(`已从 Google Photos 导入 ${payload.imported} 张，跳过 ${payload.skipped} 张${warningText}`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导入 Google Photos 图片失败")
+    } finally {
+      setGooglePhotosBusy(false)
+    }
+  }
+
   useEffect(() => {
     return () => {
       previewUrlStoreRef.current.forEach((previewUrl) => URL.revokeObjectURL(previewUrl))
@@ -276,14 +553,35 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   useEffect(() => {
     void (async () => {
       try {
-        const [museums, eras] = await Promise.all([
+        const [museums, eras, pendingItems] = await Promise.all([
           fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?limit=200`),
           fetchJson<EraOption[]>(`${apiBaseUrl}/api/era-options`),
+          fetchJson<RawPendingArtifact[]>(`${apiBaseUrl}/api/batch/pending`),
         ])
         setMuseumOptions(museums)
         setEraOptions(eras)
+        setItems(pendingItems.map((item) => enrichPendingItemTags(normalizePersistedPendingItem(apiBaseUrl, item))))
       } catch (err) {
         setError(err instanceof Error ? err.message : "加载下拉选项失败")
+      }
+    })()
+  }, [apiBaseUrl])
+
+  useEffect(() => {
+    void (async () => {
+      const status = await refreshGooglePhotosStatus()
+      if (!status?.connected) {
+        return
+      }
+      try {
+        const albums = await loadGooglePhotosAlbums()
+        const nextAlbumId = albums[0]?.id ?? ""
+        setGooglePhotosAlbumId(nextAlbumId)
+        if (nextAlbumId) {
+          await loadGooglePhotosMedia({ albumId: nextAlbumId })
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "读取 Google Photos 列表失败")
       }
     })()
   }, [apiBaseUrl])
@@ -522,56 +820,14 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       const firstFile = uploadFiles[0] as FileWithRelativePath
       const folderName = firstFile.webkitRelativePath?.split("/")[0] || "已选文件夹"
       setSelectedFolderLabel(`${folderName} · ${uploadFiles.length} 个文件`)
-      const now = new Date().toISOString()
-      const existingFingerprints = new Set(
-        Array.from(fileStoreRef.current.values()).map((file) => buildLocalFileFingerprint(file)),
-      )
-      const acceptedFiles: FileWithRelativePath[] = []
-      const nextItems = uploadFiles.flatMap((file, index) => {
-        const fingerprint = buildLocalFileFingerprint(file)
-        if (existingFingerprints.has(fingerprint)) {
-          return []
-        }
-        existingFingerprints.add(fingerprint)
-        acceptedFiles.push(file as FileWithRelativePath)
-        const previewUrl = URL.createObjectURL(file)
-        const itemId = Date.now() + index
-        fileStoreRef.current.set(itemId, file)
-        previewUrlStoreRef.current.set(itemId, previewUrl)
-        return enrichPendingItemTags({
-          id: itemId,
-          source_path: (file as FileWithRelativePath).webkitRelativePath || file.name,
-          image_url: previewUrl,
-          file_name: file.name,
-          status: "pending",
-          error: null,
-          museum_name: null,
-          name: null,
-          era: null,
-          description: null,
-          tags: [],
-          camera_model: null,
-          lens_model: null,
-          capture_museum_name: null,
-          exhibition_name: "常设",
-          latitude: null,
-          longitude: null,
-          captured_at: null,
-          shutter_speed: null,
-          aperture: null,
-          iso: null,
-          edit_method: null,
-          confidence: null,
-          provider: null,
-          analysis: null,
-          existing_artifact_id: null,
-          cloud_artifact_id: null,
-          created_at: now,
-          updated_at: now,
-        })
+      const formData = new FormData()
+      uploadFiles.forEach((file) => formData.append("files", file, file.name))
+      const payload = await fetchJson<BatchScanResponse>(`${apiBaseUrl}/api/batch/scan-files`, {
+        method: "POST",
+        body: formData,
       })
-      setItems((current) => [...nextItems, ...current])
-      setMessage(`已加入 ${acceptedFiles.length} 张到前端暂存，提交云端前不会入库`)
+      setItems(payload.items.map((item) => enrichPendingItemTags(normalizePersistedPendingItem(apiBaseUrl, item))))
+      setMessage(`本地图片已同步到待处理池：新增 ${payload.added} 张，跳过 ${payload.skipped} 张`)
     } catch (err) {
       setError(err instanceof Error ? err.message : "扫描失败")
     } finally {
@@ -597,36 +853,40 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         patchLocal(item.id, { status: "identifying", error: null })
         try {
           const file = fileStoreRef.current.get(item.id)
-          if (!file) {
+          if (!file && isPersistedPendingItem(item)) {
+            const identified = await identifyPersistedPendingItem(item.id)
+            patchLocal(item.id, identified)
+          } else if (!file) {
             throw new Error("当前图片文件已丢失，请重新选择文件夹")
+          } else {
+            const formData = new FormData()
+            formData.append("file", file, file.name)
+            formData.append("image_name", item.file_name)
+            const response = await fetchJson<VisionAnalyzeResponse>(`${apiBaseUrl}/api/vision/analyze/file`, {
+              method: "POST",
+              body: formData,
+            })
+            const candidate = pickPreferredCandidate(response.candidates)
+            if (!candidate) {
+              throw new Error("未获得识别结果")
+            }
+            patchLocal(
+              item.id,
+              enrichPendingItemTags({
+                ...item,
+                museum_name: candidate.museum_name ?? item.museum_name,
+                name: candidate.artifact_name ?? item.name,
+                era: candidate.era ?? item.era,
+                description: candidate.description ?? item.description,
+                tags: normalizeTags(candidate.tags ?? []),
+                confidence: candidate.confidence,
+                provider: candidate.provider,
+                analysis: candidate.analysis ?? item.analysis,
+                status: "identified",
+                error: null,
+              }),
+            )
           }
-          const formData = new FormData()
-          formData.append("file", file, file.name)
-          formData.append("image_name", item.file_name)
-          const response = await fetchJson<VisionAnalyzeResponse>(`${apiBaseUrl}/api/vision/analyze/file`, {
-            method: "POST",
-            body: formData,
-          })
-          const candidate = pickPreferredCandidate(response.candidates)
-          if (!candidate) {
-            throw new Error("未获得识别结果")
-          }
-          patchLocal(
-            item.id,
-            enrichPendingItemTags({
-              ...item,
-              museum_name: candidate.museum_name ?? item.museum_name,
-              name: candidate.artifact_name ?? item.name,
-              era: candidate.era ?? item.era,
-              description: candidate.description ?? item.description,
-              tags: normalizeTags(candidate.tags ?? []),
-              confidence: candidate.confidence,
-              provider: candidate.provider,
-              analysis: candidate.analysis ?? item.analysis,
-              status: "identified",
-              error: null,
-            }),
-          )
         } catch (identifyError) {
           patchLocal(item.id, {
             status: "failed",
@@ -645,6 +905,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   async function saveItem(item: PendingArtifact) {
+    if (isPersistedPendingItem(item)) {
+      return savePersistedPendingItem(item)
+    }
     return { ...item, updated_at: new Date().toISOString() }
   }
 
@@ -712,6 +975,31 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       const saved = await saveItem({ ...normalizedItem, status: "submitting", error: null })
       patchLocal(item.id, saved)
       const file = fileStoreRef.current.get(item.id)
+      if (!file && isPersistedPendingItem(normalizedItem)) {
+        const result = await fetchJson<PendingArtifactSubmitResult>(
+          `${apiBaseUrl}/api/batch/pending/${normalizedItem.id}/submit`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ skip_existing_match: sameArtifactDecision === "no" }),
+          },
+        )
+        const submittedItem = normalizePersistedPendingItem(apiBaseUrl, result.item)
+        patchLocal(normalizedItem.id, {
+          ...submittedItem,
+          status: "submitted",
+          error: null,
+        })
+        const submitText = result.duplicate_image_skipped
+          ? `「${submittedItem.name ?? submittedItem.file_name}」云端已存在相同图片，已跳过重复上传`
+          : `「${submittedItem.name ?? submittedItem.file_name}」已提交云端`
+        setMessage(submitText)
+        setSubmitNotice({
+          type: "success",
+          text: result.duplicate_image_detail ?? submitText,
+        })
+        return
+      }
       if (!file) {
         throw new Error("当前图片文件已丢失，请重新选择文件夹")
       }
@@ -766,6 +1054,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   async function handleDelete(id: number) {
     const current = items.find((item) => item.id === id)
     if (current) {
+      if (isPersistedPendingItem(current)) {
+        await fetchJson<unknown>(`${apiBaseUrl}/api/batch/pending/${id}`, { method: "DELETE" })
+      }
       releaseLocalImage(current)
     }
     setItems((drafts) => drafts.filter((item) => item.id !== id))
@@ -783,7 +1074,14 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       setError(null)
       setMessage(null)
       setSubmitNotice(null)
-      items.forEach((item) => releaseLocalImage(item))
+      await Promise.all(
+        items.map(async (item) => {
+          if (isPersistedPendingItem(item)) {
+            await fetchJson<unknown>(`${apiBaseUrl}/api/batch/pending/${item.id}`, { method: "DELETE" })
+          }
+          releaseLocalImage(item)
+        }),
+      )
       setItems([])
       setTagInputs({})
       setMuseumSuggestions({})
@@ -810,7 +1108,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         <span className="step-badge">B</span>
         <div>
           <h2>批量识别入库</h2>
-          <p className="muted">选择本地文件夹批量识图，逐条微调后提交到云端（图片入 OSS）。</p>
+          <p className="muted">支持本地文件夹或 Google Photos 导入，逐条识别、微调后提交到云端（图片入 OSS）。</p>
         </div>
       </div>
 
@@ -839,12 +1137,141 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         </div>
       </div>
 
+      <div className="field">
+        <span>Google Photos</span>
+        <div className="upload-actions">
+          <button
+            type="button"
+            className="picker-button"
+            onClick={() => void handleConnectGooglePhotos()}
+            disabled={
+              googlePhotosBusy ||
+              (googlePhotosStatus?.enabled === false) ||
+              (googlePhotosStatus?.auth_configured === false)
+            }
+          >
+            {googlePhotosBusy
+              ? "处理中…"
+              : googlePhotosStatus?.connected
+                ? "重新连接 Google Photos"
+                : "连接 Google Photos"}
+          </button>
+          {googlePhotosStatus?.connected ? (
+            <>
+              <select
+                aria-label="选择 Google Photos 相册"
+                value={googlePhotosAlbumId}
+                onChange={(event) => {
+                  const nextAlbumId = event.target.value
+                  setGooglePhotosAlbumId(nextAlbumId)
+                  setGooglePhotosSelectedIds([])
+                  void loadGooglePhotosMedia({ albumId: nextAlbumId })
+                }}
+                disabled={googlePhotosBusy || googlePhotosAlbums.length === 0}
+              >
+                {googlePhotosAlbums.map((album) => (
+                  <option key={album.id} value={album.id}>
+                    {album.title}
+                    {album.media_items_count != null ? ` (${album.media_items_count})` : ""}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => void loadGooglePhotosMedia({ albumId: googlePhotosAlbumId })}
+                disabled={googlePhotosBusy || !googlePhotosAlbumId}
+              >
+                刷新相册
+              </button>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void importGooglePhotosSelection()}
+                disabled={googlePhotosBusy || googlePhotosSelectedIds.length === 0}
+              >
+                {googlePhotosBusy ? "导入中…" : `导入所选图片（${googlePhotosSelectedIds.length}）`}
+              </button>
+            </>
+          ) : null}
+        </div>
+        <span className="field-help">
+          {googlePhotosStatus?.detail ??
+            "配置好 Google OAuth 后，可直接从本人 Google 相册中选图导入，再走现有识别和入库链路。"}
+        </span>
+        {googlePhotosStatus?.connected && googlePhotosMedia.length > 0 ? (
+          <>
+            <div className="tag-row">
+              {googlePhotosMedia.map((item) => {
+                const checked = googlePhotosSelectedIds.includes(item.id)
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={checked ? "tag-chip" : "ghost"}
+                    onClick={() =>
+                      setGooglePhotosSelectedIds((current) =>
+                        current.includes(item.id)
+                          ? current.filter((existingId) => existingId !== item.id)
+                          : [...current, item.id],
+                      )
+                    }
+                  >
+                    {checked ? "已选" : "选择"} · {item.filename}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="existing-artifact-gallery">
+              {googlePhotosMedia.map((item) => {
+                const checked = googlePhotosSelectedIds.includes(item.id)
+                return (
+                  <button
+                    key={`google-photo-${item.id}`}
+                    type="button"
+                    className={`existing-artifact-thumb ${checked ? "selected-action" : ""}`}
+                    onClick={() =>
+                      setGooglePhotosSelectedIds((current) =>
+                        current.includes(item.id)
+                          ? current.filter((existingId) => existingId !== item.id)
+                          : [...current, item.id],
+                      )
+                    }
+                    title={item.filename}
+                  >
+                    <img src={item.thumbnail_url ?? item.base_url} alt={item.filename} loading="lazy" />
+                  </button>
+                )
+              })}
+            </div>
+            {googlePhotosNextPageToken ? (
+              <div className="upload-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() =>
+                    void loadGooglePhotosMedia({
+                      albumId: googlePhotosAlbumId,
+                      pageToken: googlePhotosNextPageToken,
+                      append: true,
+                    })
+                  }
+                  disabled={googlePhotosBusy}
+                >
+                  加载更多
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+
       <div className="upload-actions">
         <button
           type="button"
           className="primary"
           onClick={() => void handleIdentifyAll([])}
-          disabled={identifying || pendingCount === 0}
+          disabled={identifying || googlePhotosBusy || pendingCount === 0}
         >
           {identifying ? "识别中…" : `开始识别（${pendingCount} 张待识别）`}
         </button>
@@ -852,7 +1279,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           type="button"
           className="ghost danger"
           onClick={() => void handleClearAll()}
-          disabled={identifying || scanning || items.length === 0}
+          disabled={identifying || scanning || googlePhotosBusy || items.length === 0}
         >
           全部清除
         </button>
@@ -870,7 +1297,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         <div className="empty-state">
           <span className="empty-icon">📁</span>
           <strong>暂无待处理图片</strong>
-          <p className="muted">点击上方按钮选择一个本地文件夹后开始扫描。</p>
+          <p className="muted">点击上方按钮选择本地文件夹，或连接 Google Photos 导入图片。</p>
         </div>
       ) : null}
 

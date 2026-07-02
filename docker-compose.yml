@@ -56,7 +56,9 @@ services:
     volumes:
       - ./backend:/app
       - ./data:/data
-      # Mount the directory of local images to import; scan it as /data/import in the UI.
+      # Optional bind mount for a local image root. The current UI mainly uses
+      # browser-side folder upload (/api/batch/scan-files), but keeping /data/import
+      # mounted is still useful for manual scans or scripted imports.
       - ${IMPORT_DIR:-./import}:/data/import:ro
     ports:
       - "8000:8000"
@@ -72,6 +74,10 @@ services:
       - .env
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    # Frontend entry points now cover:
+    # 1) local folder upload -> sync to pending_artifacts
+    # 2) Google Photos auth / album browse / import
+    # 3) review -> identify -> submit to cloud
     command: sh -c "npm install && npm run dev:identify"
     volumes:
       - ./frontend:/app

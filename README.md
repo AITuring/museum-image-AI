@@ -159,34 +159,83 @@ WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011
 - 网页端 DOM 变化时，抓取可能失效：可调 `QWEN_WEB_ANSWER_SELECTOR`，或更新 `web_bridge.py` 里的输入框/发送按钮选择器。
 - 网页桥上传前会在内存/临时文件中自动压缩超过 `WEB_UPLOAD_MAX_FILE_BYTES` 的大图，以适配通义网页端限制；压缩会尽量把结果控制在 `WEB_UPLOAD_TARGET_MIN_FILE_BYTES` 到 `WEB_UPLOAD_TARGET_MAX_FILE_BYTES` 之间，并限制最长边不超过 `WEB_UPLOAD_MAX_DIMENSION`。这不会修改本地原图，也不会影响后续提交到 OSS 的原始图片字节。
 
-## 批量识别入库（本地 → 云端 OSS）
+## 批量识别入库（本地同步 / Google Photos 同步 → 云端 OSS）
 
-面向「本地有大量图片，批量识别后入云端库」的工作流。两个角色共用同一套代码，靠 `APP_ROLE` 与环境变量区分：
+面向「本地有大量图片，或需要从 Google Photos 拉图，再批量识别并入云端库」的工作流。两个角色共用同一套代码，靠 `APP_ROLE` 与环境变量区分：
 
 ```
 本地机器 (APP_ROLE=local)                         阿里云服务器 (APP_ROLE=cloud)
-- 选目录递归扫描图片                               - POST /api/ingest/artifacts (Bearer 鉴权)
-- 顺序经通义网页桥识别                  ──HTTPS──▶   - 图片存阿里云 OSS，元数据入云端 Postgres
-- 结果存本地 Postgres「待审核」表                   - GET /api/artifacts ... 供检索查询
+- 本地文件夹上传 / Google Photos 同步              - POST /api/ingest/artifacts (Bearer 鉴权)
+- 图片统一进入本地 Postgres「待处理」表   ──HTTPS──▶   - 图片存阿里云 OSS，元数据入云端 Postgres
+- 顺序经通义网页桥识别                              - GET /api/artifacts ... 供检索查询
 - 逐条人工改表单 → 提交（图片+元数据发云端）
 ```
 
 ### 流程
 
-1. 本地：在前端「批量入库」标签页填入要扫描的目录（容器内路径，默认挂载点 `/data/import`），点「扫描目录」。后端递归找出图片、按文件 hash 去重，写入 `pending_artifacts` 暂存表。
-2. 本地：点「开始识别」，后端按顺序把每张图喂给通义网页桥（一次一个会话，约 30–60s/张），实时回填名称/年代/馆藏/标签/描述。
-3. 本地：逐条核对、修改表单，点「提交云端」。本地把图片字节 + 元数据 POST 到云端 `/api/ingest/artifacts`；云端把图片传 OSS、元数据写云库，返回 artifact id。
-4. 检索：直接查云端 `GET /api/artifacts` / `/api/artifact-images`。
+1. 本地：在前端「批量识别入库」页选择一种入口。
+   - 本地文件夹：点「选择文件夹并上传」，浏览器把图片发给后端 `/api/batch/scan-files`。
+   - Google Photos：点「连接 Google Photos」并授权后，选择相册和图片，调用 `/api/google-photos/import`。
+2. 本地：后端按图片内容 hash 去重，把新增图片统一写入 `pending_artifacts` 暂存表。
+3. 本地：点「开始识别」，后端按顺序把每张图喂给通义网页桥（一次一个会话，约 30–60s/张），实时回填名称/年代/馆藏/标签/描述。
+4. 本地：逐条核对、修改表单，点「提交云端」。本地把图片字节 + 元数据 POST 到云端 `/api/ingest/artifacts`；云端把图片传 OSS、元数据写云库。
+5. 如果某张图之前已经成功入过云端，云端会按图片 hash 识别为重复图片并直接跳过，不会因为重复上传中断流程。
+6. 检索：直接查云端 `GET /api/artifacts` / `/api/artifact-images`。
 
 ### 本地侧配置（`.env`）
 
 ```bash
 APP_ROLE=local
-IMPORT_DIR=/abs/path/to/your/images   # 会被挂载到容器内 /data/import
+IMPORT_DIR=/abs/path/to/your/images   # 仅用于挂载本地图库到容器；当前前端本地上传不再依赖手填路径
 QWEN_WEB_ENABLED=true                  # 见上一节，需先登录
 CLOUD_API_BASE_URL=https://your-aliyun-server   # 云端地址
 INGEST_TOKEN=<一段随机长字符串>        # 与云端保持一致
 ```
+
+### 本地上传 / Google Photos 同步
+
+前端「批量识别入库」页现在有两个并列入口：
+
+- 本地上传：从浏览器直接选择本地文件夹，后端接收图片后按 hash 去重，写入 `pending_artifacts`。
+- Google Photos 同步：授权后读取你的 Google 相册，下载所选原图后按 hash 去重，写入 `pending_artifacts`。
+
+两条入口在“进入待处理池”之后完全共用后续链路：识别、人工确认、提交云端、重复上传跳过。
+
+### 从 Google Photos 导入
+
+适用于你自己的 Google 相册图片，导入后会直接进入本地 `pending_artifacts` 暂存表，再继续走现有的「识别 -> 人工核对 -> 提交云端」链路。
+
+#### 1）Google Cloud Console 配置 OAuth
+
+- 创建一个 OAuth Client（Web application）。
+- Authorized redirect URI 填你本地后端回调地址，例如：
+
+```text
+http://localhost:8000/api/google-photos/callback
+```
+
+#### 2）本地 `.env` 增加
+
+```bash
+GOOGLE_PHOTOS_CLIENT_ID=...
+GOOGLE_PHOTOS_CLIENT_SECRET=...
+GOOGLE_PHOTOS_REDIRECT_URI=http://localhost:8000/api/google-photos/callback
+GOOGLE_PHOTOS_TOKEN_PATH=/data/google_photos_token.json
+```
+
+#### 3）前端操作
+
+- 打开「批量识别入库」页。
+- 点「连接 Google Photos」，在弹窗里完成 Google 授权。
+- 选择相册、勾选图片、点「导入所选图片」。
+- 导入后的图片会进入当前批量列表，可直接继续点「开始识别」。
+
+#### 4）实现方式
+
+- 后端通过 Google Photos Library API 读取相册和媒体项。
+- 导入时会下载原图字节，按文件 hash 去重，写入 `pending_artifacts.image_blob`。
+- 后续识别时，Google Photos 导入项不再依赖浏览器本地文件，而是直接走后端暂存记录。
+- 如果后面再次导入同一张图，`pending_artifacts` 会先按 hash 跳过；即使后续再次提交到云端，云端也会再次按 hash 做幂等跳过。
 
 ### 云端侧配置（阿里云服务器 `.env`）
 
@@ -235,14 +284,87 @@ docker compose -f docker-compose.cloud.yml up -d --build
 
 ### 接口一览
 
-- 本地：`POST /api/batch/scan`、`POST /api/batch/identify/stream`(SSE)、`GET /api/batch/pending`、`GET /api/batch/pending/{id}/image`、`PATCH /api/batch/pending/{id}`、`POST /api/batch/pending/{id}/submit`、`DELETE /api/batch/pending/{id}`
+- 本地：`POST /api/batch/scan`、`POST /api/batch/scan-files`、`POST /api/batch/identify/stream`(SSE)、`GET /api/batch/pending`、`GET /api/batch/pending/{id}/image`、`PATCH /api/batch/pending/{id}`、`POST /api/batch/pending/{id}/submit`、`DELETE /api/batch/pending/{id}`、`GET /api/google-photos/status`、`GET /api/google-photos/albums`、`GET /api/google-photos/media-items`、`POST /api/google-photos/import`
 - 云端：`POST /api/ingest/artifacts`（multipart：image + museum_name/name/era/description/tags，Bearer 鉴权）
 
 ### 注意
 
 - `pending_artifacts` 是**本地暂存表**，不要部署到云端使用；它支持断点续跑（重扫同目录按 hash 去重）。
+- 云端 `artifact_images.image_hash` 也会做一层幂等保护；同一张图再次提交时会被识别为重复图片并跳过，不会报错中断。
 - 批量识别串行且慢（网页桥一次一个会话），属预期；可分批跑。
 - 原图通过后端 `GET /api/batch/pending/{id}/image` 提供给前端预览（直接读本地源文件，不复制）。
+
+## 联调命令
+
+下面这套命令按“本地 Docker + 可选 Google Photos + 重复上传验证”来走，适合第一次真实联调。
+
+### 1）准备 `.env`
+
+```bash
+cp .env.example .env
+```
+
+最少要填：
+
+```bash
+QWEN_WEB_ENABLED=true
+CLOUD_API_BASE_URL=https://your-cloud-api
+INGEST_TOKEN=your-shared-token
+```
+
+如果要测 Google Photos，再补：
+
+```bash
+GOOGLE_PHOTOS_CLIENT_ID=...
+GOOGLE_PHOTOS_CLIENT_SECRET=...
+GOOGLE_PHOTOS_REDIRECT_URI=http://localhost:8000/api/google-photos/callback
+```
+
+### 2）检查 compose 配置
+
+```bash
+docker compose config
+```
+
+### 3）启动本地 Docker
+
+```bash
+docker compose up --build
+```
+
+### 4）确认后端在线
+
+```bash
+curl http://localhost:8000/api/health
+```
+
+### 5）确认 Google Photos 配置状态
+
+```bash
+curl http://localhost:8000/api/google-photos/status
+```
+
+### 6）从浏览器做真实联调
+
+- 打开 `http://localhost:5173`
+- 进入「批量识别入库」
+- 测本地上传：选择一个包含几张图片的文件夹
+- 测 Google Photos：点「连接 Google Photos」，完成授权后选择相册和图片同步
+- 点「开始识别」
+- 核对后点「提交云端」
+
+### 7）验证待处理池是否落库
+
+```bash
+curl http://localhost:8000/api/batch/pending
+```
+
+### 8）验证重复上传是否跳过
+
+同一批图片再次执行一遍本地上传或 Google Photos 同步，然后再次提交，预期结果：
+
+- 本地待处理池阶段：相同图片按 hash 被跳过，不会重复新增。
+- 云端提交阶段：如果图片之前已经入过云端，前端提示“已存在相同图片，已跳过重复上传”。
 
 ## Planned Next Steps
 

@@ -154,6 +154,8 @@ class ArtifactRead(BaseModel):
         default_factory=list,
         validation_alias=AliasChoices("exhibition_records", "exhibitions"),
     )
+    duplicate_image_skipped: bool = False
+    duplicate_image_detail: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -239,6 +241,54 @@ class WebBridgeLoginStartRead(BaseModel):
     login_command: str | None = None
 
 
+class GooglePhotosStatusRead(BaseModel):
+    enabled: bool
+    auth_configured: bool
+    connected: bool
+    detail: str | None = None
+
+
+class GooglePhotosAuthStartRead(BaseModel):
+    auth_url: str
+
+
+class GooglePhotosAlbumRead(BaseModel):
+    id: str
+    title: str
+    media_items_count: int | None = None
+    cover_photo_base_url: str | None = None
+    cover_photo_url: str | None = None
+    is_writeable: bool | None = None
+
+
+class GooglePhotosMediaItemRead(BaseModel):
+    id: str
+    filename: str
+    base_url: str
+    product_url: str | None = None
+    mime_type: str | None = None
+    width: int | None = None
+    height: int | None = None
+    creation_time: datetime | None = None
+    thumbnail_url: str | None = None
+
+
+class GooglePhotosMediaListRead(BaseModel):
+    items: list[GooglePhotosMediaItemRead] = Field(default_factory=list)
+    next_page_token: str | None = None
+
+
+class GooglePhotosImportRequest(BaseModel):
+    media_item_ids: list[str] = Field(default_factory=list)
+
+
+class GooglePhotosImportRead(BaseModel):
+    imported: int
+    skipped: int
+    warnings: list[str] = Field(default_factory=list)
+    items: list["PendingArtifactRead"] = Field(default_factory=list)
+
+
 # ── Batch identification (local side) ────────────────────────────────────────────
 
 
@@ -315,3 +365,9 @@ class BatchIdentifyRequest(BaseModel):
 
 class PendingArtifactSubmitRequest(BaseModel):
     skip_existing_match: bool = False
+
+
+class PendingArtifactSubmitResult(BaseModel):
+    item: PendingArtifactRead
+    duplicate_image_skipped: bool = False
+    duplicate_image_detail: str | None = None

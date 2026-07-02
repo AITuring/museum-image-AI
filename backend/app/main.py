@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
@@ -22,6 +22,16 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import settings
 from app.db import Base, SessionLocal, engine, get_db
 from app.exif_utils import extract_exif_metadata
+from app.google_photos import (
+    build_google_photos_auth_url,
+    build_google_photos_status,
+    download_google_photos_image,
+    exchange_google_photos_code,
+    get_google_photos_media_item,
+    google_photos_enabled,
+    list_google_photos_albums,
+    list_google_photos_media_items,
+)
 from app.models import (
     Artifact,
     ArtifactExhibition,
@@ -49,11 +59,18 @@ from app.schemas import (
     EraOptionRead,
     ExhibitionCreate,
     ExhibitionRead,
+    GooglePhotosAlbumRead,
+    GooglePhotosAuthStartRead,
+    GooglePhotosImportRead,
+    GooglePhotosImportRequest,
+    GooglePhotosMediaListRead,
+    GooglePhotosStatusRead,
     HealthRead,
     MuseumCreate,
     MuseumRead,
     MuseumUpdate,
     PendingArtifactRead,
+    PendingArtifactSubmitResult,
     PendingArtifactSubmitRequest,
     PendingArtifactUpdate,
     WebBridgeLoginStartRead,
@@ -732,6 +749,33 @@ def build_duplicate_image_detail(image: ArtifactImage | ArtifactImageRead) -> st
     return f"这张图片已存在于文物「{image.artifact_name}」{suffix}，不能重复上传。"
 
 
+def build_duplicate_artifact_read(image: ArtifactImage | ArtifactImageRead) -> ArtifactRead:
+    detail = build_duplicate_image_detail(image)
+    if isinstance(image, ArtifactImageRead):
+        artifact = ArtifactRead(
+            id=image.artifact_id,
+            museum_id=0,
+            name=image.artifact_name,
+            era=image.era,
+            description=None,
+            created_at=image.created_at,
+            museum_name=image.museum_name,
+            tags=[],
+            images=[image],
+            exhibitions=[],
+            duplicate_image_skipped=True,
+            duplicate_image_detail=detail,
+        )
+        return artifact
+    artifact = ArtifactRead.model_validate(image.artifact)
+    return artifact.model_copy(
+        update={
+            "duplicate_image_skipped": True,
+            "duplicate_image_detail": detail,
+        }
+    )
+
+
 def extract_http_error_detail(response: httpx.Response) -> str:
     try:
         payload = response.json()
@@ -987,6 +1031,48 @@ def pending_artifact_image_bytes(row: PendingArtifact) -> tuple[bytes, str]:
 
 def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+def build_google_photos_callback_html(success: bool, message: str) -> str:
+    payload = json.dumps(
+        {
+            "source": "google-photos-oauth",
+            "success": success,
+            "message": message,
+        },
+        ensure_ascii=False,
+    )
+    title = "Google Photos 已连接" if success else "Google Photos 连接失败"
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>{title}</title>
+    <style>
+      body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px; background: #f8f7f2; color: #2c241c; }}
+      .card {{ max-width: 520px; margin: 40px auto; padding: 24px; background: #fff; border-radius: 16px; box-shadow: 0 12px 32px rgba(54, 39, 19, 0.08); }}
+      h1 {{ margin: 0 0 12px; font-size: 22px; }}
+      p {{ margin: 0; line-height: 1.6; }}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>{title}</h1>
+      <p>{message}</p>
+    </div>
+    <script>
+      const payload = {payload};
+      try {{
+        if (window.opener && !window.opener.closed) {{
+          window.opener.postMessage(payload, "*");
+        }}
+      }} catch (_error) {{
+        // Ignore postMessage cross-window failures and still try to close the popup.
+      }}
+      setTimeout(() => window.close(), 800);
+    </script>
+  </body>
+</html>"""
 
 
 def should_proxy_artifact_queries_to_cloud() -> bool:
@@ -1288,6 +1374,148 @@ async def upload_images(
     return uploaded_images
 
 
+@app.get(
+    f"{settings.api_prefix}/google-photos/status",
+    response_model=GooglePhotosStatusRead,
+)
+def google_photos_status() -> GooglePhotosStatusRead:
+    return build_google_photos_status()
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/auth/start",
+    response_model=GooglePhotosAuthStartRead,
+)
+def google_photos_auth_start() -> GooglePhotosAuthStartRead:
+    return GooglePhotosAuthStartRead(auth_url=build_google_photos_auth_url())
+
+
+@app.get(f"{settings.api_prefix}/google-photos/callback", response_class=HTMLResponse)
+def google_photos_auth_callback(
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+) -> HTMLResponse:
+    if error:
+        return HTMLResponse(
+            build_google_photos_callback_html(False, f"Google 授权被取消或失败：{error}"),
+            status_code=400,
+        )
+    if not code:
+        return HTMLResponse(
+            build_google_photos_callback_html(False, "Google 授权回调缺少 code。"),
+            status_code=400,
+        )
+    try:
+        exchange_google_photos_code(code, state)
+    except HTTPException as exc:
+        return HTMLResponse(
+            build_google_photos_callback_html(False, str(exc.detail)),
+            status_code=exc.status_code,
+        )
+    return HTMLResponse(build_google_photos_callback_html(True, "Google Photos 已连接，可以回到批量入库页继续导入图片。"))
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/albums",
+    response_model=list[GooglePhotosAlbumRead],
+)
+def google_photos_albums(
+    page_size: int = Query(default=50, ge=1, le=50),
+    page_token: str | None = Query(default=None),
+) -> list[GooglePhotosAlbumRead]:
+    albums, _ = list_google_photos_albums(page_size=page_size, page_token=page_token)
+    return albums
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/media-items",
+    response_model=GooglePhotosMediaListRead,
+)
+def google_photos_media_items(
+    album_id: str | None = Query(default=None),
+    page_size: int = Query(default=60, ge=1, le=100),
+    page_token: str | None = Query(default=None),
+) -> GooglePhotosMediaListRead:
+    return list_google_photos_media_items(
+        album_id=optional_text(album_id),
+        page_size=page_size,
+        page_token=optional_text(page_token),
+    )
+
+
+@app.post(
+    f"{settings.api_prefix}/google-photos/import",
+    response_model=GooglePhotosImportRead,
+)
+def google_photos_import(
+    payload: GooglePhotosImportRequest,
+    db: Session = Depends(get_db),
+) -> GooglePhotosImportRead:
+    if not google_photos_enabled():
+        raise HTTPException(status_code=400, detail="当前环境不支持 Google Photos 导入。")
+    media_item_ids = [item.strip() for item in payload.media_item_ids if item.strip()]
+    if not media_item_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一张 Google Photos 图片。")
+
+    imported = 0
+    skipped = 0
+    warnings: list[str] = []
+    imported_ids: list[int] = []
+
+    for media_item_id in media_item_ids:
+        media_item = get_google_photos_media_item(media_item_id)
+        mime_type = (media_item.mime_type or "").lower()
+        if not mime_type.startswith("image/"):
+            skipped += 1
+            warnings.append(f"{media_item.filename} 不是图片，已跳过。")
+            continue
+        contents = download_google_photos_image(media_item)
+        if not contents:
+            skipped += 1
+            warnings.append(f"{media_item.filename} 下载为空，已跳过。")
+            continue
+        file_hash = hash_bytes(contents)
+        metadata = build_image_metadata(
+            image_bytes=contents,
+            captured_at=media_item.creation_time.isoformat() if media_item.creation_time else None,
+        )
+        created = register_pending_artifact(
+            db,
+            file_hash=file_hash,
+            source_path=f"google_photos:{media_item.id}",
+            file_name=media_item.filename,
+            image_blob=contents,
+            image_mime_type=media_item.mime_type or "image/jpeg",
+            metadata=metadata,
+        )
+        if not created:
+            skipped += 1
+            warnings.append(f"{media_item.filename} 已在待处理列表中，已跳过。")
+            continue
+        imported += 1
+        row = db.scalar(select(PendingArtifact).where(PendingArtifact.file_hash == file_hash))
+        if row is not None:
+            imported_ids.append(row.id)
+
+    db.commit()
+    imported_rows = []
+    if imported_ids:
+        imported_rows = list(
+            db.scalars(
+                select(PendingArtifact)
+                .where(PendingArtifact.id.in_(imported_ids))
+                .order_by(PendingArtifact.created_at.desc())
+            )
+        )
+    return GooglePhotosImportRead(
+        imported=imported,
+        skipped=skipped,
+        warnings=warnings,
+        items=[PendingArtifactRead.model_validate(row) for row in imported_rows],
+    )
+
+
 @app.delete(f"{settings.api_prefix}/uploads/images", status_code=204)
 def delete_uploaded_image(url: str = Query(..., min_length=1)) -> None:
     path = resolve_uploaded_file_path(url)
@@ -1336,7 +1564,7 @@ async def ingest_artifact(
     image_hash = hash_bytes(contents)
     duplicate_image = find_artifact_image_by_hash_local(db, image_hash)
     if duplicate_image is not None:
-        raise HTTPException(status_code=409, detail=build_duplicate_image_detail(duplicate_image))
+        return build_duplicate_artifact_read(duplicate_image)
 
     image_metadata = build_image_metadata(
         image_bytes=contents,
@@ -1759,13 +1987,13 @@ async def batch_identify_stream(payload: BatchIdentifyRequest) -> StreamingRespo
 
 @app.post(
     f"{settings.api_prefix}/batch/pending/{{pending_id}}/submit",
-    response_model=PendingArtifactRead,
+    response_model=PendingArtifactSubmitResult,
 )
 async def submit_pending(
     pending_id: int,
     payload: PendingArtifactSubmitRequest | None = None,
     db: Session = Depends(get_db),
-) -> PendingArtifact:
+) -> PendingArtifactSubmitResult:
     if not settings.cloud_api_base_url:
         raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
 
@@ -1839,7 +2067,11 @@ async def submit_pending(
     row.status = "submitted"
     db.commit()
     db.refresh(row)
-    return row
+    return PendingArtifactSubmitResult(
+        item=PendingArtifactRead.model_validate(row),
+        duplicate_image_skipped=bool(created.get("duplicate_image_skipped")),
+        duplicate_image_detail=created.get("duplicate_image_detail"),
+    )
 
 
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])
