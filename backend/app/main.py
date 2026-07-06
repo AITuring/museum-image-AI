@@ -25,12 +25,17 @@ from app.exif_utils import extract_exif_metadata
 from app.google_photos import (
     build_google_photos_auth_url,
     build_google_photos_status,
+    clear_google_photos_token,
+    create_google_photos_picker_session,
+    current_google_photos_config,
+    delete_google_photos_picker_session,
     download_google_photos_image,
     exchange_google_photos_code,
-    get_google_photos_media_item,
+    get_google_photos_media_items_by_ids,
+    get_google_photos_picker_session,
     google_photos_enabled,
-    list_google_photos_albums,
     list_google_photos_media_items,
+    save_google_photos_config,
 )
 from app.models import (
     Artifact,
@@ -59,11 +64,14 @@ from app.schemas import (
     EraOptionRead,
     ExhibitionCreate,
     ExhibitionRead,
-    GooglePhotosAlbumRead,
     GooglePhotosAuthStartRead,
+    GooglePhotosConfigRead,
+    GooglePhotosConfigUpdate,
     GooglePhotosImportRead,
     GooglePhotosImportRequest,
     GooglePhotosMediaListRead,
+    GooglePhotosPickerSessionCreate,
+    GooglePhotosPickerSessionRead,
     GooglePhotosStatusRead,
     HealthRead,
     MuseumCreate,
@@ -986,23 +994,23 @@ def register_pending_artifact(
     image_blob: bytes | None = None,
     image_mime_type: str | None = None,
     metadata: dict[str, object | None] | None = None,
-) -> bool:
+) -> PendingArtifact | None:
     existing = db.scalar(select(PendingArtifact).where(PendingArtifact.file_hash == file_hash))
     if existing is not None:
-        return False
-    db.add(
-        PendingArtifact(
-            source_path=source_path,
-            file_hash=file_hash,
-            file_name=file_name,
-            image_blob=image_blob,
-            image_mime_type=image_mime_type,
-            status="pending",
-            tags=[],
-            **(metadata or {}),
-        )
+        return None
+    row = PendingArtifact(
+        source_path=source_path,
+        file_hash=file_hash,
+        file_name=file_name,
+        image_blob=image_blob,
+        image_mime_type=image_mime_type,
+        status="pending",
+        tags=[],
+        **(metadata or {}),
     )
-    return True
+    db.add(row)
+    db.flush()
+    return row
 
 
 def materialize_pending_artifact_image(row: PendingArtifact) -> tuple[Path, Path | None]:
@@ -1383,6 +1391,30 @@ def google_photos_status() -> GooglePhotosStatusRead:
 
 
 @app.get(
+    f"{settings.api_prefix}/google-photos/config",
+    response_model=GooglePhotosConfigRead,
+)
+def google_photos_config() -> GooglePhotosConfigRead:
+    return current_google_photos_config()
+
+
+@app.put(
+    f"{settings.api_prefix}/google-photos/config",
+    response_model=GooglePhotosConfigRead,
+)
+def update_google_photos_config(payload: GooglePhotosConfigUpdate) -> GooglePhotosConfigRead:
+    return save_google_photos_config(payload)
+
+
+@app.delete(
+    f"{settings.api_prefix}/google-photos/token",
+    response_model=GooglePhotosStatusRead,
+)
+def delete_google_photos_token() -> GooglePhotosStatusRead:
+    return clear_google_photos_token()
+
+
+@app.get(
     f"{settings.api_prefix}/google-photos/auth/start",
     response_model=GooglePhotosAuthStartRead,
 )
@@ -1416,29 +1448,46 @@ def google_photos_auth_callback(
     return HTMLResponse(build_google_photos_callback_html(True, "Google Photos 已连接，可以回到批量入库页继续导入图片。"))
 
 
-@app.get(
-    f"{settings.api_prefix}/google-photos/albums",
-    response_model=list[GooglePhotosAlbumRead],
+@app.post(
+    f"{settings.api_prefix}/google-photos/picker/sessions",
+    response_model=GooglePhotosPickerSessionRead,
 )
-def google_photos_albums(
-    page_size: int = Query(default=50, ge=1, le=50),
-    page_token: str | None = Query(default=None),
-) -> list[GooglePhotosAlbumRead]:
-    albums, _ = list_google_photos_albums(page_size=page_size, page_token=page_token)
-    return albums
+def google_photos_picker_session_create(
+    payload: GooglePhotosPickerSessionCreate,
+) -> GooglePhotosPickerSessionRead:
+    return create_google_photos_picker_session(payload)
 
 
 @app.get(
-    f"{settings.api_prefix}/google-photos/media-items",
+    f"{settings.api_prefix}/google-photos/picker/sessions/{{session_id}}",
+    response_model=GooglePhotosPickerSessionRead,
+)
+def google_photos_picker_session_get(session_id: str) -> GooglePhotosPickerSessionRead:
+    normalized = session_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Google Photos Picker session_id 不能为空。")
+    return get_google_photos_picker_session(normalized)
+
+
+@app.delete(f"{settings.api_prefix}/google-photos/picker/sessions/{{session_id}}", status_code=204)
+def google_photos_picker_session_delete(session_id: str) -> None:
+    normalized = session_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Google Photos Picker session_id 不能为空。")
+    delete_google_photos_picker_session(normalized)
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/picker/media-items",
     response_model=GooglePhotosMediaListRead,
 )
-def google_photos_media_items(
-    album_id: str | None = Query(default=None),
-    page_size: int = Query(default=60, ge=1, le=100),
+def google_photos_picker_media_items(
+    session_id: str = Query(..., min_length=1),
+    page_size: int = Query(default=100, ge=1, le=100),
     page_token: str | None = Query(default=None),
 ) -> GooglePhotosMediaListRead:
     return list_google_photos_media_items(
-        album_id=optional_text(album_id),
+        session_id=session_id.strip(),
         page_size=page_size,
         page_token=optional_text(page_token),
     )
@@ -1454,6 +1503,9 @@ def google_photos_import(
 ) -> GooglePhotosImportRead:
     if not google_photos_enabled():
         raise HTTPException(status_code=400, detail="当前环境不支持 Google Photos 导入。")
+    session_id = payload.session_id.strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Google Photos Picker session_id 不能为空。")
     media_item_ids = [item.strip() for item in payload.media_item_ids if item.strip()]
     if not media_item_ids:
         raise HTTPException(status_code=400, detail="请至少选择一张 Google Photos 图片。")
@@ -1463,8 +1515,12 @@ def google_photos_import(
     warnings: list[str] = []
     imported_ids: list[int] = []
 
-    for media_item_id in media_item_ids:
-        media_item = get_google_photos_media_item(media_item_id)
+    media_items = get_google_photos_media_items_by_ids(
+        session_id=session_id,
+        media_item_ids=media_item_ids,
+    )
+
+    for media_item in media_items:
         mime_type = (media_item.mime_type or "").lower()
         if not mime_type.startswith("image/"):
             skipped += 1
@@ -1494,11 +1550,13 @@ def google_photos_import(
             warnings.append(f"{media_item.filename} 已在待处理列表中，已跳过。")
             continue
         imported += 1
-        row = db.scalar(select(PendingArtifact).where(PendingArtifact.file_hash == file_hash))
-        if row is not None:
-            imported_ids.append(row.id)
+        imported_ids.append(created.id)
 
     db.commit()
+    try:
+        delete_google_photos_picker_session(session_id)
+    except HTTPException:
+        pass
     imported_rows = []
     if imported_ids:
         imported_rows = list(

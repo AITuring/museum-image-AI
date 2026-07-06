@@ -248,17 +248,33 @@ class GooglePhotosStatusRead(BaseModel):
     detail: str | None = None
 
 
+class GooglePhotosConfigRead(BaseModel):
+    client_id: str = ""
+    redirect_uri: str = ""
+    has_client_secret: bool = False
+
+
+class GooglePhotosConfigUpdate(BaseModel):
+    client_id: str
+    client_secret: str
+    redirect_uri: str
+
+
 class GooglePhotosAuthStartRead(BaseModel):
     auth_url: str
 
 
-class GooglePhotosAlbumRead(BaseModel):
+class GooglePhotosPickerSessionCreate(BaseModel):
+    max_item_count: int = Field(default=200, ge=1, le=2000)
+
+
+class GooglePhotosPickerSessionRead(BaseModel):
     id: str
-    title: str
-    media_items_count: int | None = None
-    cover_photo_base_url: str | None = None
-    cover_photo_url: str | None = None
-    is_writeable: bool | None = None
+    picker_uri: str
+    media_items_set: bool = False
+    poll_interval_ms: int | None = None
+    timeout_in_ms: int | None = None
+    expire_time: datetime | None = None
 
 
 class GooglePhotosMediaItemRead(BaseModel):
@@ -279,6 +295,7 @@ class GooglePhotosMediaListRead(BaseModel):
 
 
 class GooglePhotosImportRequest(BaseModel):
+    session_id: str
     media_item_ids: list[str] = Field(default_factory=list)
 
 

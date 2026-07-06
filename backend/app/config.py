@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     google_photos_client_id: str = ""
     google_photos_client_secret: str = ""
     google_photos_redirect_uri: str = ""
+    google_photos_config_path: str = "/data/google_photos_config.json"
     google_photos_token_path: str = "/data/google_photos_token.json"
 
     # Downscale local images before sending to the model (longest side, px). 0 disables.

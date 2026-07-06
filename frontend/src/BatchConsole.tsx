@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 
 type PendingArtifact = {
   id: number
@@ -124,13 +125,19 @@ type GooglePhotosStatus = {
   detail: string | null
 }
 
-type GooglePhotosAlbum = {
+type GooglePhotosConfig = {
+  client_id: string
+  redirect_uri: string
+  has_client_secret: boolean
+}
+
+type GooglePhotosPickerSession = {
   id: string
-  title: string
-  media_items_count: number | null
-  cover_photo_base_url: string | null
-  cover_photo_url: string | null
-  is_writeable: boolean | null
+  picker_uri: string
+  media_items_set: boolean
+  poll_interval_ms: number | null
+  timeout_in_ms: number | null
+  expire_time: string | null
 }
 
 type GooglePhotosMediaItem = {
@@ -288,8 +295,13 @@ function needsSelection(value: string | null | undefined) {
 export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [items, setItems] = useState<PendingArtifact[]>([])
   const [googlePhotosStatus, setGooglePhotosStatus] = useState<GooglePhotosStatus | null>(null)
-  const [googlePhotosAlbums, setGooglePhotosAlbums] = useState<GooglePhotosAlbum[]>([])
-  const [googlePhotosAlbumId, setGooglePhotosAlbumId] = useState("")
+  const [showGooglePhotosConfigModal, setShowGooglePhotosConfigModal] = useState(false)
+  const [googlePhotosConfigForm, setGooglePhotosConfigForm] = useState({
+    clientId: "",
+    clientSecret: "",
+    redirectUri: "",
+  })
+  const [googlePhotosSession, setGooglePhotosSession] = useState<GooglePhotosPickerSession | null>(null)
   const [googlePhotosMedia, setGooglePhotosMedia] = useState<GooglePhotosMediaItem[]>([])
   const [googlePhotosSelectedIds, setGooglePhotosSelectedIds] = useState<string[]>([])
   const [googlePhotosNextPageToken, setGooglePhotosNextPageToken] = useState<string | null>(null)
@@ -346,27 +358,78 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }
 
-  async function loadGooglePhotosAlbums() {
-    const albums = await fetchJson<GooglePhotosAlbum[]>(`${apiBaseUrl}/api/google-photos/albums?page_size=50`)
-    setGooglePhotosAlbums(albums)
-    return albums
-  }
-
-  async function loadGooglePhotosMedia(options?: { albumId?: string; pageToken?: string | null; append?: boolean }) {
-    const params = new URLSearchParams({ page_size: "60" })
-    const albumId = options?.albumId ?? googlePhotosAlbumId
-    if (albumId) {
-      params.set("album_id", albumId)
+  async function loadGooglePhotosMedia(options?: { sessionId?: string; pageToken?: string | null; append?: boolean }) {
+    const sessionId = options?.sessionId ?? googlePhotosSession?.id ?? ""
+    if (!sessionId) {
+      setGooglePhotosMedia([])
+      setGooglePhotosNextPageToken(null)
+      return { items: [], next_page_token: null } satisfies GooglePhotosMediaList
     }
+    const params = new URLSearchParams({
+      session_id: sessionId,
+      page_size: "100",
+    })
     if (options?.pageToken) {
       params.set("page_token", options.pageToken)
     }
     const payload = await fetchJson<GooglePhotosMediaList>(
-      `${apiBaseUrl}/api/google-photos/media-items?${params.toString()}`,
+      `${apiBaseUrl}/api/google-photos/picker/media-items?${params.toString()}`,
     )
     setGooglePhotosMedia((current) => (options?.append ? [...current, ...payload.items] : payload.items))
     setGooglePhotosNextPageToken(payload.next_page_token)
     return payload
+  }
+
+  async function openGooglePhotosConfigModal() {
+    setError(null)
+    setMessage(null)
+    try {
+      const config = await fetchJson<GooglePhotosConfig>(`${apiBaseUrl}/api/google-photos/config`)
+      setGooglePhotosConfigForm({
+        clientId: config.client_id ?? "",
+        clientSecret: "",
+        redirectUri: config.redirect_uri || `${apiBaseUrl}/api/google-photos/callback`,
+      })
+    } catch {
+      setGooglePhotosConfigForm({
+        clientId: "",
+        clientSecret: "",
+        redirectUri: `${apiBaseUrl}/api/google-photos/callback`,
+      })
+    }
+    setShowGooglePhotosConfigModal(true)
+  }
+
+  async function createGooglePhotosPickerSession() {
+    const payload = await fetchJson<GooglePhotosPickerSession>(`${apiBaseUrl}/api/google-photos/picker/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_item_count: 200 }),
+    })
+    setGooglePhotosSession(payload)
+    setGooglePhotosMedia([])
+    setGooglePhotosSelectedIds([])
+    setGooglePhotosNextPageToken(null)
+    return payload
+  }
+
+  async function pollGooglePhotosSession(sessionId: string) {
+    const startedAt = Date.now()
+    while (true) {
+      const session = await fetchJson<GooglePhotosPickerSession>(
+        `${apiBaseUrl}/api/google-photos/picker/sessions/${encodeURIComponent(sessionId)}`,
+      )
+      setGooglePhotosSession(session)
+      if (session.media_items_set) {
+        return session
+      }
+      const pollDelay = Math.max(1000, session.poll_interval_ms ?? 3000)
+      const timeoutMs = session.timeout_in_ms ?? 120000
+      if (Date.now() - startedAt >= timeoutMs) {
+        throw new Error("Google Photos 选择超时，请重新打开 Picker。")
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, pollDelay))
+    }
   }
 
   async function handleConnectGooglePhotos() {
@@ -414,22 +477,77 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       if (!status?.connected) {
         throw new Error(status?.detail || "Google Photos 尚未连接成功")
       }
-      const albums = await loadGooglePhotosAlbums()
-      const nextAlbumId = albums[0]?.id ?? ""
-      setGooglePhotosAlbumId(nextAlbumId)
-      setGooglePhotosSelectedIds([])
-      if (nextAlbumId) {
-        await loadGooglePhotosMedia({ albumId: nextAlbumId })
-      } else {
-        setGooglePhotosMedia([])
-        setGooglePhotosNextPageToken(null)
+      const session = await createGooglePhotosPickerSession()
+      const pickerWindow = window.open(session.picker_uri, "google-photos-picker", "width=1280,height=860")
+      if (!pickerWindow) {
+        throw new Error("浏览器拦截了 Google Photos Picker 弹窗，请允许弹窗后重试。")
       }
-      setMessage("Google Photos 已连接，可选择相册并导入图片。")
+      setGooglePhotosSelectedIds([])
+      const completedSession = await pollGooglePhotosSession(session.id)
+      if (!completedSession.media_items_set) {
+        throw new Error("Google Photos Picker 尚未完成选择。")
+      }
+      await loadGooglePhotosMedia({ sessionId: completedSession.id })
+      setMessage("Google Photos Picker 已完成选择，可勾选图片并导入。")
     } catch (err) {
       setError(err instanceof Error ? err.message : "连接 Google Photos 失败")
     } finally {
       setGooglePhotosBusy(false)
     }
+  }
+
+  async function handleSaveGooglePhotosConfig() {
+    setGooglePhotosBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      await fetchJson<GooglePhotosConfig>(`${apiBaseUrl}/api/google-photos/config`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: googlePhotosConfigForm.clientId.trim(),
+          client_secret: googlePhotosConfigForm.clientSecret.trim(),
+          redirect_uri: googlePhotosConfigForm.redirectUri.trim(),
+        }),
+      })
+      setShowGooglePhotosConfigModal(false)
+      setGooglePhotosConfigForm((current) => ({ ...current, clientSecret: "" }))
+      await refreshGooglePhotosStatus()
+      await handleConnectGooglePhotos()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存 Google Photos 配置失败")
+    } finally {
+      setGooglePhotosBusy(false)
+    }
+  }
+
+  async function handleClearGooglePhotosToken() {
+    setGooglePhotosBusy(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const status = await fetchJson<GooglePhotosStatus>(`${apiBaseUrl}/api/google-photos/token`, {
+        method: "DELETE",
+      })
+      setGooglePhotosStatus(status)
+      setGooglePhotosSession(null)
+      setGooglePhotosMedia([])
+      setGooglePhotosSelectedIds([])
+      setGooglePhotosNextPageToken(null)
+      setMessage("已清除本地 Google Photos 授权，可重新发起授权。")
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "清除 Google Photos 授权失败")
+    } finally {
+      setGooglePhotosBusy(false)
+    }
+  }
+
+  function handleGooglePhotosPrimaryAction() {
+    if (googlePhotosStatus?.auth_configured === false) {
+      void openGooglePhotosConfigModal()
+      return
+    }
+    void handleConnectGooglePhotos()
   }
 
   function isPersistedPendingItem(item: PendingArtifact) {
@@ -527,14 +645,25 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       const payload = await fetchJson<GooglePhotosImportResult>(`${apiBaseUrl}/api/google-photos/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media_item_ids: googlePhotosSelectedIds }),
+        body: JSON.stringify({
+          session_id: googlePhotosSession?.id ?? "",
+          media_item_ids: googlePhotosSelectedIds,
+        }),
       })
       const importedItems = payload.items
         .map((item) => enrichPendingItemTags(normalizePersistedPendingItem(apiBaseUrl, item)))
       setItems((current) => [...importedItems, ...current.filter((item) => !importedItems.some((next) => next.id === item.id))])
+      setGooglePhotosSession(null)
+      setGooglePhotosMedia([])
       setGooglePhotosSelectedIds([])
+      setGooglePhotosNextPageToken(null)
       const warningText = payload.warnings.length > 0 ? `；${payload.warnings.join("；")}` : ""
       setMessage(`已从 Google Photos 导入 ${payload.imported} 张，跳过 ${payload.skipped} 张${warningText}`)
+      if (importedItems.length > 0) {
+        window.setTimeout(() => {
+          void handleIdentifyAll(importedItems.map((item) => item.id))
+        }, 0)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "导入 Google Photos 图片失败")
     } finally {
@@ -569,20 +698,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   useEffect(() => {
     void (async () => {
-      const status = await refreshGooglePhotosStatus()
-      if (!status?.connected) {
-        return
-      }
-      try {
-        const albums = await loadGooglePhotosAlbums()
-        const nextAlbumId = albums[0]?.id ?? ""
-        setGooglePhotosAlbumId(nextAlbumId)
-        if (nextAlbumId) {
-          await loadGooglePhotosMedia({ albumId: nextAlbumId })
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "读取 Google Photos 列表失败")
-      }
+      await refreshGooglePhotosStatus()
     })()
   }, [apiBaseUrl])
 
@@ -1143,46 +1259,49 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           <button
             type="button"
             className="picker-button"
-            onClick={() => void handleConnectGooglePhotos()}
+            onClick={handleGooglePhotosPrimaryAction}
             disabled={
               googlePhotosBusy ||
-              (googlePhotosStatus?.enabled === false) ||
-              (googlePhotosStatus?.auth_configured === false)
+              (googlePhotosStatus?.enabled === false)
             }
           >
             {googlePhotosBusy
               ? "处理中…"
               : googlePhotosStatus?.connected
                 ? "重新连接 Google Photos"
+                : googlePhotosStatus?.auth_configured === false
+                  ? "配置 Google Photos"
                 : "连接 Google Photos"}
           </button>
+          {googlePhotosStatus?.enabled !== false ? (
+            <button
+              type="button"
+              className="ghost"
+              onClick={() => void openGooglePhotosConfigModal()}
+              disabled={googlePhotosBusy}
+            >
+              修改配置
+            </button>
+          ) : null}
+          {googlePhotosStatus?.auth_configured ? (
+            <button
+              type="button"
+              className="ghost danger"
+              onClick={() => void handleClearGooglePhotosToken()}
+              disabled={googlePhotosBusy}
+            >
+              清除授权
+            </button>
+          ) : null}
           {googlePhotosStatus?.connected ? (
             <>
-              <select
-                aria-label="选择 Google Photos 相册"
-                value={googlePhotosAlbumId}
-                onChange={(event) => {
-                  const nextAlbumId = event.target.value
-                  setGooglePhotosAlbumId(nextAlbumId)
-                  setGooglePhotosSelectedIds([])
-                  void loadGooglePhotosMedia({ albumId: nextAlbumId })
-                }}
-                disabled={googlePhotosBusy || googlePhotosAlbums.length === 0}
-              >
-                {googlePhotosAlbums.map((album) => (
-                  <option key={album.id} value={album.id}>
-                    {album.title}
-                    {album.media_items_count != null ? ` (${album.media_items_count})` : ""}
-                  </option>
-                ))}
-              </select>
               <button
                 type="button"
                 className="ghost"
-                onClick={() => void loadGooglePhotosMedia({ albumId: googlePhotosAlbumId })}
-                disabled={googlePhotosBusy || !googlePhotosAlbumId}
+                onClick={() => void handleConnectGooglePhotos()}
+                disabled={googlePhotosBusy}
               >
-                刷新相册
+                打开 Picker 选图
               </button>
               <button
                 type="button"
@@ -1197,7 +1316,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
         </div>
         <span className="field-help">
           {googlePhotosStatus?.detail ??
-            "配置好 Google OAuth 后，可直接从本人 Google 相册中选图导入，再走现有识别和入库链路。"}
+            "点击按钮后可在前端直接填写 Google Photos OAuth 配置，再通过 Google Picker 选图导入。"}
         </span>
         {googlePhotosStatus?.connected && googlePhotosMedia.length > 0 ? (
           <>
@@ -1251,12 +1370,12 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   className="ghost"
                   onClick={() =>
                     void loadGooglePhotosMedia({
-                      albumId: googlePhotosAlbumId,
+                      sessionId: googlePhotosSession?.id ?? "",
                       pageToken: googlePhotosNextPageToken,
                       append: true,
                     })
                   }
-                  disabled={googlePhotosBusy}
+                  disabled={googlePhotosBusy || !googlePhotosSession?.id}
                 >
                   加载更多
                 </button>
@@ -1775,6 +1894,78 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           </button>
         </div>
       ) : null}
+      {showGooglePhotosConfigModal
+        ? createPortal(
+            <div className="gallery-modal" onClick={() => setShowGooglePhotosConfigModal(false)}>
+              <div className="gallery-modal-body bridge-login-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="section-heading">
+                  <div>
+                    <h2>配置 Google Photos</h2>
+                    <p className="muted">在这里填写 OAuth 参数，保存后会继续拉起 Google 授权。</p>
+                  </div>
+                </div>
+                <div className="form-fields">
+                  <label className="field">
+                    <span>Client ID</span>
+                    <input
+                      value={googlePhotosConfigForm.clientId}
+                      onChange={(event) =>
+                        setGooglePhotosConfigForm((current) => ({ ...current, clientId: event.target.value }))
+                      }
+                      placeholder="Google Cloud Console 的 OAuth Client ID"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Client Secret</span>
+                    <input
+                      type="password"
+                      value={googlePhotosConfigForm.clientSecret}
+                      onChange={(event) =>
+                        setGooglePhotosConfigForm((current) => ({ ...current, clientSecret: event.target.value }))
+                      }
+                      placeholder="Google Cloud Console 的 OAuth Client Secret"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Redirect URI</span>
+                    <input
+                      value={googlePhotosConfigForm.redirectUri}
+                      onChange={(event) =>
+                        setGooglePhotosConfigForm((current) => ({ ...current, redirectUri: event.target.value }))
+                      }
+                      placeholder={`${apiBaseUrl}/api/google-photos/callback`}
+                    />
+                    <span className="field-help">这个地址要和 Google Cloud Console 里的 Authorized redirect URI 完全一致。</span>
+                  </label>
+                </div>
+                <div className="backend-match-actions">
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={
+                      googlePhotosBusy ||
+                      !googlePhotosConfigForm.clientId.trim() ||
+                      !googlePhotosConfigForm.clientSecret.trim() ||
+                      !googlePhotosConfigForm.redirectUri.trim()
+                    }
+                    onClick={() => void handleSaveGooglePhotosConfig()}
+                  >
+                    {googlePhotosBusy ? "保存中…" : "保存并继续连接"}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost"
+                    disabled={googlePhotosBusy}
+                    onClick={() => setShowGooglePhotosConfigModal(false)}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </section>
   )
 }
