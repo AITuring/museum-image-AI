@@ -1025,8 +1025,8 @@ function App() {
         <div className="brand">
           <img className="brand-mark" src="/logo.png" alt="文物数据库" />
           <div className="brand-copy">
-            <h1>Museum</h1>
-            <p className="brand-lead">文物图片采集与归档</p>
+            <h1>Museum · 藏影录</h1>
+            <p className="brand-lead">文物图像采集与归档</p>
           </div>
         </div>
         <div className="topbar-actions">

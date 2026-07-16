@@ -1094,8 +1094,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             </form>
           ) : (
             <div className="panel empty-state">
-              <h2>先上传图片</h2>
-              <p className="muted">导入后先填写共享文物信息，再逐张检查图片细节。</p>
+              <p className="eyebrow">COLLECTION ENTRY</p>
+              <h2>从一张文物照片开始</h2>
+              <p className="muted">点击右上角“添加图片”，系统会从文件名提取基础信息；只需校对后保存入库。</p>
             </div>
           )}
         </section>
