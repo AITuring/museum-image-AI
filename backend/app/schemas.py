@@ -84,6 +84,7 @@ class ArtifactCreate(BaseModel):
     museum_id: int
     name: str
     era: str | None = None
+    unearthed_at: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     images: list[ArtifactImageCreate] = Field(default_factory=list)
@@ -93,6 +94,7 @@ class ArtifactUpdate(BaseModel):
     museum_name: str
     name: str
     era: str | None = None
+    unearthed_at: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     image_id: int | None = None
@@ -114,6 +116,7 @@ class CloudArtifactSubmitRequest(BaseModel):
     museum_name: str
     name: str
     era: str | None = None
+    unearthed_at: str | None = None
     description: str | None = None
     existing_artifact_id: int | None = None
     skip_existing_match: bool = False
@@ -136,6 +139,7 @@ class ArtifactRead(BaseModel):
     museum_id: int
     name: str
     era: str | None = None
+    unearthed_at: str | None = None
     description: str | None = None
     created_at: datetime
     museum_name: str
@@ -176,6 +180,46 @@ class UploadedImageRead(BaseModel):
     aperture: str | None = None
     iso: int | None = None
     edit_method: str | None = None
+
+
+class ParsedArtifactNameRead(BaseModel):
+    original_name: str
+    normalized_name: str
+    era: str | None = None
+    artifact_name: str | None = None
+    museum_name: str | None = None
+    unearthed_at: str | None = None
+    catalog_no: str | None = None
+
+
+class ArtifactDescriptionGenerateRequest(BaseModel):
+    image_url: str | None = None
+    museum_name: str | None = None
+    name: str
+    era: str | None = None
+    unearthed_at: str | None = None
+
+
+class ArtifactDescriptionGenerateRead(BaseModel):
+    provider: str
+    model: str
+    description: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class ExifArtifactSubmitRequest(BaseModel):
+    image_url: str
+    museum_name: str
+    name: str
+    era: str | None = None
+    unearthed_at: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    display_location_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    existing_artifact_id: int | None = None
+    skip_existing_match: bool = False
 
 
 class VisionAnalyzeRequest(BaseModel):
@@ -250,6 +294,7 @@ class PendingArtifactRead(BaseModel):
     museum_name: str | None = None
     name: str | None = None
     era: str | None = None
+    unearthed_at: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     camera_model: str | None = None
@@ -285,6 +330,7 @@ class PendingArtifactUpdate(BaseModel):
     museum_name: str | None = None
     name: str | None = None
     era: str | None = None
+    unearthed_at: str | None = None
     description: str | None = None
     tags: list[str] | None = None
     camera_model: str | None = None

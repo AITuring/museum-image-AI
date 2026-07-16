@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.db import Base, SessionLocal, engine, get_db
-from app.exif_utils import extract_exif_metadata
+from app.exif_utils import extract_exif_metadata, update_image_exif_metadata
 from app.models import (
     Artifact,
     ArtifactExhibition,
@@ -37,6 +37,8 @@ from app.reference_data import WENWU_MUSEUM_COORDINATES
 from app.oss import upload_image
 from app.schemas import (
     ArtifactCreate,
+    ArtifactDescriptionGenerateRead,
+    ArtifactDescriptionGenerateRequest,
     ArtifactImageAttach,
     ArtifactMatchRead,
     ArtifactImageRead,
@@ -47,12 +49,14 @@ from app.schemas import (
     BatchScanResponse,
     CloudArtifactSubmitRequest,
     EraOptionRead,
+    ExifArtifactSubmitRequest,
     ExhibitionCreate,
     ExhibitionRead,
     HealthRead,
     MuseumCreate,
     MuseumRead,
     MuseumUpdate,
+    ParsedArtifactNameRead,
     PendingArtifactRead,
     PendingArtifactSubmitRequest,
     PendingArtifactUpdate,
@@ -63,6 +67,7 @@ from app.schemas import (
     VisionAnalyzeResponse,
 )
 from app.vision import (
+    generate_artifact_description,
     get_enabled_providers,
     request_provider_analysis,
     stream_provider_analysis,
@@ -76,6 +81,39 @@ from app.web_bridge import (
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".tiff"}
 EDIT_METHOD_OPTIONS = {"简单调整", "堆栈合成"}
+ERA_TOKEN_CANDIDATES = [
+    "新石器时代",
+    "夏",
+    "商",
+    "西周",
+    "东周",
+    "春秋",
+    "战国",
+    "秦",
+    "西汉",
+    "东汉",
+    "汉",
+    "三国",
+    "西晋",
+    "东晋",
+    "南北朝",
+    "北朝",
+    "北魏",
+    "隋",
+    "唐",
+    "五代",
+    "北宋",
+    "南宋",
+    "宋",
+    "辽",
+    "金",
+    "元",
+    "明",
+    "清",
+    "民国",
+]
+CATALOG_NO_PATTERN = re.compile(r"^[A-Za-z]{2,}[\-_]?\d{3,}$")
+MUSEUM_SEGMENT_PATTERN = re.compile(r"(博物馆|纪念馆|美术馆|收藏|馆藏|藏)$")
 
 logger = logging.getLogger("app.vision")
 
@@ -130,6 +168,9 @@ def run_startup_migrations(connection) -> None:
 
     if "era" not in artifact_columns:
         connection.execute(text("ALTER TABLE artifacts ADD COLUMN era VARCHAR(255)"))
+
+    if "unearthed_at" not in artifact_columns:
+        connection.execute(text("ALTER TABLE artifacts ADD COLUMN unearthed_at VARCHAR(255)"))
 
     if "description" not in artifact_columns:
         connection.execute(text("ALTER TABLE artifacts ADD COLUMN description TEXT"))
@@ -230,6 +271,7 @@ def run_startup_migrations(connection) -> None:
         "image_mime_type": "VARCHAR(128)",
         "camera_model": "VARCHAR(255)",
         "lens_model": "VARCHAR(255)",
+        "unearthed_at": "VARCHAR(255)",
         "capture_museum_name": "VARCHAR(255)",
         "exhibition_name": "VARCHAR(255)",
         "latitude": "DOUBLE PRECISION",
@@ -591,6 +633,92 @@ def normalize_exhibition_name(value: str | None) -> str:
     return optional_text(value) or "常设"
 
 
+def normalize_era_label(value: str | None) -> str | None:
+    text_value = optional_text(value)
+    if text_value is None:
+        return None
+    for token in ERA_TOKEN_CANDIDATES:
+        if text_value == token or text_value.startswith(token):
+            if token.endswith(("代", "时期", "朝")):
+                return token
+            return f"{token}代"
+    return text_value
+
+
+def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
+    original_name = raw_name.strip()
+    if not original_name:
+        raise HTTPException(status_code=400, detail="名称不能为空。")
+
+    normalized_text = re.sub(r"\s+", " ", original_name)
+    segments = [
+        segment.strip()
+        for segment in re.split(r"\s*[-_—–]+\s*", normalized_text)
+        if segment.strip()
+    ]
+
+    era: str | None = None
+    artifact_name: str | None = None
+    museum_name: str | None = None
+    unearthed_at: str | None = None
+    catalog_no: str | None = None
+    remaining_segments: list[str] = []
+
+    for segment in segments:
+        normalized_era = normalize_era_label(segment)
+        if era is None and normalized_era in {normalize_era_label(token) for token in ERA_TOKEN_CANDIDATES}:
+            era = normalized_era
+            continue
+        if catalog_no is None and CATALOG_NO_PATTERN.match(segment):
+            catalog_no = segment
+            continue
+        if museum_name is None and MUSEUM_SEGMENT_PATTERN.search(segment):
+            museum_name = segment.removesuffix("馆藏").strip() or segment
+            continue
+        if unearthed_at is None and ("出土" in segment or "墓" in segment or "遗址" in segment):
+            unearthed_at = segment
+            continue
+        remaining_segments.append(segment)
+
+    if remaining_segments:
+        artifact_name = remaining_segments[0]
+        if unearthed_at is None and len(remaining_segments) > 1:
+            for segment in remaining_segments[1:]:
+                if "年" in segment or "出土" in segment or "墓" in segment or "遗址" in segment:
+                    unearthed_at = segment
+                    break
+
+    normalized_parts = [part for part in [era, artifact_name, unearthed_at, museum_name, catalog_no] if part]
+    normalized_name = "-".join(normalized_parts) if normalized_parts else normalized_text
+
+    return ParsedArtifactNameRead(
+        original_name=original_name,
+        normalized_name=normalized_name,
+        era=era,
+        artifact_name=artifact_name,
+        museum_name=museum_name,
+        unearthed_at=unearthed_at,
+        catalog_no=catalog_no,
+    )
+
+
+def build_fallback_description(
+    *,
+    museum_name: str | None,
+    name: str,
+    era: str | None,
+    unearthed_at: str | None,
+) -> str:
+    fragments = [name]
+    if era:
+        fragments.append(f"时代为{era}")
+    if unearthed_at:
+        fragments.append(f"{unearthed_at}")
+    if museum_name:
+        fragments.append(f"现藏于{museum_name}")
+    return "，".join(fragments) + "。"
+
+
 def resolve_capture_context(
     db: Session,
     capture_museum_name: str | None,
@@ -805,6 +933,7 @@ async def submit_artifact_to_cloud(
     museum_name: str,
     name: str,
     era: str | None,
+    unearthed_at: str | None,
     description: str | None,
     existing_artifact_id: int | None,
     skip_existing_match: bool,
@@ -835,6 +964,7 @@ async def submit_artifact_to_cloud(
         "museum_name": museum_name.strip(),
         "name": name.strip(),
         "era": era or "",
+        "unearthed_at": unearthed_at or "",
         "description": description or "",
         "skip_existing_match": "true" if skip_existing_match else "false",
         "tags": json.dumps(tags, ensure_ascii=False),
@@ -872,6 +1002,55 @@ async def submit_artifact_to_cloud(
         raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
 
     return ArtifactRead.model_validate(response.json())
+
+
+async def generate_artifact_description_payload(
+    *,
+    image_url: str | None,
+    museum_name: str | None,
+    name: str,
+    era: str | None,
+    unearthed_at: str | None,
+) -> ArtifactDescriptionGenerateRead:
+    try:
+        provider, result = await generate_artifact_description(
+            image_urls=[image_url] if image_url else [],
+            data_dir=DATA_DIR,
+            artifact_name=name,
+            era=era,
+            museum_name=museum_name,
+            unearthed_at=unearthed_at,
+        )
+        description = optional_text(str(result.get("description", ""))) or build_fallback_description(
+            museum_name=museum_name,
+            name=name,
+            era=era,
+            unearthed_at=unearthed_at,
+        )
+        tags = [
+            str(tag).strip()
+            for tag in result.get("tags", [])
+            if str(tag).strip()
+        ]
+        return ArtifactDescriptionGenerateRead(
+            provider=provider.name,
+            model=provider.model,
+            description=description,
+            tags=tags,
+        )
+    except Exception as exc:  # noqa: BLE001 - graceful fallback for copy generation
+        logger.warning("generate artifact description failed: %s", exc, exc_info=exc)
+        return ArtifactDescriptionGenerateRead(
+            provider="fallback",
+            model="fallback",
+            description=build_fallback_description(
+                museum_name=museum_name,
+                name=name,
+                era=era,
+                unearthed_at=unearthed_at,
+            ),
+            tags=[],
+        )
 
 
 async def find_duplicate_artifact_image(
@@ -1280,6 +1459,82 @@ def delete_uploaded_image(url: str = Query(..., min_length=1)) -> None:
     path.unlink(missing_ok=True)
 
 
+@app.get(
+    f"{settings.api_prefix}/artifacts/parse-name",
+    response_model=ParsedArtifactNameRead,
+)
+def parse_artifact_name(name: str = Query(..., min_length=1)) -> ParsedArtifactNameRead:
+    return parse_artifact_compound_name(name)
+
+
+@app.post(
+    f"{settings.api_prefix}/artifacts/generate-description",
+    response_model=ArtifactDescriptionGenerateRead,
+)
+async def generate_artifact_description_api(
+    payload: ArtifactDescriptionGenerateRequest,
+) -> ArtifactDescriptionGenerateRead:
+    return await generate_artifact_description_payload(
+        image_url=payload.image_url,
+        museum_name=payload.museum_name,
+        name=payload.name,
+        era=payload.era,
+        unearthed_at=payload.unearthed_at,
+    )
+
+
+@app.post(
+    f"{settings.api_prefix}/artifacts/exif-submit",
+    response_model=ArtifactRead,
+    status_code=201,
+)
+async def submit_artifact_with_exif(payload: ExifArtifactSubmitRequest) -> ArtifactRead:
+    image_path = resolve_uploaded_file_path(payload.image_url)
+    original_bytes = image_path.read_bytes()
+    content_type = mimetypes.guess_type(image_path.name)[0] or "image/jpeg"
+    description_text = payload.description or build_fallback_description(
+        museum_name=payload.museum_name,
+        name=payload.name,
+        era=payload.era,
+        unearthed_at=payload.unearthed_at,
+    )
+    image_bytes = update_image_exif_metadata(
+        original_bytes,
+        artifact_name=payload.name,
+        description=description_text,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        museum_name=payload.museum_name,
+        era=payload.era,
+        unearthed_at=payload.unearthed_at,
+    )
+    image_path.write_bytes(image_bytes)
+    return await submit_artifact_to_cloud(
+        image_bytes=image_bytes,
+        image_name=image_path.name,
+        content_type=content_type,
+        museum_name=payload.museum_name,
+        name=payload.name,
+        era=payload.era,
+        unearthed_at=payload.unearthed_at,
+        description=description_text,
+        existing_artifact_id=payload.existing_artifact_id,
+        skip_existing_match=payload.skip_existing_match,
+        tags=payload.tags,
+        camera_model=None,
+        lens_model=None,
+        capture_museum_name=payload.display_location_name,
+        exhibition_name="常设",
+        latitude=payload.latitude,
+        longitude=payload.longitude,
+        captured_at=None,
+        shutter_speed=None,
+        aperture=None,
+        iso=None,
+        edit_method=None,
+    )
+
+
 # ── Cloud ingest (Alibaba Cloud server): receive a reviewed record + image ────────
 
 
@@ -1293,6 +1548,7 @@ async def ingest_artifact(
     museum_name: str = Form(...),
     name: str = Form(...),
     era: str | None = Form(None),
+    unearthed_at: str | None = Form(None),
     description: str | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
@@ -1368,6 +1624,7 @@ async def ingest_artifact(
         artifact.museum_id = museum.id
         artifact.name = name.strip()
         artifact.era = optional_text(era)
+        artifact.unearthed_at = optional_text(unearthed_at)
         artifact.description = optional_text(description)
         existing_tag_names = {tag.name for tag in artifact.tags}
         for tag in merged_tags:
@@ -1379,6 +1636,7 @@ async def ingest_artifact(
             museum_id=museum.id,
             name=name.strip(),
             era=(era or None),
+            unearthed_at=optional_text(unearthed_at),
             description=(description or None),
             ai_status="reviewed",
         )
@@ -1424,6 +1682,7 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
         museum_name=payload.museum_name,
         name=payload.name,
         era=payload.era,
+        unearthed_at=payload.unearthed_at,
         description=payload.description,
         existing_artifact_id=payload.existing_artifact_id,
         skip_existing_match=payload.skip_existing_match,
@@ -1452,6 +1711,7 @@ async def submit_single_artifact_file_to_cloud(
     museum_name: str = Form(...),
     name: str = Form(...),
     era: str | None = Form(None),
+    unearthed_at: str | None = Form(None),
     description: str | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
@@ -1485,6 +1745,7 @@ async def submit_single_artifact_file_to_cloud(
         museum_name=museum_name,
         name=name,
         era=era,
+        unearthed_at=unearthed_at,
         description=description,
         existing_artifact_id=existing_artifact_id,
         skip_existing_match=skip_existing_match,
@@ -1768,6 +2029,7 @@ async def submit_pending(
                     "museum_name": row.museum_name,
                     "name": row.name,
                     "era": row.era or "",
+                    "unearthed_at": row.unearthed_at or "",
                     "description": row.description or "",
                     "tags": json.dumps(row.tags or [], ensure_ascii=False),
                     "camera_model": row.camera_model or "",
@@ -2027,6 +2289,7 @@ def update_artifact(
     artifact.museum_id = museum.id
     artifact.name = payload.name.strip()
     artifact.era = optional_text(payload.era)
+    artifact.unearthed_at = optional_text(payload.unearthed_at)
     artifact.description = optional_text(payload.description)
 
     target_image = None

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { createPortal } from "react-dom"
 import "./App.css"
 import BatchConsole from "./BatchConsole"
+import ExifConsole from "./ExifConsole"
 import Gallery from "./Gallery"
 import MuseumConsole from "./MuseumConsole"
 
@@ -178,11 +179,12 @@ const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? 
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
 
-type View = "single" | "batch" | "gallery" | "museums"
+type View = "single" | "batch" | "exif" | "gallery" | "museums"
 
 const VIEW_PATHS: Record<View, string> = {
   single: "/single",
   batch: "/batch",
+  exif: "/photo-exif",
   gallery: "/gallery",
   museums: "/museums",
 }
@@ -190,6 +192,7 @@ const VIEW_PATHS: Record<View, string> = {
 const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
   { view: "single", label: "单图识别", cloudVisible: false },
   { view: "batch", label: "批量入库", cloudVisible: false },
+  { view: "exif", label: "EXIF 入库", cloudVisible: false },
   { view: "gallery", label: "图库", cloudVisible: true },
   { view: "museums", label: "博物馆", cloudVisible: true },
 ]
@@ -1059,6 +1062,8 @@ function App() {
       {view === "museums" ? <MuseumConsole apiBaseUrl={apiBaseUrl} /> : null}
 
       {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
+
+      {view === "exif" && !cloudOnly ? <ExifConsole apiBaseUrl={apiBaseUrl} /> : null}
 
       {view === "single" && !cloudOnly ? (
       <>

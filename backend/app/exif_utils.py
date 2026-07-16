@@ -7,9 +7,14 @@ from io import BytesIO
 
 from PIL import Image
 
+TAG_IMAGE_DESCRIPTION = 270
 TAG_MODEL = 272
+TAG_SOFTWARE = 305
 TAG_EXIF_IFD = 34665
 TAG_GPS_IFD = 34853
+TAG_XP_TITLE = 40091
+TAG_XP_COMMENT = 40092
+TAG_XP_SUBJECT = 40095
 
 EXIF_EXPOSURE_TIME = 33434
 EXIF_FNUMBER = 33437
@@ -22,6 +27,7 @@ GPS_LATITUDE_REF = 1
 GPS_LATITUDE = 2
 GPS_LONGITUDE_REF = 3
 GPS_LONGITUDE = 4
+GPS_VERSION_ID = 0
 
 
 @dataclass
@@ -115,6 +121,134 @@ def _parse_exif_datetime(value: object) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _encode_xp_text(value: str | None) -> bytes | None:
+    text = _clean_text(value)
+    if not text:
+        return None
+    return f"{text}\x00".encode("utf-16le")
+
+
+def _decimal_to_gps_rational(value: float) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+    absolute = abs(float(value))
+    degrees = int(absolute)
+    minutes_float = (absolute - degrees) * 60
+    minutes = int(minutes_float)
+    seconds = round((minutes_float - minutes) * 60 * 1_000_000)
+    return ((degrees, 1), (minutes, 1), (seconds, 1_000_000))
+
+
+def _compose_subject_text(
+    *,
+    era: str | None,
+    museum_name: str | None,
+    unearthed_at: str | None,
+) -> str | None:
+    parts = [
+        _clean_text(era),
+        _clean_text(museum_name),
+        _clean_text(unearthed_at),
+    ]
+    merged = " | ".join(part for part in parts if part)
+    return merged or None
+
+
+def update_image_exif_metadata(
+    image_bytes: bytes,
+    *,
+    artifact_name: str | None = None,
+    description: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    museum_name: str | None = None,
+    era: str | None = None,
+    unearthed_at: str | None = None,
+    software_name: str = "museum-image-AI",
+) -> bytes:
+    if not image_bytes:
+        return image_bytes
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            exif = image.getexif()
+            title_text = _clean_text(artifact_name)
+            description_text = _clean_text(description)
+            subject_text = _compose_subject_text(
+                era=era,
+                museum_name=museum_name,
+                unearthed_at=unearthed_at,
+            )
+
+            if title_text:
+                exif[TAG_IMAGE_DESCRIPTION] = title_text
+                xp_title = _encode_xp_text(title_text)
+                if xp_title is not None:
+                    exif[TAG_XP_TITLE] = xp_title
+            else:
+                exif.pop(TAG_IMAGE_DESCRIPTION, None)
+                exif.pop(TAG_XP_TITLE, None)
+
+            if description_text:
+                xp_comment = _encode_xp_text(description_text)
+                if xp_comment is not None:
+                    exif[TAG_XP_COMMENT] = xp_comment
+            else:
+                exif.pop(TAG_XP_COMMENT, None)
+
+            if subject_text:
+                xp_subject = _encode_xp_text(subject_text)
+                if xp_subject is not None:
+                    exif[TAG_XP_SUBJECT] = xp_subject
+            else:
+                exif.pop(TAG_XP_SUBJECT, None)
+
+            exif[TAG_SOFTWARE] = software_name
+
+            try:
+                gps_ifd = dict(exif.get_ifd(TAG_GPS_IFD) or {})
+            except Exception:
+                gps_ifd = {}
+
+            if latitude is not None and longitude is not None:
+                gps_ifd[GPS_VERSION_ID] = (2, 3, 0, 0)
+                gps_ifd[GPS_LATITUDE_REF] = "N" if latitude >= 0 else "S"
+                gps_ifd[GPS_LATITUDE] = _decimal_to_gps_rational(latitude)
+                gps_ifd[GPS_LONGITUDE_REF] = "E" if longitude >= 0 else "W"
+                gps_ifd[GPS_LONGITUDE] = _decimal_to_gps_rational(longitude)
+                exif[TAG_GPS_IFD] = gps_ifd
+            else:
+                exif.pop(TAG_GPS_IFD, None)
+
+            output = BytesIO()
+            save_kwargs = {
+                "format": image.format or "JPEG",
+                "exif": exif.tobytes(),
+            }
+            if image.info.get("icc_profile"):
+                save_kwargs["icc_profile"] = image.info["icc_profile"]
+
+            try:
+                if (image.format or "").upper() == "JPEG":
+                    image.save(
+                        output,
+                        quality="keep",
+                        subsampling="keep",
+                        **save_kwargs,
+                    )
+                else:
+                    image.save(output, **save_kwargs)
+            except Exception:
+                output = BytesIO()
+                fallback_kwargs = dict(save_kwargs)
+                if (image.format or "").upper() == "JPEG":
+                    image.save(output, quality=95, subsampling=0, **fallback_kwargs)
+                else:
+                    image.save(output, **fallback_kwargs)
+
+            return output.getvalue()
+    except Exception:
+        return image_bytes
 
 
 def extract_exif_metadata(image_bytes: bytes) -> ImageExifData:

@@ -83,6 +83,26 @@ VISION_MATCHING_SYSTEM_PROMPT = """
 7. description 需尽量详细，优先整合以下可证实信息：器物形制、材质、纹饰、工艺、用途、时代背景、馆藏或出土地、出土情况、墓葬情况、遗址情况、流传与研究信息；证据不足的部分可以省略，但不要编造。
 """.strip()
 
+ARTIFACT_DESCRIPTION_SYSTEM_PROMPT = """
+你是一名文物编目助手。你会收到一张文物图片，以及一组已经确认的结构化字段：
+- 文物名称
+- 时代
+- 馆藏单位
+- 出土信息
+
+请根据这些已知字段和图片内容，只输出 JSON：
+{
+  "description": "120-260字中文描述",
+  "tags": ["标签1", "标签2", "标签3"]
+}
+
+要求：
+1. 以上述结构化字段为主，不要篡改或重命名这些字段。
+2. description 可以补充器型、材质、纹饰、工艺、场景题材、用途、出土背景等，但证据不足时宁可省略，不要编造。
+3. tags 返回 3-8 个中文标签，优先保留器类、材质、纹饰、题材、工艺、墓葬/遗址背景，不要重复名称、时代、馆藏单位。
+4. 如果图片无法提供额外信息，也要基于已知字段给出克制、准确的描述。
+""".strip()
+
 @dataclass
 class VisionProvider:
     name: str
@@ -144,6 +164,19 @@ def get_enabled_providers() -> tuple[list[VisionProvider], list[str]]:
         unavailable.append("doubao")
 
     return providers, unavailable
+
+
+def get_preferred_text_provider() -> VisionProvider | None:
+    if settings.dashscope_api_key:
+        return VisionProvider(
+            name="qwen",
+            base_url=settings.dashscope_base_url.rstrip("/"),
+            api_key=settings.dashscope_api_key,
+            model=settings.web_structuring_model,
+        )
+
+    providers, _ = get_enabled_providers()
+    return providers[0] if providers else None
 
 
 def build_image_payloads(image_urls: list[str], data_dir: Path) -> list[dict[str, object]]:
@@ -465,6 +498,50 @@ def sanitize_generated_tags(
         if tag not in cleaned_tags:
             cleaned_tags.append(tag)
     return cleaned_tags
+
+
+async def generate_artifact_description(
+    *,
+    image_urls: list[str],
+    data_dir: Path,
+    artifact_name: str,
+    era: str | None = None,
+    museum_name: str | None = None,
+    unearthed_at: str | None = None,
+) -> tuple[VisionProvider, dict[str, object]]:
+    provider = get_preferred_text_provider()
+    if provider is None:
+        raise RuntimeError("未配置可用的大模型，无法生成描述。")
+
+    facts = {
+        "artifact_name": artifact_name.strip(),
+        "era": (era or "").strip(),
+        "museum_name": (museum_name or "").strip(),
+        "unearthed_at": (unearthed_at or "").strip(),
+    }
+    content_parts: list[dict[str, object]] = [
+        {
+            "type": "text",
+            "text": (
+                "以下是已确认字段，请基于这些字段和图片补全文物描述，不要改写这些基础事实：\n"
+                f"{json.dumps(facts, ensure_ascii=False, indent=2)}"
+            ),
+        }
+    ]
+    if image_urls:
+        content_parts.extend(build_image_payloads(image_urls[:1], data_dir))
+
+    payload = {
+        "model": provider.model,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": ARTIFACT_DESCRIPTION_SYSTEM_PROMPT},
+            {"role": "user", "content": content_parts},
+        ],
+        "temperature": 0.2,
+    }
+    data = await request_chat_completion(provider, payload)
+    return provider, parse_json_response(extract_message_text(data))
 
 
 async def request_chat_completion(

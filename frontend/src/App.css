@@ -1818,6 +1818,32 @@ button:disabled {
   background: rgba(245, 239, 231, 0.92);
 }
 
+.exif-console {
+  display: grid;
+  gap: 14px;
+}
+
+.exif-layout {
+  grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+  align-items: start;
+}
+
+.exif-preview-panel {
+  gap: 12px;
+}
+
+.exif-preview-panel .dropzone {
+  min-height: 320px;
+}
+
+.exif-preview-panel .result-block {
+  background: rgba(246, 238, 228, 0.84);
+}
+
+.exif-layout .column-right {
+  position: static;
+}
+
 .museum-console {
   gap: 12px;
 }
@@ -2076,6 +2102,10 @@ button:disabled {
   }
 
   .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .exif-layout {
     grid-template-columns: 1fr;
   }
 
