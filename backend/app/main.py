@@ -1098,7 +1098,7 @@ async def submit_artifact_to_cloud(
 
 async def generate_artifact_description_payload(
     *,
-    image_url: str | None,
+    image_urls: list[str],
     museum_name: str | None,
     name: str,
     era: str | None,
@@ -1112,7 +1112,7 @@ async def generate_artifact_description_payload(
     )
     try:
         raw_results, unavailable_providers = await generate_artifact_descriptions_parallel(
-            image_urls=[image_url] if image_url else [],
+            image_urls=image_urls,
             data_dir=DATA_DIR,
             artifact_name=name,
             era=era,
@@ -1196,6 +1196,8 @@ async def generate_artifact_description_payload(
             model="fallback",
             description=fallback_description,
             tags=[],
+            candidates=[],
+            unavailable_providers=[],
         )
 
 
@@ -1855,12 +1857,40 @@ async def generate_artifact_description_api(
     payload: ArtifactDescriptionGenerateRequest,
 ) -> ArtifactDescriptionGenerateRead:
     return await generate_artifact_description_payload(
-        image_url=payload.image_url,
+        image_urls=[payload.image_url] if payload.image_url else [],
         museum_name=payload.museum_name,
         name=payload.name,
         era=payload.era,
         Place_of_Excavation=payload.Place_of_Excavation,
     )
+
+
+@app.post(
+    f"{settings.api_prefix}/artifacts/generate-description-file",
+    response_model=ArtifactDescriptionGenerateRead,
+)
+async def generate_artifact_description_file_api(
+    file: UploadFile = File(...),
+    museum_name: str | None = Form(None),
+    name: str = Form(...),
+    era: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
+) -> ArtifactDescriptionGenerateRead:
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="图片内容为空。")
+
+    temp_path = write_temp_image_file(contents, file.filename or name)
+    try:
+        return await generate_artifact_description_payload(
+            image_urls=[f"/files/uploads/{temp_path.name}"],
+            museum_name=museum_name,
+            name=name,
+            era=era,
+            Place_of_Excavation=Place_of_Excavation,
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 @app.post(
@@ -1907,6 +1937,80 @@ async def submit_artifact_with_exif(payload: ExifArtifactSubmitRequest) -> Artif
         exhibition_name="常设",
         latitude=payload.latitude,
         longitude=payload.longitude,
+        captured_at=None,
+        shutter_speed=None,
+        aperture=None,
+        iso=None,
+        edit_method=None,
+    )
+
+
+@app.post(
+    f"{settings.api_prefix}/artifacts/exif-submit-file",
+    response_model=ArtifactRead,
+    status_code=201,
+)
+async def submit_artifact_with_exif_file(
+    file: UploadFile = File(...),
+    museum_name: str = Form(...),
+    name: str = Form(...),
+    era: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
+    description: str | None = Form(None),
+    tags: str = Form("[]"),
+    display_location_name: str | None = Form(None),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
+    existing_artifact_id: int | None = Form(None),
+    skip_existing_match: bool = Form(False),
+) -> ArtifactRead:
+    original_bytes = await file.read()
+    if not original_bytes:
+        raise HTTPException(status_code=400, detail="图片内容为空。")
+
+    try:
+        parsed_tags = json.loads(tags or "[]")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="标签格式不正确。") from exc
+    if not isinstance(parsed_tags, list):
+        raise HTTPException(status_code=400, detail="标签格式不正确。")
+    normalized_tags = [str(tag).strip() for tag in parsed_tags if str(tag).strip()]
+
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    description_text = description or build_fallback_description(
+        museum_name=museum_name,
+        name=name,
+        era=era,
+        Place_of_Excavation=Place_of_Excavation,
+    )
+    image_bytes = update_image_exif_metadata(
+        original_bytes,
+        artifact_name=name,
+        description=description_text,
+        latitude=latitude,
+        longitude=longitude,
+        museum_name=museum_name,
+        era=era,
+        place_of_excavation=Place_of_Excavation,
+    )
+    return await submit_artifact_to_cloud(
+        image_bytes=image_bytes,
+        image_name=file.filename or "photo-exif-upload.jpg",
+        content_type=content_type,
+        museum_name=museum_name,
+        name=name,
+        era=era,
+        Place_of_Excavation=Place_of_Excavation,
+        description=description_text,
+        existing_artifact_id=existing_artifact_id,
+        skip_existing_match=skip_existing_match,
+        tags=normalized_tags,
+        camera_model=None,
+        lens_model=None,
+        capture_museum_name=display_location_name,
+        exhibition_name="常设",
+        latitude=latitude,
+        longitude=longitude,
         captured_at=None,
         shutter_speed=None,
         aperture=None,

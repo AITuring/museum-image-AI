@@ -1,13 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 
-type UploadedImage = {
-  filename: string
-  url: string
-  uploaded_at: string
-  latitude: number | null
-  longitude: number | null
-}
-
 type ParsedArtifactName = {
   original_name: string
   normalized_name: string
@@ -70,7 +62,7 @@ type ExifWorkbenchItem = {
   id: string
   fileName: string
   previewUrl: string
-  uploadedImage: UploadedImage
+  localFile: File
   parsedName: ParsedArtifactName | null
   form: FormState
   candidates: DescriptionCandidate[]
@@ -91,6 +83,8 @@ const EMPTY_FORM: FormState = {
   description: "",
   tags: [],
 }
+
+const EXIF_FILE_INPUT_ID = "exif-workbench-file-input"
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
@@ -134,20 +128,26 @@ async function resolveMuseum(apiBaseUrl: string, name: string): Promise<MuseumOp
   return exact ?? items[0] ?? null
 }
 
-function buildBaseForm(uploadedImage: UploadedImage): FormState {
+function buildBaseForm(): FormState {
   return {
     ...EMPTY_FORM,
-    latitude: uploadedImage.latitude?.toString() ?? "",
-    longitude: uploadedImage.longitude?.toString() ?? "",
   }
 }
 
-function buildItemId(uploadedImage: UploadedImage, index: number) {
-  return `${uploadedImage.url}#${index}`
+function buildItemId(file: File, index: number) {
+  return `${file.name}-${file.lastModified}-${index}`
 }
 
 function uniqueTags(tags: string[]) {
   return Array.from(new Set(tags.map((item) => item.trim()).filter(Boolean)))
+}
+
+function ensureCandidates(value: DescriptionCandidate[] | undefined | null): DescriptionCandidate[] {
+  return Array.isArray(value) ? value : []
+}
+
+function ensureStringList(value: string[] | undefined | null): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
 }
 
 function toNullableNumber(value: string) {
@@ -180,7 +180,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   )
 
   const stats = useMemo(() => {
-    const describedCount = items.filter((item) => item.candidates.some((candidate) => candidate.status === "success")).length
+    const describedCount = items.filter((item) =>
+      ensureCandidates(item.candidates).some((candidate) => candidate.status === "success"),
+    ).length
     const submittedCount = items.filter((item) => item.submitState === "submitted").length
     const gpsCount = items.filter((item) => item.form.latitude.trim() && item.form.longitude.trim()).length
     return {
@@ -233,9 +235,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }))
   }
 
-  async function createWorkbenchItem(file: File, uploadedImage: UploadedImage, index: number): Promise<ExifWorkbenchItem> {
+  async function createWorkbenchItem(file: File, index: number): Promise<ExifWorkbenchItem> {
     let parsedName: ParsedArtifactName | null = null
-    let form = buildBaseForm(uploadedImage)
+    let form = buildBaseForm()
 
     try {
       parsedName = await fetchJson<ParsedArtifactName>(
@@ -267,10 +269,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
 
     return {
-      id: buildItemId(uploadedImage, index),
+      id: buildItemId(file, index),
       fileName: file.name,
       previewUrl: URL.createObjectURL(file),
-      uploadedImage,
+      localFile: file,
       parsedName,
       form,
       candidates: [],
@@ -290,23 +292,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setUploading(true)
     setSubmitNotice(null)
     try {
-      const formData = new FormData()
-      nextFiles.forEach((file) => formData.append("files", file))
-      const uploaded = await fetchJson<UploadedImage[]>(`${apiBaseUrl}/api/uploads/images`, {
-        method: "POST",
-        body: formData,
-      })
-
       const builtItems = await Promise.all(
-        nextFiles.map((file, index) => createWorkbenchItem(file, uploaded[index], index)),
+        nextFiles.map((file, index) => createWorkbenchItem(file, index)),
       )
       setItems((current) => [...current, ...builtItems])
       setSelectedId((current) => current ?? builtItems[0]?.id ?? null)
-      setSubmitNotice({ type: "success", text: `已上传 ${builtItems.length} 张图片，并完成文件名解析` })
+      setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片到当前页面，尚未上传 OSS` })
     } catch (error) {
       setSubmitNotice({
         type: "error",
-        text: error instanceof Error ? error.message : "批量上传失败",
+        text: error instanceof Error ? error.message : "载入图片失败",
       })
     } finally {
       setUploading(false)
@@ -316,21 +311,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
   }
 
-  async function deleteUploadedImage(url: string) {
-    await fetch(`${apiBaseUrl}/api/uploads/images?${new URLSearchParams({ url }).toString()}`, {
-      method: "DELETE",
-    })
-  }
-
   async function removeItem(itemId: string) {
     const target = items.find((item) => item.id === itemId)
     if (!target) {
       return
-    }
-    try {
-      await deleteUploadedImage(target.uploadedImage.url)
-    } catch {
-      // ignore cleanup failure
     }
     URL.revokeObjectURL(target.previewUrl)
     const remaining = items.filter((item) => item.id !== itemId)
@@ -340,7 +324,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   async function clearAll() {
     const currentItems = [...items]
-    await Promise.allSettled(currentItems.map((item) => deleteUploadedImage(item.uploadedImage.url)))
     currentItems.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     setItems([])
     setSelectedId(null)
@@ -360,16 +343,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setGenerating(true)
     setSubmitNotice(null)
     try {
-      const generated = await fetchJson<GeneratedDescription>(`${apiBaseUrl}/api/artifacts/generate-description`, {
+      const formData = new FormData()
+      formData.append("file", selectedItem.localFile)
+      formData.append("museum_name", selectedItem.form.museumName.trim() || "")
+      formData.append("name", selectedItem.form.name.trim())
+      formData.append("era", selectedItem.form.era.trim() || "")
+      formData.append("Place_of_Excavation", selectedItem.form.placeOfExcavation.trim() || "")
+      const generated = await fetchJson<GeneratedDescription>(`${apiBaseUrl}/api/artifacts/generate-description-file`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_url: selectedItem.uploadedImage.url,
-          museum_name: selectedItem.form.museumName.trim() || null,
-          name: selectedItem.form.name.trim(),
-          era: selectedItem.form.era.trim() || null,
-          Place_of_Excavation: selectedItem.form.placeOfExcavation.trim() || null,
-        }),
+        body: formData,
       })
 
       updateItem(selectedItem.id, (item) => ({
@@ -377,10 +359,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         form: {
           ...item.form,
           description: generated.description,
-          tags: uniqueTags([...item.form.tags, ...generated.tags]),
+          tags: uniqueTags([...item.form.tags, ...ensureStringList(generated.tags)]),
         },
-        candidates: generated.candidates,
-        unavailableProviders: generated.unavailable_providers,
+        candidates: ensureCandidates(generated.candidates),
+        unavailableProviders: ensureStringList(generated.unavailable_providers),
         descriptionMeta: `默认采用：${generated.provider} / ${generated.model}`,
       }))
       setSubmitNotice({ type: "success", text: "已并行请求千问和豆包，并回填默认描述" })
@@ -426,21 +408,26 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
     updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null }))
     try {
-      await fetchJson(`${apiBaseUrl}/api/artifacts/exif-submit`, {
+      const latitude = toNullableNumber(target.form.latitude)
+      const longitude = toNullableNumber(target.form.longitude)
+      const formData = new FormData()
+      formData.append("file", target.localFile)
+      formData.append("museum_name", target.form.museumName.trim())
+      formData.append("name", target.form.name.trim())
+      formData.append("era", target.form.era.trim() || "")
+      formData.append("Place_of_Excavation", target.form.placeOfExcavation.trim() || "")
+      formData.append("description", target.form.description.trim() || "")
+      formData.append("tags", JSON.stringify(target.form.tags))
+      formData.append("display_location_name", target.form.displayLocationName.trim() || "")
+      if (latitude !== null) {
+        formData.append("latitude", String(latitude))
+      }
+      if (longitude !== null) {
+        formData.append("longitude", String(longitude))
+      }
+      await fetchJson(`${apiBaseUrl}/api/artifacts/exif-submit-file`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_url: target.uploadedImage.url,
-          museum_name: target.form.museumName.trim(),
-          name: target.form.name.trim(),
-          era: target.form.era.trim() || null,
-          Place_of_Excavation: target.form.placeOfExcavation.trim() || null,
-          description: target.form.description.trim() || null,
-          tags: target.form.tags,
-          display_location_name: target.form.displayLocationName.trim() || null,
-          latitude: toNullableNumber(target.form.latitude),
-          longitude: toNullableNumber(target.form.longitude),
-        }),
+        body: formData,
       })
       updateItem(itemId, (item) => ({
         ...item,
@@ -490,64 +477,65 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   return (
     <section className="exif-console">
-      <section className="panel workbench-head">
+      <section className="panel workbench-head exif-workbench-head">
         <div>
           <p className="eyebrow">Photo EXIF</p>
-          <h2>照片 EXIF 批量入库</h2>
-          <p className="muted">支持批量上传、左侧缩略图与文件名列表、双模型并行描述，以及逐张回写 EXIF 后入库。</p>
+          <h2>照片 EXIF 工作台</h2>
+          <p className="muted">批量上传，左侧选图，右侧逐张确认并入库。</p>
         </div>
-        <div className="upload-actions">
-          <button type="button" className="ghost" onClick={() => fileInputRef.current?.click()}>
+        <div className="upload-actions exif-toolbar">
+          <label htmlFor={EXIF_FILE_INPUT_ID} className="ghost exif-picker-button">
             选择图片
-          </button>
+          </label>
           <button type="button" className="ghost danger" onClick={() => void clearAll()} disabled={items.length === 0}>
             清空全部
           </button>
         </div>
         <input
+          id={EXIF_FILE_INPUT_ID}
           ref={fileInputRef}
           type="file"
           accept="image/*"
           multiple
-          hidden
+          className="exif-file-input"
           onChange={(event) => void handleUpload(Array.from(event.target.files ?? []))}
         />
       </section>
 
       <section className="exif-stats-grid">
         <article className="panel exif-stat-card">
-          <span className="eyebrow">已加载</span>
+          <span className="eyebrow">图片</span>
           <strong>{stats.itemCount}</strong>
-          <p className="muted">当前工作台中的图片数量</p>
+          <p className="muted">已加载</p>
         </article>
         <article className="panel exif-stat-card">
-          <span className="eyebrow">已补描述</span>
+          <span className="eyebrow">描述</span>
           <strong>{stats.describedCount}</strong>
-          <p className="muted">至少完成一次双模型生成</p>
+          <p className="muted">已生成</p>
         </article>
         <article className="panel exif-stat-card">
-          <span className="eyebrow">含 GPS</span>
+          <span className="eyebrow">GPS</span>
           <strong>{stats.gpsCount}</strong>
-          <p className="muted">已填写展出地点经纬度</p>
+          <p className="muted">已填写</p>
         </article>
         <article className="panel exif-stat-card">
-          <span className="eyebrow">已提交</span>
+          <span className="eyebrow">提交</span>
           <strong>{stats.submittedCount}</strong>
-          <p className="muted">已完成 EXIF 回写和云端入库</p>
+          <p className="muted">已完成</p>
         </article>
       </section>
 
       <div className="layout exif-layout exif-layout-wide">
-        <section className="column column-left">
+        <section className="column column-left exif-sidebar">
           <div className="panel exif-import-panel">
             <div className="section-heading">
-              <span className="step-badge">1</span>
               <div>
-                <h2>批量导入</h2>
-                <p className="muted">图片会显示在左边，文件名会保留并用于自动解析。</p>
+                <h2>导入</h2>
+                <p className="muted">支持批量拖拽上传</p>
               </div>
             </div>
             <label
+              htmlFor={EXIF_FILE_INPUT_ID}
               className={`dropzone exif-dropzone ${dragging ? "dragging" : ""}`}
               onDragOver={(event) => {
                 event.preventDefault()
@@ -563,7 +551,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               <div className="dropzone-empty">
                 <span className="dropzone-icon">＋</span>
                 <strong>{uploading ? "上传中..." : "拖拽图片到这里，或点击上方按钮选择"}</strong>
-                <span className="muted">支持批量上传 JPG / PNG / WEBP</span>
+                <span className="muted">JPG / PNG / WEBP</span>
               </div>
             </label>
           </div>
@@ -572,7 +560,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             <div className="section-heading compact">
               <div>
                 <h2>图片列表</h2>
-                <p className="muted">左侧展示缩略图和文件名，点击切换当前图片。</p>
+                <p className="muted">点击切换当前图片</p>
               </div>
               <button type="button" className="ghost" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0}>
                 {submittingAll ? "批量提交中..." : "提交全部"}
@@ -618,7 +606,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           </div>
         </section>
 
-        <section className="column column-right">
+        <section className="column column-right exif-main">
           {selectedItem ? (
             <form
               className="panel form-wide exif-editor-form"
@@ -628,10 +616,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               }}
             >
               <div className="section-heading">
-                <span className="step-badge">2</span>
                 <div>
                   <h2>当前图片编辑</h2>
-                  <p className="muted">不再单独展示 Exif Workflow，直接围绕当前文件名、图片预览和录入结果编辑。</p>
+                  <p className="muted">文件名、字段、模型结果与最终入库内容</p>
                 </div>
               </div>
 
@@ -794,7 +781,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   <section className="form-section">
                     <div className="form-section-head">
                       <span className="form-section-kicker">MODEL</span>
-                      <h3>双模型描述</h3>
+                      <h3>千问 / 豆包</h3>
                     </div>
                     <div className="form-section-body">
                       <div className="upload-actions exif-model-actions">
@@ -810,9 +797,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                               <h3>{candidate.provider}</h3>
                               <span>{candidate.model}</span>
                             </div>
-                            <p className="muted exif-model-label">思维链 / 思路</p>
+                            <p className="muted exif-model-label">思路</p>
                             <pre className="exif-model-reasoning">{candidate.reasoning || candidate.error || "暂无思路返回"}</pre>
-                            <p className="muted exif-model-label">运行结果</p>
+                            <p className="muted exif-model-label">结果</p>
                             {candidate.status === "success" ? (
                               <>
                                 <p className="result-desc">{candidate.description || "暂无描述"}</p>
@@ -825,7 +812,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                               </>
                             ) : <p className="error-text">{candidate.error || "模型调用失败"}</p>}
                           </article>
-                        )) : <p className="muted">点击上方按钮后会同时请求千问和豆包，并展示各自的思路和结果。</p>}
+                        )) : <p className="muted">点击上方按钮生成两份结果。</p>}
                       </div>
                       {selectedItem.unavailableProviders.length > 0 ? (
                         <p className="muted">未配置模型：{selectedItem.unavailableProviders.join(" / ")}</p>
@@ -903,7 +890,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           ) : (
             <div className="panel empty-state">
               <h2>先上传图片</h2>
-              <p className="muted">批量上传后，左侧会展示缩略图和文件名列表，右侧再逐张处理。</p>
+              <p className="muted">导入后从左侧列表开始逐张处理。</p>
             </div>
           )}
         </section>
