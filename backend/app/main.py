@@ -150,6 +150,64 @@ UPLOADS_DIR = DATA_DIR / "uploads"
 LEGACY_BATCH_IMPORTS_DIR = DATA_DIR / "batch_imports"
 
 
+def report_debug_event(
+    *,
+    session_id: str,
+    hypothesis_id: str,
+    location: str,
+    message: str,
+    data: dict[str, object] | None = None,
+    run_id: str = "pre-fix",
+) -> None:
+    default_url = "http://127.0.0.1:7777/event"
+    if Path("/.dockerenv").exists():
+        default_url = "http://host.docker.internal:7777/event"
+
+    session_value = session_id
+    for env_path in (
+        BASE_DIR / ".dbg" / f"{session_id}.env",
+        Path(".dbg") / f"{session_id}.env",
+    ):
+        try:
+            if not env_path.exists():
+                continue
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                if raw_line.startswith("DEBUG_SERVER_URL="):
+                    configured_url = raw_line.split("=", 1)[1].strip()
+                    if configured_url:
+                        default_url = configured_url
+                elif raw_line.startswith("DEBUG_SESSION_ID="):
+                    configured_session = raw_line.split("=", 1)[1].strip()
+                    if configured_session:
+                        session_value = configured_session
+        except Exception:
+            continue
+
+    if Path("/.dockerenv").exists() and "127.0.0.1:7777" in default_url:
+        default_url = default_url.replace("127.0.0.1", "host.docker.internal")
+
+    payload = {
+        "sessionId": session_value,
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "msg": message,
+        "data": data or {},
+    }
+
+    try:
+        import urllib.request
+
+        request = urllib.request.Request(
+            default_url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(request, timeout=2).read()
+    except Exception:
+        return
+
+
 @dataclass(slots=True)
 class ArtifactMatchCandidate:
     artifact: Artifact
@@ -715,6 +773,15 @@ def normalize_era_label(value: str | None) -> str | None:
     return text_value
 
 
+def normalize_museum_segment(value: str) -> str:
+    segment = value.strip()
+    if not segment:
+        return segment
+    if segment.endswith("馆藏") and len(segment) > 2:
+        return f"{segment[:-2]}馆"
+    return segment
+
+
 def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
     original_name = raw_name.strip()
     if not original_name:
@@ -743,7 +810,25 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
             catalog_no = segment
             continue
         if museum_name is None and MUSEUM_SEGMENT_PATTERN.search(segment):
-            museum_name = segment.removesuffix("馆藏").strip() or segment
+            # #region debug-point D:parse-museum-segment
+            report_debug_event(
+                session_id="exif-submit-parse",
+                hypothesis_id="D",
+                location="main.py:parse-museum-segment",
+                message="[DEBUG] museum segment matched",
+                data={"raw_name": original_name, "segment": segment},
+            )
+            # #endregion
+            museum_name = normalize_museum_segment(segment)
+            # #region debug-point D:parse-museum-result
+            report_debug_event(
+                session_id="exif-submit-parse",
+                hypothesis_id="D",
+                location="main.py:parse-museum-result",
+                message="[DEBUG] museum segment normalized",
+                data={"segment": segment, "museum_name": museum_name},
+            )
+            # #endregion
             continue
         if place_of_excavation is None and ("出土" in segment or "墓" in segment or "遗址" in segment):
             place_of_excavation = segment
@@ -1938,6 +2023,7 @@ async def submit_artifact_with_exif(payload: ExifArtifactSubmitRequest) -> Artif
         lens_model=None,
         capture_museum_name=payload.display_location_name,
         exhibition_name="常设",
+        capture_location=payload.display_location_name,
         latitude=payload.latitude,
         longitude=payload.longitude,
         captured_at=None,
@@ -1967,6 +2053,26 @@ async def submit_artifact_with_exif_file(
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
 ) -> ArtifactRead:
+    # #region debug-point A:submit-entry
+    report_debug_event(
+        session_id="exif-submit-parse",
+        hypothesis_id="A",
+        location="main.py:submit-entry",
+        message="[DEBUG] exif submit entry",
+        data={
+            "filename": file.filename,
+            "museum_name": museum_name,
+            "name": name,
+            "era": era,
+            "Place_of_Excavation": Place_of_Excavation,
+            "display_location_name": display_location_name,
+            "latitude": latitude,
+            "longitude": longitude,
+            "existing_artifact_id": existing_artifact_id,
+            "skip_existing_match": skip_existing_match,
+        },
+    )
+    # #endregion
     original_bytes = await file.read()
     if not original_bytes:
         raise HTTPException(status_code=400, detail="图片内容为空。")
@@ -1996,30 +2102,58 @@ async def submit_artifact_with_exif_file(
         era=era,
         place_of_excavation=Place_of_Excavation,
     )
-    return await submit_artifact_to_cloud(
-        image_bytes=image_bytes,
-        image_name=file.filename or "photo-exif-upload.jpg",
-        content_type=content_type,
-        museum_name=museum_name,
-        name=name,
-        era=era,
-        Place_of_Excavation=Place_of_Excavation,
-        description=description_text,
-        existing_artifact_id=existing_artifact_id,
-        skip_existing_match=skip_existing_match,
-        tags=normalized_tags,
-        camera_model=None,
-        lens_model=None,
-        capture_museum_name=display_location_name,
-        exhibition_name="常设",
-        latitude=latitude,
-        longitude=longitude,
-        captured_at=None,
-        shutter_speed=None,
-        aperture=None,
-        iso=None,
-        edit_method=None,
+    # #region debug-point B:submit-after-exif
+    report_debug_event(
+        session_id="exif-submit-parse",
+        hypothesis_id="B",
+        location="main.py:submit-after-exif",
+        message="[DEBUG] exif updated before cloud submit",
+        data={
+            "filename": file.filename,
+            "content_type": content_type,
+            "original_size": len(original_bytes),
+            "updated_size": len(image_bytes),
+            "tag_count": len(normalized_tags),
+        },
     )
+    # #endregion
+    try:
+        return await submit_artifact_to_cloud(
+            image_bytes=image_bytes,
+            image_name=file.filename or "photo-exif-upload.jpg",
+            content_type=content_type,
+            museum_name=museum_name,
+            name=name,
+            era=era,
+            Place_of_Excavation=Place_of_Excavation,
+            description=description_text,
+            existing_artifact_id=existing_artifact_id,
+            skip_existing_match=skip_existing_match,
+            tags=normalized_tags,
+            camera_model=None,
+            lens_model=None,
+            capture_museum_name=display_location_name,
+            exhibition_name="常设",
+            capture_location=display_location_name,
+            latitude=latitude,
+            longitude=longitude,
+            captured_at=None,
+            shutter_speed=None,
+            aperture=None,
+            iso=None,
+            edit_method=None,
+        )
+    except Exception as exc:
+        # #region debug-point B:submit-error
+        report_debug_event(
+            session_id="exif-submit-parse",
+            hypothesis_id="B",
+            location="main.py:submit-error",
+            message="[DEBUG] exif submit raised exception",
+            data={"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        # #endregion
+        raise
 
 
 # ── Cloud ingest (Alibaba Cloud server): receive a reviewed record + image ────────

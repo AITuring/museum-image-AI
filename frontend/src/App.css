@@ -2120,6 +2120,20 @@ button:disabled {
   align-items: start;
 }
 
+.exif-shared-section {
+  border: 1px solid rgba(139, 94, 60, 0.14);
+  background: rgba(250, 244, 236, 0.92);
+}
+
+.exif-shared-actions {
+  align-items: center;
+  gap: 10px;
+}
+
+.exif-shared-actions .muted {
+  margin: 0;
+}
+
 .exif-selected-preview {
   width: 100%;
   aspect-ratio: 1 / 1;

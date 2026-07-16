@@ -134,6 +134,42 @@ function buildBaseForm(): FormState {
   }
 }
 
+function cloneFormState(form: FormState): FormState {
+  return {
+    ...form,
+    tags: [...form.tags],
+  }
+}
+
+function hasMeaningfulFormValue(form: FormState) {
+  return Boolean(
+    form.museumName.trim() ||
+      form.name.trim() ||
+      form.era.trim() ||
+      form.placeOfExcavation.trim() ||
+      form.displayLocationName.trim() ||
+      form.latitude.trim() ||
+      form.longitude.trim() ||
+      form.description.trim() ||
+      form.tags.length > 0,
+  )
+}
+
+function applySharedForm(current: FormState, shared: FormState): FormState {
+  return {
+    ...current,
+    museumName: shared.museumName,
+    name: shared.name,
+    era: shared.era,
+    placeOfExcavation: shared.placeOfExcavation,
+    displayLocationName: shared.displayLocationName,
+    latitude: shared.latitude,
+    longitude: shared.longitude,
+    description: shared.description,
+    tags: [...shared.tags],
+  }
+}
+
 function buildItemId(file: File, index: number) {
   return `${file.name}-${file.lastModified}-${index}`
 }
@@ -164,6 +200,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tagInput, setTagInput] = useState("")
+  const [sharedForm, setSharedForm] = useState<FormState>(buildBaseForm())
   const [museumSuggestions, setMuseumSuggestions] = useState<MuseumOption[]>([])
   const [locationSuggestions, setLocationSuggestions] = useState<MuseumOption[]>([])
   const [showMuseumSuggestions, setShowMuseumSuggestions] = useState(false)
@@ -235,6 +272,32 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }))
   }
 
+  function updateSharedForm(patch: Partial<FormState>) {
+    setSharedForm((current) => ({ ...current, ...patch }))
+  }
+
+  function fillSharedFromSelected() {
+    if (!selectedItem) {
+      return
+    }
+    setSharedForm(cloneFormState(selectedItem.form))
+    setSubmitNotice({ type: "success", text: "已用当前图片内容刷新共享文物信息" })
+  }
+
+  function applySharedToAll() {
+    if (items.length === 0) {
+      return
+    }
+    const nextShared = cloneFormState(sharedForm)
+    setItems((current) => current.map((item) => ({
+      ...item,
+      form: applySharedForm(item.form, nextShared),
+      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+    })))
+    setSubmitNotice({ type: "success", text: `已将共享字段应用到 ${items.length} 张图片` })
+  }
+
   async function createWorkbenchItem(file: File, index: number): Promise<ExifWorkbenchItem> {
     let parsedName: ParsedArtifactName | null = null
     let form = buildBaseForm()
@@ -297,6 +360,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       )
       setItems((current) => [...current, ...builtItems])
       setSelectedId((current) => current ?? builtItems[0]?.id ?? null)
+      setSharedForm((current) => {
+        if (hasMeaningfulFormValue(current)) {
+          return current
+        }
+        const seedForm = builtItems.find((item) => hasMeaningfulFormValue(item.form))?.form
+        return seedForm ? cloneFormState(seedForm) : current
+      })
       setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片到当前页面，尚未上传 OSS` })
     } catch (error) {
       setSubmitNotice({
@@ -328,6 +398,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setItems([])
     setSelectedId(null)
     setTagInput("")
+    setSharedForm(buildBaseForm())
     setSubmitNotice(null)
   }
 
@@ -335,7 +406,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (!selectedItem) {
       return
     }
-    if (!selectedItem.form.name.trim()) {
+    const targetForm = items.length > 1 ? sharedForm : selectedItem.form
+    if (!targetForm.name.trim()) {
       setSubmitNotice({ type: "error", text: "请先填写或确认文物名称" })
       return
     }
@@ -348,25 +420,53 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image_url: null,
-          museum_name: selectedItem.form.museumName.trim() || null,
-          name: selectedItem.form.name.trim(),
-          era: selectedItem.form.era.trim() || null,
-          Place_of_Excavation: selectedItem.form.placeOfExcavation.trim() || null,
+          museum_name: targetForm.museumName.trim() || null,
+          name: targetForm.name.trim(),
+          era: targetForm.era.trim() || null,
+          Place_of_Excavation: targetForm.placeOfExcavation.trim() || null,
         }),
       })
 
-      updateItem(selectedItem.id, (item) => ({
-        ...item,
-        form: {
-          ...item.form,
-          description: generated.description,
-          tags: uniqueTags([...item.form.tags, ...ensureStringList(generated.tags)]),
-        },
-        candidates: ensureCandidates(generated.candidates),
-        unavailableProviders: ensureStringList(generated.unavailable_providers),
-        descriptionMeta: `默认采用：${generated.provider} / ${generated.model}`,
-      }))
-      setSubmitNotice({ type: "success", text: "已基于文件名解析字段并行请求千问和豆包，并回填默认描述" })
+      const nextSharedForm: FormState = {
+        ...cloneFormState(targetForm),
+        description: generated.description,
+        tags: uniqueTags([...targetForm.tags, ...ensureStringList(generated.tags)]),
+      }
+      const nextCandidates = ensureCandidates(generated.candidates)
+      const nextUnavailableProviders = ensureStringList(generated.unavailable_providers)
+      const nextMeta = items.length > 1
+        ? `共享描述采用：${generated.provider} / ${generated.model}`
+        : `默认采用：${generated.provider} / ${generated.model}`
+
+      if (items.length > 1) {
+        setSharedForm(nextSharedForm)
+        setItems((current) => current.map((item) => ({
+          ...item,
+          form: applySharedForm(item.form, nextSharedForm),
+          candidates: nextCandidates,
+          unavailableProviders: nextUnavailableProviders,
+          descriptionMeta: nextMeta,
+          submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+          submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+        })))
+        setSubmitNotice({
+          type: "success",
+          text: `已按同一文物多图模式并行请求千问和豆包，并把共享描述应用到 ${items.length} 张图片`,
+        })
+      } else {
+        updateItem(selectedItem.id, (item) => ({
+          ...item,
+          form: {
+            ...item.form,
+            description: generated.description,
+            tags: uniqueTags([...item.form.tags, ...ensureStringList(generated.tags)]),
+          },
+          candidates: nextCandidates,
+          unavailableProviders: nextUnavailableProviders,
+          descriptionMeta: nextMeta,
+        }))
+        setSubmitNotice({ type: "success", text: "已基于文件名解析字段并行请求千问和豆包，并回填默认描述" })
+      }
     } catch (error) {
       setSubmitNotice({
         type: "error",
@@ -481,8 +581,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       <section className="panel workbench-head exif-workbench-head">
         <div>
           <p className="eyebrow">Photo EXIF</p>
-          <h2>照片 EXIF 工作台</h2>
-          <p className="muted">批量上传，左侧选图，右侧逐张确认并入库。</p>
+          <h2>同一文物多图工作台</h2>
+          <p className="muted">多张图片对应同一件文物时，先统一共享字段，再按图微调并入库。</p>
         </div>
         <div className="upload-actions exif-toolbar">
           <label htmlFor={EXIF_FILE_INPUT_ID} className="ghost exif-picker-button">
@@ -619,11 +719,103 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               <div className="section-heading">
                 <div>
                   <h2>当前图片编辑</h2>
-                  <p className="muted">文件名、字段、模型结果与最终入库内容</p>
+                  <p className="muted">先维护共享文物信息，再查看当前图片文件名与单图细节</p>
                 </div>
               </div>
 
               <div className="exif-editor-scroll">
+                <section className="form-section exif-shared-section">
+                  <div className="form-section-head">
+                    <span className="form-section-kicker">ARTIFACT</span>
+                    <h3>同一文物共享信息</h3>
+                  </div>
+                  <div className="form-section-body">
+                    <p className="muted">这些图片指向同一件文物时，在这里统一填写基础字段和描述，再一键应用到全部图片。</p>
+                    <div className="field-row">
+                      <label className="field">
+                        <span>馆藏单位</span>
+                        <input
+                          value={sharedForm.museumName}
+                          placeholder="例如：山东省博物馆"
+                          onChange={(event) => updateSharedForm({ museumName: event.target.value })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>文物名称</span>
+                        <input
+                          value={sharedForm.name}
+                          placeholder="例如：夫妇宴享行乐图"
+                          onChange={(event) => updateSharedForm({ name: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                    <div className="field-row">
+                      <label className="field">
+                        <span>时代</span>
+                        <input
+                          value={sharedForm.era}
+                          placeholder="例如：隋代"
+                          onChange={(event) => updateSharedForm({ era: event.target.value })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>出土地</span>
+                        <input
+                          value={sharedForm.placeOfExcavation}
+                          placeholder="例如：1976年嘉祥英山一号隋墓出土"
+                          onChange={(event) => updateSharedForm({ placeOfExcavation: event.target.value })}
+                        />
+                      </label>
+                    </div>
+                    <div className="field-row">
+                      <label className="field">
+                        <span>展出地点名称</span>
+                        <input
+                          value={sharedForm.displayLocationName}
+                          placeholder="例如：山东省博物馆"
+                          onChange={(event) => updateSharedForm({ displayLocationName: event.target.value })}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>纬度 / 经度</span>
+                        <div className="field-row">
+                          <input
+                            value={sharedForm.latitude}
+                            placeholder="纬度"
+                            onChange={(event) => updateSharedForm({ latitude: event.target.value })}
+                          />
+                          <input
+                            value={sharedForm.longitude}
+                            placeholder="经度"
+                            onChange={(event) => updateSharedForm({ longitude: event.target.value })}
+                          />
+                        </div>
+                      </label>
+                    </div>
+                    <label className="field">
+                      <span>共享描述</span>
+                      <textarea
+                        rows={4}
+                        value={sharedForm.description}
+                        placeholder="这里的描述会作为同一文物的默认描述应用到全部图片"
+                        onChange={(event) => updateSharedForm({ description: event.target.value })}
+                      />
+                    </label>
+                    <div className="upload-actions exif-shared-actions">
+                      <button type="button" className="ghost" onClick={fillSharedFromSelected}>
+                        从当前图片带入
+                      </button>
+                      <button type="button" className="ghost" onClick={applySharedToAll} disabled={items.length === 0}>
+                        应用到全部图片
+                      </button>
+                      <button type="button" className="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
+                        {generating ? "并行生成中..." : "并行生成共享描述"}
+                      </button>
+                      <p className="muted">当前会同步到 {items.length || 0} 张图片</p>
+                    </div>
+                  </div>
+                </section>
+
                 <div className="exif-selected-head">
                   <img src={selectedItem.previewUrl} alt={selectedItem.fileName} className="exif-selected-preview" />
                   <div className="result-block exif-file-block">
@@ -891,7 +1083,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           ) : (
             <div className="panel empty-state">
               <h2>先上传图片</h2>
-              <p className="muted">导入后从左侧列表开始逐张处理。</p>
+              <p className="muted">导入后先填写共享文物信息，再逐张检查图片细节。</p>
             </div>
           )}
         </section>
