@@ -63,6 +63,7 @@ type ExifWorkbenchItem = {
   fileName: string
   previewUrl: string
   localFile: File
+  fileHandle: WritableFileHandle | null
   parsedName: ParsedArtifactName | null
   form: FormState
   candidates: DescriptionCandidate[]
@@ -70,6 +71,19 @@ type ExifWorkbenchItem = {
   descriptionMeta: string | null
   submitState: "idle" | "submitting" | "submitted" | "error"
   submitMessage: string | null
+}
+
+type WritableFileStream = { write(data: Blob): Promise<void>; close(): Promise<void> }
+type WritableFileHandle = {
+  name: string
+  getFile(): Promise<File>
+  createWritable(): Promise<WritableFileStream>
+}
+type FilePickerWindow = Window & {
+  showOpenFilePicker?: (options: {
+    multiple: boolean
+    types: Array<{ description: string; accept: Record<string, string[]> }>
+  }) => Promise<WritableFileHandle[]>
 }
 
 const EMPTY_FORM: FormState = {
@@ -298,7 +312,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setSubmitNotice({ type: "success", text: `已将共享字段应用到 ${items.length} 张图片` })
   }
 
-  async function createWorkbenchItem(file: File, index: number): Promise<ExifWorkbenchItem> {
+  async function createWorkbenchItem(
+    file: File,
+    index: number,
+    fileHandle: WritableFileHandle | null = null,
+  ): Promise<ExifWorkbenchItem> {
     let parsedName: ParsedArtifactName | null = null
     let form = buildBaseForm()
 
@@ -336,6 +354,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       fileName: file.name,
       previewUrl: URL.createObjectURL(file),
       localFile: file,
+      fileHandle,
       parsedName,
       form,
       candidates: [],
@@ -343,6 +362,32 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       descriptionMeta: null,
       submitState: "idle",
       submitMessage: null,
+    }
+  }
+
+  async function handleOpenWritableFiles() {
+    const picker = (window as FilePickerWindow).showOpenFilePicker
+    if (!picker) {
+      fileInputRef.current?.click()
+      setSubmitNotice({ type: "error", text: "当前浏览器不支持原地写入；可继续云端入库，原地覆盖请使用最新版 Chrome。" })
+      return
+    }
+    try {
+      const handles = await picker({
+        multiple: true,
+        types: [{ description: "文物图片", accept: { "image/*": [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"] } }],
+      })
+      setUploading(true)
+      const builtItems = await Promise.all(handles.map(async (handle, index) =>
+        createWorkbenchItem(await handle.getFile(), index, handle)))
+      setItems((current) => [...current, ...builtItems])
+      setSelectedId((current) => current ?? builtItems[0]?.id ?? null)
+      setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片，并获得原地回写授权` })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return
+      setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "读取本地图片失败" })
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -511,29 +556,52 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     try {
       const latitude = toNullableNumber(target.form.latitude)
       const longitude = toNullableNumber(target.form.longitude)
+      const appendMetadata = (data: FormData) => {
+        data.append("museum_name", target.form.museumName.trim())
+        data.append("name", target.form.name.trim())
+        data.append("era", target.form.era.trim() || "")
+        data.append("Place_of_Excavation", target.form.placeOfExcavation.trim() || "")
+        data.append("description", target.form.description.trim() || "")
+        data.append("display_location_name", target.form.displayLocationName.trim() || "")
+        if (latitude !== null) data.append("latitude", String(latitude))
+        if (longitude !== null) data.append("longitude", String(longitude))
+      }
+
+      let uploadFile = target.localFile
+      if (target.fileHandle) {
+        const exifForm = new FormData()
+        exifForm.append("file", target.localFile)
+        appendMetadata(exifForm)
+        const response = await fetch(`${apiBaseUrl}/api/artifacts/prepare-exif-file`, {
+          method: "POST",
+          body: exifForm,
+        })
+        if (!response.ok) throw new Error(`本地 EXIF 回写准备失败（HTTP ${response.status}）`)
+        const editedBlob = await response.blob()
+        const writable = await target.fileHandle.createWritable()
+        await writable.write(editedBlob)
+        await writable.close()
+        uploadFile = new File([editedBlob], target.fileName, {
+          type: editedBlob.type || target.localFile.type,
+          lastModified: Date.now(),
+        })
+      }
+
       const formData = new FormData()
-      formData.append("file", target.localFile)
-      formData.append("museum_name", target.form.museumName.trim())
-      formData.append("name", target.form.name.trim())
-      formData.append("era", target.form.era.trim() || "")
-      formData.append("Place_of_Excavation", target.form.placeOfExcavation.trim() || "")
-      formData.append("description", target.form.description.trim() || "")
+      formData.append("file", uploadFile)
+      appendMetadata(formData)
       formData.append("tags", JSON.stringify(target.form.tags))
-      formData.append("display_location_name", target.form.displayLocationName.trim() || "")
-      if (latitude !== null) {
-        formData.append("latitude", String(latitude))
-      }
-      if (longitude !== null) {
-        formData.append("longitude", String(longitude))
-      }
       await fetchJson(`${apiBaseUrl}/api/artifacts/exif-submit-file`, {
         method: "POST",
         body: formData,
       })
       updateItem(itemId, (item) => ({
         ...item,
+        localFile: uploadFile,
         submitState: "submitted",
-        submitMessage: "已回写 EXIF，并同步上传 OSS 与云端数据库",
+        submitMessage: target.fileHandle
+          ? "已覆盖本地原图，并同步上传 OSS 与云端数据库"
+          : "已写入云端图片 EXIF 并完成入库；本地原图未覆盖",
       }))
     } catch (error) {
       updateItem(itemId, (item) => ({
@@ -551,7 +619,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setSubmittingAll(true)
     setSubmitNotice(null)
     for (const item of items) {
-      // eslint-disable-next-line no-await-in-loop
       await submitOne(item.id)
     }
     setSubmittingAll(false)
@@ -581,13 +648,14 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       <section className="panel workbench-head exif-workbench-head">
         <div>
           <p className="eyebrow">Photo EXIF</p>
-          <h2>同一文物多图工作台</h2>
-          <p className="muted">多张图片对应同一件文物时，先统一共享字段，再按图微调并入库。</p>
+          <h2>文物图片入库工作台</h2>
+          <p className="muted">解析文件名、校对展出地点、补全描述，一次完成本地 EXIF、OSS 和云数据库。</p>
         </div>
         <div className="upload-actions exif-toolbar">
-          <label htmlFor={EXIF_FILE_INPUT_ID} className="ghost exif-picker-button">
-            选择图片
-          </label>
+          <button type="button" className="primary" onClick={() => void handleOpenWritableFiles()}>
+            选择并授权原地写入
+          </button>
+          <label htmlFor={EXIF_FILE_INPUT_ID} className="ghost exif-picker-button">仅导入</label>
           <button type="button" className="ghost danger" onClick={() => void clearAll()} disabled={items.length === 0}>
             清空全部
           </button>

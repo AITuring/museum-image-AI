@@ -788,6 +788,8 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
         raise HTTPException(status_code=400, detail="名称不能为空。")
 
     normalized_text = re.sub(r"\s+", " ", original_name)
+    if Path(normalized_text).suffix.lower() in IMAGE_EXTENSIONS:
+        normalized_text = str(Path(normalized_text).with_suffix(""))
     segments = [
         segment.strip()
         for segment in re.split(r"\s*[-_—–]+\s*", normalized_text)
@@ -1979,6 +1981,41 @@ async def generate_artifact_description_file_api(
         era=era,
         Place_of_Excavation=Place_of_Excavation,
     )
+
+
+@app.post(f"{settings.api_prefix}/artifacts/prepare-exif-file")
+async def prepare_artifact_exif_file(
+    file: UploadFile = File(...),
+    museum_name: str = Form(...),
+    name: str = Form(...),
+    era: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
+    description: str | None = Form(None),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
+) -> Response:
+    """Return edited bytes for a user-authorised local overwrite."""
+    original_bytes = await file.read()
+    if not original_bytes:
+        raise HTTPException(status_code=400, detail="图片内容为空。")
+    description_text = description or build_fallback_description(
+        museum_name=museum_name,
+        name=name,
+        era=era,
+        Place_of_Excavation=Place_of_Excavation,
+    )
+    image_bytes = update_image_exif_metadata(
+        original_bytes,
+        artifact_name=name,
+        description=description_text,
+        latitude=latitude,
+        longitude=longitude,
+        museum_name=museum_name,
+        era=era,
+        place_of_excavation=Place_of_Excavation,
+    )
+    content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+    return Response(content=image_bytes, media_type=content_type)
 
 
 @app.post(
