@@ -197,11 +197,11 @@ const VIEW_PATHS: Record<View, string> = {
 }
 
 const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
-  { view: "single", label: "单图识别", cloudVisible: false },
-  { view: "batch", label: "批量入库", cloudVisible: false },
-  { view: "exif", label: "EXIF 入库", cloudVisible: false },
+  { view: "exif", label: "快速录入", cloudVisible: false },
+  { view: "single", label: "智能识别", cloudVisible: false },
+  { view: "batch", label: "相册同步", cloudVisible: false },
   { view: "gallery", label: "图库", cloudVisible: true },
-  { view: "museums", label: "博物馆", cloudVisible: true },
+  { view: "museums", label: "场馆", cloudVisible: true },
 ]
 
 function isViewAvailable(view: View) {
@@ -209,7 +209,7 @@ function isViewAvailable(view: View) {
 }
 
 function getDefaultView(): View {
-  return cloudOnly ? "gallery" : "single"
+  return cloudOnly ? "gallery" : "exif"
 }
 
 function normalizeViewFromPath(pathname: string): View {
@@ -1025,16 +1025,13 @@ function App() {
         <div className="brand">
           <img className="brand-mark" src="/logo.png" alt="文物数据库" />
           <div className="brand-copy">
-            <p className="eyebrow">Museum Image Archive</p>
-            <h1>文物数据库</h1>
-            <p className="brand-lead">书卷式整理文物图像、展览信息与识别证据，让入库流程清楚、端正、可追溯。</p>
+            <h1>Museum</h1>
+            <p className="brand-lead">文物图片采集与归档</p>
           </div>
         </div>
         <div className="topbar-actions">
           <nav className="topbar-nav" aria-label="顶部导航">
-            {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly)
-              .filter((item) => item.view === "gallery" || item.view === "museums")
-              .map((item) => (
+            {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
               <button
                 type="button"
                 key={`top-${item.view}`}
@@ -1053,23 +1050,6 @@ function App() {
           </div>
         </div>
       </header>
-
-      {!cloudOnly ? (
-        <div className="view-tabs-shell">
-          <nav className="view-tabs">
-            {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
-              <button
-                type="button"
-                key={item.view}
-                className={view === item.view ? "active" : ""}
-                onClick={() => setView(item.view)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </nav>
-        </div>
-      ) : null}
 
       {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 

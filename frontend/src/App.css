@@ -5179,3 +5179,45 @@ button:focus-visible,
     height: 30px;
   }
 }
+
+/* Compact capture workspace (kept last so legacy theme rules cannot override it). */
+@media (min-width: 901px) {
+  .app-shell { width: min(1520px, calc(100vw - 32px)); gap: 14px; padding-top: 14px; }
+  .topbar { position: sticky; top: 10px; z-index: 30; align-items: center; padding: 10px 14px; border-radius: 14px; }
+  .brand-mark { width: 36px; height: 36px; }
+  .brand-copy { display: flex; align-items: baseline; gap: 12px; }
+  .topbar h1 { font-family: inherit; font-size: 1.12rem; letter-spacing: 0; }
+  .brand-lead { font-size: .8rem; }
+  .topbar-actions { flex-wrap: nowrap; }
+  .topbar-nav { gap: 2px; padding: 3px; }
+  .topbar-nav button { min-height: 34px; padding: 0 13px; font-size: .82rem; }
+  .health-pill { min-height: 32px; padding: 0 10px; font-size: .74rem; }
+  .exif-layout { grid-template-columns: 300px minmax(0, 1fr); gap: 14px; }
+  .exif-sidebar { position: sticky; top: 82px; }
+  .exif-queue-list { max-height: calc(100vh - 210px); }
+}
+.exif-workbench-head { align-items: center; padding: 18px 20px; }
+.exif-workbench-head .eyebrow { display: none; }
+.exif-workbench-head h2 { font-size: 1.35rem; }
+.exif-workbench-head .muted { margin: 4px 0 0; font-size: .84rem; }
+.exif-queue-panel { padding: 12px; }
+.exif-queue-actions { display: flex; gap: 6px; }
+.exif-queue-actions button { min-height: 32px; padding: 0 11px; font-size: .78rem; }
+.exif-queue-item { grid-template-columns: 52px minmax(0, 1fr) 24px; gap: 9px; padding: 6px; border: 0; background: transparent; }
+.exif-queue-thumb { width: 52px; height: 52px; border-radius: 8px; }
+.exif-queue-copy { gap: 2px; }
+.exif-queue-copy strong { font-size: .78rem; }
+.exif-queue-copy span, .exif-queue-copy em { font-size: .74rem; }
+.exif-editor-form { padding: 16px; min-height: 0; }
+.exif-editor-heading { padding-bottom: 10px !important; border-bottom: 1px solid var(--line); }
+.exif-editor-scroll { overflow: visible; padding: 0; }
+.exif-shared-section { padding: 0; order: 5; }
+.exif-shared-section > summary { padding: 12px 14px; color: var(--ink-soft); font-size: .84rem; font-weight: 700; cursor: pointer; list-style-position: inside; }
+.exif-shared-section > summary span { float: right; font-weight: 500; color: var(--ink-faint); }
+.exif-shared-section[open] > .form-section-body { padding: 0 14px 14px; }
+.exif-selected-head { grid-template-columns: 116px minmax(0, 1fr); }
+.exif-selected-preview { border-radius: 10px; }
+.exif-file-block { min-height: 116px; }
+.exif-model-details summary { color: var(--ink-soft); font-size: .78rem; cursor: pointer; }
+.exif-model-details[open] .exif-model-reasoning { margin-top: 8px; }
+.exif-editor-form .form-footer { position: sticky; bottom: 10px; z-index: 10; margin: 6px -4px -4px; padding: 10px 12px; border-radius: 12px; background: rgba(255,255,255,.94); box-shadow: 0 8px 30px rgba(31,38,40,.12); backdrop-filter: blur(12px); }

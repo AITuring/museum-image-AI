@@ -219,7 +219,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [locationSuggestions, setLocationSuggestions] = useState<MuseumOption[]>([])
   const [showMuseumSuggestions, setShowMuseumSuggestions] = useState(false)
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
-  const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [submittingAll, setSubmittingAll] = useState(false)
@@ -652,12 +651,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           <p className="muted">解析文件名、校对展出地点、补全描述，一次完成本地 EXIF、OSS 和云数据库。</p>
         </div>
         <div className="upload-actions exif-toolbar">
-          <button type="button" className="primary" onClick={() => void handleOpenWritableFiles()}>
-            选择并授权原地写入
-          </button>
-          <label htmlFor={EXIF_FILE_INPUT_ID} className="ghost exif-picker-button">仅导入</label>
-          <button type="button" className="ghost danger" onClick={() => void clearAll()} disabled={items.length === 0}>
-            清空全部
+          <button type="button" className="primary" onClick={() => void handleOpenWritableFiles()} disabled={uploading}>
+            {uploading ? "正在读取…" : "添加图片"}
           </button>
         </div>
         <input
@@ -671,69 +666,20 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         />
       </section>
 
-      <section className="exif-stats-grid">
-        <article className="panel exif-stat-card">
-          <span className="eyebrow">图片</span>
-          <strong>{stats.itemCount}</strong>
-          <p className="muted">已加载</p>
-        </article>
-        <article className="panel exif-stat-card">
-          <span className="eyebrow">描述</span>
-          <strong>{stats.describedCount}</strong>
-          <p className="muted">已生成</p>
-        </article>
-        <article className="panel exif-stat-card">
-          <span className="eyebrow">GPS</span>
-          <strong>{stats.gpsCount}</strong>
-          <p className="muted">已填写</p>
-        </article>
-        <article className="panel exif-stat-card">
-          <span className="eyebrow">提交</span>
-          <strong>{stats.submittedCount}</strong>
-          <p className="muted">已完成</p>
-        </article>
-      </section>
-
       <div className="layout exif-layout exif-layout-wide">
         <section className="column column-left exif-sidebar">
-          <div className="panel exif-import-panel">
-            <div className="section-heading">
-              <div>
-                <h2>导入</h2>
-                <p className="muted">支持批量拖拽上传</p>
-              </div>
-            </div>
-            <label
-              htmlFor={EXIF_FILE_INPUT_ID}
-              className={`dropzone exif-dropzone ${dragging ? "dragging" : ""}`}
-              onDragOver={(event) => {
-                event.preventDefault()
-                setDragging(true)
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={(event) => {
-                event.preventDefault()
-                setDragging(false)
-                void handleUpload(Array.from(event.dataTransfer.files ?? []))
-              }}
-            >
-              <div className="dropzone-empty">
-                <span className="dropzone-icon">＋</span>
-                <strong>{uploading ? "上传中..." : "拖拽图片到这里，或点击上方按钮选择"}</strong>
-                <span className="muted">JPG / PNG / WEBP</span>
-              </div>
-            </label>
-          </div>
-
           <div className="panel exif-queue-panel">
             <div className="section-heading compact">
               <div>
                 <h2>图片列表</h2>
-                <p className="muted">点击切换当前图片</p>
+                <p className="muted">{stats.submittedCount}/{stats.itemCount} 已完成</p>
               </div>
-              <button type="button" className="ghost" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0}>
-                {submittingAll ? "批量提交中..." : "提交全部"}
-              </button>
+              <div className="exif-queue-actions">
+                <button type="button" className="ghost" onClick={() => void clearAll()} disabled={items.length === 0}>清空</button>
+                <button type="button" className="primary" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0}>
+                  {submittingAll ? "提交中..." : "全部入库"}
+                </button>
+              </div>
             </div>
             <div className="exif-queue-list">
               {items.length > 0 ? items.map((item) => (
@@ -784,19 +730,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 void submitOne(selectedItem.id)
               }}
             >
-              <div className="section-heading">
+              <div className="section-heading exif-editor-heading">
                 <div>
-                  <h2>当前图片编辑</h2>
-                  <p className="muted">先维护共享文物信息，再查看当前图片文件名与单图细节</p>
+                  <h2>{selectedItem.form.name || "校对文物信息"}</h2>
+                  <p className="muted">自动解析结果已填入表单，只需修正有误字段</p>
                 </div>
               </div>
 
               <div className="exif-editor-scroll">
-                <section className="form-section exif-shared-section">
-                  <div className="form-section-head">
-                    <span className="form-section-kicker">ARTIFACT</span>
-                    <h3>同一文物共享信息</h3>
-                  </div>
+                <details className="form-section exif-shared-section">
+                  <summary>批量套用同一件文物的信息 <span>可选</span></summary>
                   <div className="form-section-body">
                     <p className="muted">这些图片指向同一件文物时，在这里统一填写基础字段和描述，再一键应用到全部图片。</p>
                     <div className="field-row">
@@ -882,7 +825,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <p className="muted">当前会同步到 {items.length || 0} 张图片</p>
                     </div>
                   </div>
-                </section>
+                </details>
 
                 <div className="exif-selected-head">
                   <img src={selectedItem.previewUrl} alt={selectedItem.fileName} className="exif-selected-preview" />
@@ -1042,12 +985,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   <section className="form-section">
                     <div className="form-section-head">
                       <span className="form-section-kicker">MODEL</span>
-                      <h3>千问 / 豆包</h3>
+                      <h3>AI 补充描述</h3>
                     </div>
                     <div className="form-section-body">
                       <div className="upload-actions exif-model-actions">
                         <button type="button" className="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
-                          {generating ? "并行生成中..." : "并行请求千问与豆包"}
+                          {generating ? "正在生成…" : "生成描述"}
                         </button>
                         {selectedItem.descriptionMeta ? <p className="muted">{selectedItem.descriptionMeta}</p> : null}
                       </div>
@@ -1058,9 +1001,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                               <h3>{candidate.provider}</h3>
                               <span>{candidate.model}</span>
                             </div>
-                            <p className="muted exif-model-label">思路</p>
-                            <pre className="exif-model-reasoning">{candidate.reasoning || candidate.error || "暂无思路返回"}</pre>
-                            <p className="muted exif-model-label">结果</p>
+                            <details className="exif-model-details">
+                              <summary>查看模型依据</summary>
+                              <pre className="exif-model-reasoning">{candidate.reasoning || candidate.error || "暂无依据返回"}</pre>
+                            </details>
                             {candidate.status === "success" ? (
                               <>
                                 <p className="result-desc">{candidate.description || "暂无描述"}</p>
@@ -1068,7 +1012,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                                   {candidate.tags.length > 0 ? candidate.tags.map((tag) => <span key={tag}>{tag}</span>) : <span>暂无标签</span>}
                                 </div>
                                 <button type="button" className="ghost" onClick={() => applyCandidate(candidate)}>
-                                  采用此结果
+                                  使用这版
                                 </button>
                               </>
                             ) : <p className="error-text">{candidate.error || "模型调用失败"}</p>}
@@ -1144,7 +1088,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   ) : <span />}
                 </div>
                 <button type="submit" className="primary" disabled={selectedItem.submitState === "submitting"}>
-                  {selectedItem.submitState === "submitting" ? "提交中..." : "回写 EXIF 并提交当前图片"}
+                  {selectedItem.submitState === "submitting" ? "正在入库…" : "保存并入库"}
                 </button>
               </div>
             </form>
