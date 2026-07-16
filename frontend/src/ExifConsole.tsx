@@ -343,15 +343,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setGenerating(true)
     setSubmitNotice(null)
     try {
-      const formData = new FormData()
-      formData.append("file", selectedItem.localFile)
-      formData.append("museum_name", selectedItem.form.museumName.trim() || "")
-      formData.append("name", selectedItem.form.name.trim())
-      formData.append("era", selectedItem.form.era.trim() || "")
-      formData.append("Place_of_Excavation", selectedItem.form.placeOfExcavation.trim() || "")
-      const generated = await fetchJson<GeneratedDescription>(`${apiBaseUrl}/api/artifacts/generate-description-file`, {
+      const generated = await fetchJson<GeneratedDescription>(`${apiBaseUrl}/api/artifacts/generate-description`, {
         method: "POST",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_url: null,
+          museum_name: selectedItem.form.museumName.trim() || null,
+          name: selectedItem.form.name.trim(),
+          era: selectedItem.form.era.trim() || null,
+          Place_of_Excavation: selectedItem.form.placeOfExcavation.trim() || null,
+        }),
       })
 
       updateItem(selectedItem.id, (item) => ({
@@ -365,7 +366,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         unavailableProviders: ensureStringList(generated.unavailable_providers),
         descriptionMeta: `默认采用：${generated.provider} / ${generated.model}`,
       }))
-      setSubmitNotice({ type: "success", text: "已并行请求千问和豆包，并回填默认描述" })
+      setSubmitNotice({ type: "success", text: "已基于文件名解析字段并行请求千问和豆包，并回填默认描述" })
     } catch (error) {
       setSubmitNotice({
         type: "error",

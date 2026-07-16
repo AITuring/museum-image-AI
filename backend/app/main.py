@@ -177,6 +177,7 @@ def run_startup_migrations(connection) -> None:
         return
 
     artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")}
+    artifact_columns_lower = {column_name.lower() for column_name in artifact_columns}
 
     if "title" in artifact_columns and "name" not in artifact_columns:
         connection.execute(text("ALTER TABLE artifacts RENAME COLUMN title TO name"))
@@ -201,15 +202,19 @@ def run_startup_migrations(connection) -> None:
         if "summary" in artifact_columns:
             connection.execute(text("UPDATE artifacts SET description = summary WHERE description IS NULL"))
 
-    if "unearthed_place" in artifact_columns and "Place_of_Excavation" not in artifact_columns:
+    if "unearthed_place" in artifact_columns_lower and "place_of_excavation" not in artifact_columns_lower:
         connection.execute(text('ALTER TABLE artifacts RENAME COLUMN unearthed_place TO "Place_of_Excavation"'))
         artifact_columns.remove("unearthed_place")
         artifact_columns.add("Place_of_Excavation")
+        artifact_columns_lower.remove("unearthed_place")
+        artifact_columns_lower.add("place_of_excavation")
 
-    if "Place_of_Excavation" not in artifact_columns:
+    if "place_of_excavation" not in artifact_columns_lower:
         connection.execute(text('ALTER TABLE artifacts ADD COLUMN "Place_of_Excavation" VARCHAR(255)'))
+        artifact_columns.add("Place_of_Excavation")
+        artifact_columns_lower.add("place_of_excavation")
 
-    if "unearthed_at" in artifact_columns:
+    if "unearthed_at" in artifact_columns_lower:
         connection.execute(
             text(
                 """
@@ -311,6 +316,7 @@ def run_startup_migrations(connection) -> None:
     pending_columns = {
         column["name"] for column in inspect(connection).get_columns("pending_artifacts")
     }
+    pending_columns_lower = {column_name.lower() for column_name in pending_columns}
     pending_column_definitions = {
         "image_blob": "BYTEA",
         "image_mime_type": "VARCHAR(128)",
@@ -330,12 +336,14 @@ def run_startup_migrations(connection) -> None:
         "existing_artifact_id": "INTEGER",
     }
     for column_name, column_type in pending_column_definitions.items():
-        if column_name not in pending_columns:
+        if column_name.lower() not in pending_columns_lower:
             connection.execute(
-                text(f"ALTER TABLE pending_artifacts ADD COLUMN {column_name} {column_type}")
+                text(f'ALTER TABLE pending_artifacts ADD COLUMN "{column_name}" {column_type}')
             )
+            pending_columns.add(column_name)
+            pending_columns_lower.add(column_name.lower())
 
-    if "unearthed_at" in pending_columns and "Place_of_Excavation" in pending_column_definitions:
+    if "unearthed_at" in pending_columns_lower and "place_of_excavation" in pending_columns_lower:
         connection.execute(
             text(
                 """
@@ -1870,27 +1878,22 @@ async def generate_artifact_description_api(
     response_model=ArtifactDescriptionGenerateRead,
 )
 async def generate_artifact_description_file_api(
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
     museum_name: str | None = Form(None),
     name: str = Form(...),
     era: str | None = Form(None),
     Place_of_Excavation: str | None = Form(None),
 ) -> ArtifactDescriptionGenerateRead:
-    contents = await file.read()
-    if not contents:
-        raise HTTPException(status_code=400, detail="图片内容为空。")
+    if file is not None:
+        await file.read()
 
-    temp_path = write_temp_image_file(contents, file.filename or name)
-    try:
-        return await generate_artifact_description_payload(
-            image_urls=[f"/files/uploads/{temp_path.name}"],
-            museum_name=museum_name,
-            name=name,
-            era=era,
-            Place_of_Excavation=Place_of_Excavation,
-        )
-    finally:
-        temp_path.unlink(missing_ok=True)
+    return await generate_artifact_description_payload(
+        image_urls=[],
+        museum_name=museum_name,
+        name=name,
+        era=era,
+        Place_of_Excavation=Place_of_Excavation,
+    )
 
 
 @app.post(

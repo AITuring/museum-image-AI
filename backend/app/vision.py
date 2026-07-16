@@ -577,7 +577,7 @@ def build_artifact_description_payload(
         {
             "type": "text",
             "text": (
-                "以下是已确认字段，请基于这些字段和图片补全文物描述，不要改写这些基础事实：\n"
+                "以下是已确认字段。当前流程以文件名解析出的结构化字段为主，若未提供图片，请仅基于这些字段生成描述，不要改写这些基础事实：\n"
                 f"{json.dumps(facts, ensure_ascii=False, indent=2)}"
             ),
         }
