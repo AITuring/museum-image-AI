@@ -14,7 +14,7 @@ from pathlib import Path
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
@@ -22,6 +22,21 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import settings
 from app.db import Base, SessionLocal, engine, get_db
 from app.exif_utils import extract_exif_metadata, update_image_exif_metadata
+from app.google_photos import (
+    build_google_photos_auth_url,
+    build_google_photos_status,
+    clear_google_photos_token,
+    create_google_photos_picker_session,
+    current_google_photos_config,
+    delete_google_photos_picker_session,
+    download_google_photos_image,
+    exchange_google_photos_code,
+    get_google_photos_media_items_by_ids,
+    get_google_photos_picker_session,
+    google_photos_enabled,
+    list_google_photos_media_items,
+    save_google_photos_config,
+)
 from app.models import (
     Artifact,
     ArtifactExhibition,
@@ -52,12 +67,22 @@ from app.schemas import (
     ExifArtifactSubmitRequest,
     ExhibitionCreate,
     ExhibitionRead,
+    GooglePhotosAuthStartRead,
+    GooglePhotosConfigRead,
+    GooglePhotosConfigUpdate,
+    GooglePhotosImportRead,
+    GooglePhotosImportRequest,
+    GooglePhotosMediaListRead,
+    GooglePhotosPickerSessionCreate,
+    GooglePhotosPickerSessionRead,
+    GooglePhotosStatusRead,
     HealthRead,
     MuseumCreate,
     MuseumRead,
     MuseumUpdate,
     ParsedArtifactNameRead,
     PendingArtifactRead,
+    PendingArtifactSubmitResult,
     PendingArtifactSubmitRequest,
     PendingArtifactUpdate,
     WebBridgeLoginStartRead,
@@ -169,13 +194,30 @@ def run_startup_migrations(connection) -> None:
     if "era" not in artifact_columns:
         connection.execute(text("ALTER TABLE artifacts ADD COLUMN era VARCHAR(255)"))
 
-    if "unearthed_at" not in artifact_columns:
-        connection.execute(text("ALTER TABLE artifacts ADD COLUMN unearthed_at VARCHAR(255)"))
-
     if "description" not in artifact_columns:
         connection.execute(text("ALTER TABLE artifacts ADD COLUMN description TEXT"))
         if "summary" in artifact_columns:
             connection.execute(text("UPDATE artifacts SET description = summary WHERE description IS NULL"))
+
+    if "unearthed_place" in artifact_columns and "Place_of_Excavation" not in artifact_columns:
+        connection.execute(text('ALTER TABLE artifacts RENAME COLUMN unearthed_place TO "Place_of_Excavation"'))
+        artifact_columns.remove("unearthed_place")
+        artifact_columns.add("Place_of_Excavation")
+
+    if "Place_of_Excavation" not in artifact_columns:
+        connection.execute(text('ALTER TABLE artifacts ADD COLUMN "Place_of_Excavation" VARCHAR(255)'))
+
+    if "unearthed_at" in artifact_columns:
+        connection.execute(
+            text(
+                """
+                UPDATE artifacts
+                SET "Place_of_Excavation" = unearthed_at
+                WHERE "Place_of_Excavation" IS NULL
+                  AND unearthed_at IS NOT NULL
+                """
+            )
+        )
 
     refreshed_columns = {column["name"] for column in inspect(connection).get_columns("artifacts")}
     if "image_path" in refreshed_columns and "artifact_images" in set(inspect(connection).get_table_names()):
@@ -208,6 +250,7 @@ def run_startup_migrations(connection) -> None:
         "lens_model": "VARCHAR(255)",
         "capture_museum_id": "INTEGER",
         "exhibition_id": "INTEGER",
+        "capture_location": "VARCHAR(255)",
         "latitude": "DOUBLE PRECISION",
         "longitude": "DOUBLE PRECISION",
         "captured_at": "TIMESTAMP",
@@ -271,9 +314,10 @@ def run_startup_migrations(connection) -> None:
         "image_mime_type": "VARCHAR(128)",
         "camera_model": "VARCHAR(255)",
         "lens_model": "VARCHAR(255)",
-        "unearthed_at": "VARCHAR(255)",
+        "Place_of_Excavation": "VARCHAR(255)",
         "capture_museum_name": "VARCHAR(255)",
         "exhibition_name": "VARCHAR(255)",
+        "capture_location": "VARCHAR(255)",
         "latitude": "DOUBLE PRECISION",
         "longitude": "DOUBLE PRECISION",
         "captured_at": "TIMESTAMP",
@@ -288,6 +332,18 @@ def run_startup_migrations(connection) -> None:
             connection.execute(
                 text(f"ALTER TABLE pending_artifacts ADD COLUMN {column_name} {column_type}")
             )
+
+    if "unearthed_at" in pending_columns and "Place_of_Excavation" in pending_column_definitions:
+        connection.execute(
+            text(
+                """
+                UPDATE pending_artifacts
+                SET "Place_of_Excavation" = unearthed_at
+                WHERE "Place_of_Excavation" IS NULL
+                  AND unearthed_at IS NOT NULL
+                """
+            )
+        )
 
     legacy_rows = connection.execute(
         text(
@@ -519,6 +575,10 @@ def optional_text(value: str | None) -> str | None:
     return text_value or None
 
 
+def normalize_place_of_excavation(value: str | None) -> str | None:
+    return optional_text(value)
+
+
 def normalize_identity_text(value: str | None) -> str | None:
     text_value = optional_text(value)
     return text_value.casefold() if text_value else None
@@ -660,7 +720,7 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
     era: str | None = None
     artifact_name: str | None = None
     museum_name: str | None = None
-    unearthed_at: str | None = None
+    place_of_excavation: str | None = None
     catalog_no: str | None = None
     remaining_segments: list[str] = []
 
@@ -675,20 +735,20 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
         if museum_name is None and MUSEUM_SEGMENT_PATTERN.search(segment):
             museum_name = segment.removesuffix("馆藏").strip() or segment
             continue
-        if unearthed_at is None and ("出土" in segment or "墓" in segment or "遗址" in segment):
-            unearthed_at = segment
+        if place_of_excavation is None and ("出土" in segment or "墓" in segment or "遗址" in segment):
+            place_of_excavation = segment
             continue
         remaining_segments.append(segment)
 
     if remaining_segments:
         artifact_name = remaining_segments[0]
-        if unearthed_at is None and len(remaining_segments) > 1:
+        if place_of_excavation is None and len(remaining_segments) > 1:
             for segment in remaining_segments[1:]:
                 if "年" in segment or "出土" in segment or "墓" in segment or "遗址" in segment:
-                    unearthed_at = segment
+                    place_of_excavation = segment
                     break
 
-    normalized_parts = [part for part in [era, artifact_name, unearthed_at, museum_name, catalog_no] if part]
+    normalized_parts = [part for part in [era, artifact_name, place_of_excavation, museum_name, catalog_no] if part]
     normalized_name = "-".join(normalized_parts) if normalized_parts else normalized_text
 
     return ParsedArtifactNameRead(
@@ -697,7 +757,7 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
         era=era,
         artifact_name=artifact_name,
         museum_name=museum_name,
-        unearthed_at=unearthed_at,
+        Place_of_Excavation=place_of_excavation,
         catalog_no=catalog_no,
     )
 
@@ -707,13 +767,13 @@ def build_fallback_description(
     museum_name: str | None,
     name: str,
     era: str | None,
-    unearthed_at: str | None,
+    Place_of_Excavation: str | None,
 ) -> str:
     fragments = [name]
     if era:
         fragments.append(f"时代为{era}")
-    if unearthed_at:
-        fragments.append(f"{unearthed_at}")
+    if Place_of_Excavation:
+        fragments.append(f"{Place_of_Excavation}")
     if museum_name:
         fragments.append(f"现藏于{museum_name}")
     return "，".join(fragments) + "。"
@@ -850,6 +910,33 @@ def build_duplicate_image_detail(image: ArtifactImage | ArtifactImageRead) -> st
     return f"这张图片已存在于文物「{image.artifact_name}」{suffix}，不能重复上传。"
 
 
+def build_duplicate_artifact_read(image: ArtifactImage | ArtifactImageRead) -> ArtifactRead:
+    detail = build_duplicate_image_detail(image)
+    if isinstance(image, ArtifactImageRead):
+        artifact = ArtifactRead(
+            id=image.artifact_id,
+            museum_id=0,
+            name=image.artifact_name,
+            era=image.era,
+            description=None,
+            created_at=image.created_at,
+            museum_name=image.museum_name,
+            tags=[],
+            images=[image],
+            exhibitions=[],
+            duplicate_image_skipped=True,
+            duplicate_image_detail=detail,
+        )
+        return artifact
+    artifact = ArtifactRead.model_validate(image.artifact)
+    return artifact.model_copy(
+        update={
+            "duplicate_image_skipped": True,
+            "duplicate_image_detail": detail,
+        }
+    )
+
+
 def extract_http_error_detail(response: httpx.Response) -> str:
     try:
         payload = response.json()
@@ -933,7 +1020,7 @@ async def submit_artifact_to_cloud(
     museum_name: str,
     name: str,
     era: str | None,
-    unearthed_at: str | None,
+    Place_of_Excavation: str | None,
     description: str | None,
     existing_artifact_id: int | None,
     skip_existing_match: bool,
@@ -942,6 +1029,7 @@ async def submit_artifact_to_cloud(
     lens_model: str | None,
     capture_museum_name: str | None,
     exhibition_name: str | None,
+    capture_location: str | None,
     latitude: float | None,
     longitude: float | None,
     captured_at: datetime | None,
@@ -959,12 +1047,13 @@ async def submit_artifact_to_cloud(
     if not name.strip():
         raise HTTPException(status_code=400, detail="请填写或确认文物名称。")
 
+    excavation_value = normalize_place_of_excavation(Place_of_Excavation)
     base = settings.cloud_api_base_url.rstrip("/")
     submit_data = {
         "museum_name": museum_name.strip(),
         "name": name.strip(),
         "era": era or "",
-        "unearthed_at": unearthed_at or "",
+        "Place_of_Excavation": excavation_value or "",
         "description": description or "",
         "skip_existing_match": "true" if skip_existing_match else "false",
         "tags": json.dumps(tags, ensure_ascii=False),
@@ -972,6 +1061,7 @@ async def submit_artifact_to_cloud(
         "lens_model": lens_model or "",
         "capture_museum_name": capture_museum_name or "",
         "exhibition_name": normalize_exhibition_name(exhibition_name),
+        "capture_location": capture_location or "",
         "latitude": "" if latitude is None else str(latitude),
         "longitude": "" if longitude is None else str(longitude),
         "captured_at": captured_at.isoformat() if captured_at else "",
@@ -1010,7 +1100,7 @@ async def generate_artifact_description_payload(
     museum_name: str | None,
     name: str,
     era: str | None,
-    unearthed_at: str | None,
+    Place_of_Excavation: str | None,
 ) -> ArtifactDescriptionGenerateRead:
     try:
         provider, result = await generate_artifact_description(
@@ -1019,13 +1109,13 @@ async def generate_artifact_description_payload(
             artifact_name=name,
             era=era,
             museum_name=museum_name,
-            unearthed_at=unearthed_at,
+            place_of_excavation=Place_of_Excavation,
         )
         description = optional_text(str(result.get("description", ""))) or build_fallback_description(
             museum_name=museum_name,
             name=name,
             era=era,
-            unearthed_at=unearthed_at,
+            Place_of_Excavation=Place_of_Excavation,
         )
         tags = [
             str(tag).strip()
@@ -1047,7 +1137,7 @@ async def generate_artifact_description_payload(
                 museum_name=museum_name,
                 name=name,
                 era=era,
-                unearthed_at=unearthed_at,
+                Place_of_Excavation=Place_of_Excavation,
             ),
             tags=[],
         )
@@ -1107,23 +1197,23 @@ def register_pending_artifact(
     image_blob: bytes | None = None,
     image_mime_type: str | None = None,
     metadata: dict[str, object | None] | None = None,
-) -> bool:
+) -> PendingArtifact | None:
     existing = db.scalar(select(PendingArtifact).where(PendingArtifact.file_hash == file_hash))
     if existing is not None:
-        return False
-    db.add(
-        PendingArtifact(
-            source_path=source_path,
-            file_hash=file_hash,
-            file_name=file_name,
-            image_blob=image_blob,
-            image_mime_type=image_mime_type,
-            status="pending",
-            tags=[],
-            **(metadata or {}),
-        )
+        return None
+    row = PendingArtifact(
+        source_path=source_path,
+        file_hash=file_hash,
+        file_name=file_name,
+        image_blob=image_blob,
+        image_mime_type=image_mime_type,
+        status="pending",
+        tags=[],
+        **(metadata or {}),
     )
-    return True
+    db.add(row)
+    db.flush()
+    return row
 
 
 def materialize_pending_artifact_image(row: PendingArtifact) -> tuple[Path, Path | None]:
@@ -1152,6 +1242,48 @@ def pending_artifact_image_bytes(row: PendingArtifact) -> tuple[bytes, str]:
 
 def sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+
+def build_google_photos_callback_html(success: bool, message: str) -> str:
+    payload = json.dumps(
+        {
+            "source": "google-photos-oauth",
+            "success": success,
+            "message": message,
+        },
+        ensure_ascii=False,
+    )
+    title = "Google Photos 已连接" if success else "Google Photos 连接失败"
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>{title}</title>
+    <style>
+      body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 24px; background: #f8f7f2; color: #2c241c; }}
+      .card {{ max-width: 520px; margin: 40px auto; padding: 24px; background: #fff; border-radius: 16px; box-shadow: 0 12px 32px rgba(54, 39, 19, 0.08); }}
+      h1 {{ margin: 0 0 12px; font-size: 22px; }}
+      p {{ margin: 0; line-height: 1.6; }}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>{title}</h1>
+      <p>{message}</p>
+    </div>
+    <script>
+      const payload = {payload};
+      try {{
+        if (window.opener && !window.opener.closed) {{
+          window.opener.postMessage(payload, "*");
+        }}
+      }} catch (_error) {{
+        // Ignore postMessage cross-window failures and still try to close the popup.
+      }}
+      setTimeout(() => window.close(), 800);
+    </script>
+  </body>
+</html>"""
 
 
 def should_proxy_artifact_queries_to_cloud() -> bool:
@@ -1453,6 +1585,198 @@ async def upload_images(
     return uploaded_images
 
 
+@app.get(
+    f"{settings.api_prefix}/google-photos/status",
+    response_model=GooglePhotosStatusRead,
+)
+def google_photos_status() -> GooglePhotosStatusRead:
+    return build_google_photos_status()
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/config",
+    response_model=GooglePhotosConfigRead,
+)
+def google_photos_config() -> GooglePhotosConfigRead:
+    return current_google_photos_config()
+
+
+@app.put(
+    f"{settings.api_prefix}/google-photos/config",
+    response_model=GooglePhotosConfigRead,
+)
+def update_google_photos_config(payload: GooglePhotosConfigUpdate) -> GooglePhotosConfigRead:
+    return save_google_photos_config(payload)
+
+
+@app.delete(
+    f"{settings.api_prefix}/google-photos/token",
+    response_model=GooglePhotosStatusRead,
+)
+def delete_google_photos_token() -> GooglePhotosStatusRead:
+    return clear_google_photos_token()
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/auth/start",
+    response_model=GooglePhotosAuthStartRead,
+)
+def google_photos_auth_start() -> GooglePhotosAuthStartRead:
+    return GooglePhotosAuthStartRead(auth_url=build_google_photos_auth_url())
+
+
+@app.get(f"{settings.api_prefix}/google-photos/callback", response_class=HTMLResponse)
+def google_photos_auth_callback(
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+) -> HTMLResponse:
+    if error:
+        return HTMLResponse(
+            build_google_photos_callback_html(False, f"Google 授权被取消或失败：{error}"),
+            status_code=400,
+        )
+    if not code:
+        return HTMLResponse(
+            build_google_photos_callback_html(False, "Google 授权回调缺少 code。"),
+            status_code=400,
+        )
+    try:
+        exchange_google_photos_code(code, state)
+    except HTTPException as exc:
+        return HTMLResponse(
+            build_google_photos_callback_html(False, str(exc.detail)),
+            status_code=exc.status_code,
+        )
+    return HTMLResponse(build_google_photos_callback_html(True, "Google Photos 已连接，可以回到批量入库页继续导入图片。"))
+
+
+@app.post(
+    f"{settings.api_prefix}/google-photos/picker/sessions",
+    response_model=GooglePhotosPickerSessionRead,
+)
+def google_photos_picker_session_create(
+    payload: GooglePhotosPickerSessionCreate,
+) -> GooglePhotosPickerSessionRead:
+    return create_google_photos_picker_session(payload)
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/picker/sessions/{{session_id}}",
+    response_model=GooglePhotosPickerSessionRead,
+)
+def google_photos_picker_session_get(session_id: str) -> GooglePhotosPickerSessionRead:
+    normalized = session_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Google Photos Picker session_id 不能为空。")
+    return get_google_photos_picker_session(normalized)
+
+
+@app.delete(f"{settings.api_prefix}/google-photos/picker/sessions/{{session_id}}", status_code=204)
+def google_photos_picker_session_delete(session_id: str) -> None:
+    normalized = session_id.strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Google Photos Picker session_id 不能为空。")
+    delete_google_photos_picker_session(normalized)
+
+
+@app.get(
+    f"{settings.api_prefix}/google-photos/picker/media-items",
+    response_model=GooglePhotosMediaListRead,
+)
+def google_photos_picker_media_items(
+    session_id: str = Query(..., min_length=1),
+    page_size: int = Query(default=100, ge=1, le=100),
+    page_token: str | None = Query(default=None),
+) -> GooglePhotosMediaListRead:
+    return list_google_photos_media_items(
+        session_id=session_id.strip(),
+        page_size=page_size,
+        page_token=optional_text(page_token),
+    )
+
+
+@app.post(
+    f"{settings.api_prefix}/google-photos/import",
+    response_model=GooglePhotosImportRead,
+)
+def google_photos_import(
+    payload: GooglePhotosImportRequest,
+    db: Session = Depends(get_db),
+) -> GooglePhotosImportRead:
+    if not google_photos_enabled():
+        raise HTTPException(status_code=400, detail="当前环境不支持 Google Photos 导入。")
+    session_id = payload.session_id.strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="Google Photos Picker session_id 不能为空。")
+    media_item_ids = [item.strip() for item in payload.media_item_ids if item.strip()]
+    if not media_item_ids:
+        raise HTTPException(status_code=400, detail="请至少选择一张 Google Photos 图片。")
+
+    imported = 0
+    skipped = 0
+    warnings: list[str] = []
+    imported_ids: list[int] = []
+
+    media_items = get_google_photos_media_items_by_ids(
+        session_id=session_id,
+        media_item_ids=media_item_ids,
+    )
+
+    for media_item in media_items:
+        mime_type = (media_item.mime_type or "").lower()
+        if not mime_type.startswith("image/"):
+            skipped += 1
+            warnings.append(f"{media_item.filename} 不是图片，已跳过。")
+            continue
+        contents = download_google_photos_image(media_item)
+        if not contents:
+            skipped += 1
+            warnings.append(f"{media_item.filename} 下载为空，已跳过。")
+            continue
+        file_hash = hash_bytes(contents)
+        metadata = build_image_metadata(
+            image_bytes=contents,
+            captured_at=media_item.creation_time.isoformat() if media_item.creation_time else None,
+        )
+        created = register_pending_artifact(
+            db,
+            file_hash=file_hash,
+            source_path=f"google_photos:{media_item.id}",
+            file_name=media_item.filename,
+            image_blob=contents,
+            image_mime_type=media_item.mime_type or "image/jpeg",
+            metadata=metadata,
+        )
+        if not created:
+            skipped += 1
+            warnings.append(f"{media_item.filename} 已在待处理列表中，已跳过。")
+            continue
+        imported += 1
+        imported_ids.append(created.id)
+
+    db.commit()
+    try:
+        delete_google_photos_picker_session(session_id)
+    except HTTPException:
+        pass
+    imported_rows = []
+    if imported_ids:
+        imported_rows = list(
+            db.scalars(
+                select(PendingArtifact)
+                .where(PendingArtifact.id.in_(imported_ids))
+                .order_by(PendingArtifact.created_at.desc())
+            )
+        )
+    return GooglePhotosImportRead(
+        imported=imported,
+        skipped=skipped,
+        warnings=warnings,
+        items=[PendingArtifactRead.model_validate(row) for row in imported_rows],
+    )
+
+
 @app.delete(f"{settings.api_prefix}/uploads/images", status_code=204)
 def delete_uploaded_image(url: str = Query(..., min_length=1)) -> None:
     path = resolve_uploaded_file_path(url)
@@ -1479,7 +1803,7 @@ async def generate_artifact_description_api(
         museum_name=payload.museum_name,
         name=payload.name,
         era=payload.era,
-        unearthed_at=payload.unearthed_at,
+        Place_of_Excavation=payload.Place_of_Excavation,
     )
 
 
@@ -1496,7 +1820,7 @@ async def submit_artifact_with_exif(payload: ExifArtifactSubmitRequest) -> Artif
         museum_name=payload.museum_name,
         name=payload.name,
         era=payload.era,
-        unearthed_at=payload.unearthed_at,
+        Place_of_Excavation=payload.Place_of_Excavation,
     )
     image_bytes = update_image_exif_metadata(
         original_bytes,
@@ -1506,7 +1830,7 @@ async def submit_artifact_with_exif(payload: ExifArtifactSubmitRequest) -> Artif
         longitude=payload.longitude,
         museum_name=payload.museum_name,
         era=payload.era,
-        unearthed_at=payload.unearthed_at,
+        place_of_excavation=payload.Place_of_Excavation,
     )
     image_path.write_bytes(image_bytes)
     return await submit_artifact_to_cloud(
@@ -1516,7 +1840,7 @@ async def submit_artifact_with_exif(payload: ExifArtifactSubmitRequest) -> Artif
         museum_name=payload.museum_name,
         name=payload.name,
         era=payload.era,
-        unearthed_at=payload.unearthed_at,
+        Place_of_Excavation=payload.Place_of_Excavation,
         description=description_text,
         existing_artifact_id=payload.existing_artifact_id,
         skip_existing_match=payload.skip_existing_match,
@@ -1548,7 +1872,7 @@ async def ingest_artifact(
     museum_name: str = Form(...),
     name: str = Form(...),
     era: str | None = Form(None),
-    unearthed_at: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
     description: str | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
@@ -1557,6 +1881,7 @@ async def ingest_artifact(
     lens_model: str | None = Form(None),
     capture_museum_name: str | None = Form(None),
     exhibition_name: str | None = Form("常设"),
+    capture_location: str | None = Form(None),
     latitude: str | None = Form(None),
     longitude: str | None = Form(None),
     captured_at: str | None = Form(None),
@@ -1576,7 +1901,7 @@ async def ingest_artifact(
     image_hash = hash_bytes(contents)
     duplicate_image = find_artifact_image_by_hash_local(db, image_hash)
     if duplicate_image is not None:
-        raise HTTPException(status_code=409, detail=build_duplicate_image_detail(duplicate_image))
+        return build_duplicate_artifact_read(duplicate_image)
 
     image_metadata = build_image_metadata(
         image_bytes=contents,
@@ -1600,6 +1925,7 @@ async def ingest_artifact(
             image_metadata.get("lens_model"),
         ),
     )
+    excavation_value = normalize_place_of_excavation(Place_of_Excavation)
 
     artifact: Artifact | None = None
     if existing_artifact_id is not None:
@@ -1624,7 +1950,7 @@ async def ingest_artifact(
         artifact.museum_id = museum.id
         artifact.name = name.strip()
         artifact.era = optional_text(era)
-        artifact.unearthed_at = optional_text(unearthed_at)
+        artifact.Place_of_Excavation = excavation_value
         artifact.description = optional_text(description)
         existing_tag_names = {tag.name for tag in artifact.tags}
         for tag in merged_tags:
@@ -1636,7 +1962,7 @@ async def ingest_artifact(
             museum_id=museum.id,
             name=name.strip(),
             era=(era or None),
-            unearthed_at=optional_text(unearthed_at),
+            Place_of_Excavation=excavation_value,
             description=(description or None),
             ai_status="reviewed",
         )
@@ -1660,6 +1986,7 @@ async def ingest_artifact(
             image_hash=image_hash,
             capture_museum_id=capture_museum.id if capture_museum is not None else None,
             exhibition_id=exhibition.id if exhibition is not None else None,
+            capture_location=optional_text(capture_location),
             **image_metadata,
         )
     )
@@ -1682,7 +2009,7 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
         museum_name=payload.museum_name,
         name=payload.name,
         era=payload.era,
-        unearthed_at=payload.unearthed_at,
+        Place_of_Excavation=payload.Place_of_Excavation,
         description=payload.description,
         existing_artifact_id=payload.existing_artifact_id,
         skip_existing_match=payload.skip_existing_match,
@@ -1691,6 +2018,7 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
         lens_model=payload.lens_model,
         capture_museum_name=payload.capture_museum_name,
         exhibition_name=payload.exhibition_name,
+        capture_location=payload.capture_location,
         latitude=payload.latitude,
         longitude=payload.longitude,
         captured_at=payload.captured_at,
@@ -1711,7 +2039,7 @@ async def submit_single_artifact_file_to_cloud(
     museum_name: str = Form(...),
     name: str = Form(...),
     era: str | None = Form(None),
-    unearthed_at: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
     description: str | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
@@ -1720,6 +2048,7 @@ async def submit_single_artifact_file_to_cloud(
     lens_model: str | None = Form(None),
     capture_museum_name: str | None = Form(None),
     exhibition_name: str | None = Form(None),
+    capture_location: str | None = Form(None),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
     captured_at: datetime | None = Form(None),
@@ -1745,7 +2074,7 @@ async def submit_single_artifact_file_to_cloud(
         museum_name=museum_name,
         name=name,
         era=era,
-        unearthed_at=unearthed_at,
+        Place_of_Excavation=Place_of_Excavation,
         description=description,
         existing_artifact_id=existing_artifact_id,
         skip_existing_match=skip_existing_match,
@@ -1754,6 +2083,7 @@ async def submit_single_artifact_file_to_cloud(
         lens_model=lens_model,
         capture_museum_name=capture_museum_name,
         exhibition_name=exhibition_name,
+        capture_location=capture_location,
         latitude=latitude,
         longitude=longitude,
         captured_at=captured_at,
@@ -1994,13 +2324,13 @@ async def batch_identify_stream(payload: BatchIdentifyRequest) -> StreamingRespo
 
 @app.post(
     f"{settings.api_prefix}/batch/pending/{{pending_id}}/submit",
-    response_model=PendingArtifactRead,
+    response_model=PendingArtifactSubmitResult,
 )
 async def submit_pending(
     pending_id: int,
     payload: PendingArtifactSubmitRequest | None = None,
     db: Session = Depends(get_db),
-) -> PendingArtifact:
+) -> PendingArtifactSubmitResult:
     if not settings.cloud_api_base_url:
         raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
 
@@ -2029,7 +2359,7 @@ async def submit_pending(
                     "museum_name": row.museum_name,
                     "name": row.name,
                     "era": row.era or "",
-                    "unearthed_at": row.unearthed_at or "",
+                    "Place_of_Excavation": row.Place_of_Excavation or "",
                     "description": row.description or "",
                     "tags": json.dumps(row.tags or [], ensure_ascii=False),
                     "camera_model": row.camera_model or "",
@@ -2075,7 +2405,11 @@ async def submit_pending(
     row.status = "submitted"
     db.commit()
     db.refresh(row)
-    return row
+    return PendingArtifactSubmitResult(
+        item=PendingArtifactRead.model_validate(row),
+        duplicate_image_skipped=bool(created.get("duplicate_image_skipped")),
+        duplicate_image_detail=created.get("duplicate_image_detail"),
+    )
 
 
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])
@@ -2245,6 +2579,7 @@ def list_artifacts(
                 Artifact.name.ilike(like),
                 Artifact.description.ilike(like),
                 Artifact.era.ilike(like),
+                Artifact.Place_of_Excavation.ilike(like),
                 Museum.name.ilike(like),
                 ArtifactImage.camera_model.ilike(like),
                 ArtifactImage.lens_model.ilike(like),
@@ -2289,7 +2624,7 @@ def update_artifact(
     artifact.museum_id = museum.id
     artifact.name = payload.name.strip()
     artifact.era = optional_text(payload.era)
-    artifact.unearthed_at = optional_text(payload.unearthed_at)
+    artifact.Place_of_Excavation = normalize_place_of_excavation(payload.Place_of_Excavation)
     artifact.description = optional_text(payload.description)
 
     target_image = None
@@ -2310,6 +2645,7 @@ def update_artifact(
         target_image.lens_model = optional_text(payload.lens_model)
         target_image.capture_museum_id = capture_museum.id if capture_museum is not None else None
         target_image.exhibition_id = exhibition.id if exhibition is not None else None
+        target_image.capture_location = optional_text(payload.capture_location)
         target_image.latitude = payload.latitude
         target_image.longitude = payload.longitude
         target_image.captured_at = payload.captured_at
@@ -2380,6 +2716,7 @@ def create_artifact(payload: ArtifactCreate, db: Session = Depends(get_db)) -> A
         museum_id=payload.museum_id,
         name=payload.name,
         era=payload.era,
+        Place_of_Excavation=normalize_place_of_excavation(payload.Place_of_Excavation),
         description=payload.description,
     )
     db.add(artifact)
@@ -2405,6 +2742,7 @@ def create_artifact(payload: ArtifactCreate, db: Session = Depends(get_db)) -> A
                 lens_model=image.lens_model,
                 capture_museum_id=capture_museum.id if capture_museum is not None else None,
                 exhibition_id=exhibition.id if exhibition is not None else None,
+                capture_location=optional_text(image.capture_location),
                 latitude=image.latitude,
                 longitude=image.longitude,
                 captured_at=image.captured_at,
@@ -2485,6 +2823,7 @@ def create_artifact_image(
         lens_model=payload.lens_model,
         capture_museum_id=capture_museum.id if capture_museum is not None else None,
         exhibition_id=exhibition.id if exhibition is not None else None,
+        capture_location=optional_text(payload.capture_location),
         latitude=payload.latitude,
         longitude=payload.longitude,
         captured_at=payload.captured_at,

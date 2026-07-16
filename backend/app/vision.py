@@ -507,7 +507,7 @@ async def generate_artifact_description(
     artifact_name: str,
     era: str | None = None,
     museum_name: str | None = None,
-    unearthed_at: str | None = None,
+    place_of_excavation: str | None = None,
 ) -> tuple[VisionProvider, dict[str, object]]:
     provider = get_preferred_text_provider()
     if provider is None:
@@ -517,7 +517,7 @@ async def generate_artifact_description(
         "artifact_name": artifact_name.strip(),
         "era": (era or "").strip(),
         "museum_name": (museum_name or "").strip(),
-        "unearthed_at": (unearthed_at or "").strip(),
+        "Place_of_Excavation": (place_of_excavation or "").strip(),
     }
     content_parts: list[dict[str, object]] = [
         {

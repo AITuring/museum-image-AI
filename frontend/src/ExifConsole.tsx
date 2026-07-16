@@ -14,7 +14,7 @@ type ParsedArtifactName = {
   era: string | null
   artifact_name: string | null
   museum_name: string | null
-  unearthed_at: string | null
+  Place_of_Excavation: string | null
   catalog_no: string | null
 }
 
@@ -45,7 +45,7 @@ type FormState = {
   museumName: string
   name: string
   era: string
-  unearthedAt: string
+  placeOfExcavation: string
   displayLocationName: string
   latitude: string
   longitude: string
@@ -57,7 +57,7 @@ const EMPTY_FORM: FormState = {
   museumName: "",
   name: "",
   era: "",
-  unearthedAt: "",
+  placeOfExcavation: "",
   displayLocationName: "",
   latitude: "",
   longitude: "",
@@ -199,7 +199,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       museumName: parsed.museum_name ?? current.museumName,
       name: parsed.artifact_name ?? current.name,
       era: parsed.era ?? current.era,
-      unearthedAt: parsed.unearthed_at ?? current.unearthedAt,
+      placeOfExcavation: parsed.Place_of_Excavation ?? current.placeOfExcavation,
       displayLocationName: current.displayLocationName || parsed.museum_name || "",
     }))
 
@@ -272,7 +272,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           museum_name: form.museumName.trim() || null,
           name: form.name.trim(),
           era: form.era.trim() || null,
-          unearthed_at: form.unearthedAt.trim() || null,
+          Place_of_Excavation: form.placeOfExcavation.trim() || null,
         }),
       })
       setForm((current) => ({
@@ -313,7 +313,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           museum_name: form.museumName.trim(),
           name: form.name.trim(),
           era: form.era.trim() || null,
-          unearthed_at: form.unearthedAt.trim() || null,
+          Place_of_Excavation: form.placeOfExcavation.trim() || null,
           description: form.description.trim() || null,
           tags: form.tags,
           display_location_name: form.displayLocationName.trim() || null,
@@ -442,7 +442,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   {parsedName.catalog_no ? <span>编号：{parsedName.catalog_no}</span> : null}
                 </div>
                 {parsedName.artifact_name ? <p className="result-desc">名称：{parsedName.artifact_name}</p> : null}
-                {parsedName.unearthed_at ? <p className="result-desc">出土：{parsedName.unearthed_at}</p> : null}
+                {parsedName.Place_of_Excavation ? <p className="result-desc">出土：{parsedName.Place_of_Excavation}</p> : null}
               </div>
             ) : null}
           </div>
@@ -527,9 +527,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <label className="field">
                       <span>出土信息</span>
                       <input
-                        value={form.unearthedAt}
+                        value={form.placeOfExcavation}
                         placeholder="例如：1976年嘉祥英山一号隋墓出土"
-                        onChange={(event) => setForm((current) => ({ ...current, unearthedAt: event.target.value }))}
+                        onChange={(event) => setForm((current) => ({ ...current, placeOfExcavation: event.target.value }))}
                       />
                     </label>
                   </div>

@@ -59,6 +59,7 @@ class ArtifactImageCreate(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = None
+    capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     captured_at: datetime | None = None
@@ -84,7 +85,7 @@ class ArtifactCreate(BaseModel):
     museum_id: int
     name: str
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     images: list[ArtifactImageCreate] = Field(default_factory=list)
@@ -94,7 +95,7 @@ class ArtifactUpdate(BaseModel):
     museum_name: str
     name: str
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     image_id: int | None = None
@@ -102,6 +103,7 @@ class ArtifactUpdate(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = "常设"
+    capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     captured_at: datetime | None = None
@@ -116,7 +118,7 @@ class CloudArtifactSubmitRequest(BaseModel):
     museum_name: str
     name: str
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     existing_artifact_id: int | None = None
     skip_existing_match: bool = False
@@ -125,6 +127,7 @@ class CloudArtifactSubmitRequest(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = "常设"
+    capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
     captured_at: datetime | None = None
@@ -139,7 +142,7 @@ class ArtifactRead(BaseModel):
     museum_id: int
     name: str
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     created_at: datetime
     museum_name: str
@@ -151,6 +154,8 @@ class ArtifactRead(BaseModel):
         default_factory=list,
         validation_alias=AliasChoices("exhibition_records", "exhibitions"),
     )
+    duplicate_image_skipped: bool = False
+    duplicate_image_detail: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -188,7 +193,7 @@ class ParsedArtifactNameRead(BaseModel):
     era: str | None = None
     artifact_name: str | None = None
     museum_name: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     catalog_no: str | None = None
 
 
@@ -197,7 +202,7 @@ class ArtifactDescriptionGenerateRequest(BaseModel):
     museum_name: str | None = None
     name: str
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
 
 
 class ArtifactDescriptionGenerateRead(BaseModel):
@@ -212,7 +217,7 @@ class ExifArtifactSubmitRequest(BaseModel):
     museum_name: str
     name: str
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     display_location_name: str | None = None
@@ -276,6 +281,71 @@ class WebBridgeLoginStartRead(BaseModel):
     login_command: str | None = None
 
 
+class GooglePhotosStatusRead(BaseModel):
+    enabled: bool
+    auth_configured: bool
+    connected: bool
+    detail: str | None = None
+
+
+class GooglePhotosConfigRead(BaseModel):
+    client_id: str = ""
+    redirect_uri: str = ""
+    has_client_secret: bool = False
+
+
+class GooglePhotosConfigUpdate(BaseModel):
+    client_id: str
+    client_secret: str
+    redirect_uri: str
+
+
+class GooglePhotosAuthStartRead(BaseModel):
+    auth_url: str
+
+
+class GooglePhotosPickerSessionCreate(BaseModel):
+    max_item_count: int = Field(default=200, ge=1, le=2000)
+
+
+class GooglePhotosPickerSessionRead(BaseModel):
+    id: str
+    picker_uri: str
+    media_items_set: bool = False
+    poll_interval_ms: int | None = None
+    timeout_in_ms: int | None = None
+    expire_time: datetime | None = None
+
+
+class GooglePhotosMediaItemRead(BaseModel):
+    id: str
+    filename: str
+    base_url: str
+    product_url: str | None = None
+    mime_type: str | None = None
+    width: int | None = None
+    height: int | None = None
+    creation_time: datetime | None = None
+    thumbnail_url: str | None = None
+
+
+class GooglePhotosMediaListRead(BaseModel):
+    items: list[GooglePhotosMediaItemRead] = Field(default_factory=list)
+    next_page_token: str | None = None
+
+
+class GooglePhotosImportRequest(BaseModel):
+    session_id: str
+    media_item_ids: list[str] = Field(default_factory=list)
+
+
+class GooglePhotosImportRead(BaseModel):
+    imported: int
+    skipped: int
+    warnings: list[str] = Field(default_factory=list)
+    items: list["PendingArtifactRead"] = Field(default_factory=list)
+
+
 # ── Batch identification (local side) ────────────────────────────────────────────
 
 
@@ -294,7 +364,7 @@ class PendingArtifactRead(BaseModel):
     museum_name: str | None = None
     name: str | None = None
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
     camera_model: str | None = None
@@ -330,7 +400,7 @@ class PendingArtifactUpdate(BaseModel):
     museum_name: str | None = None
     name: str | None = None
     era: str | None = None
-    unearthed_at: str | None = None
+    Place_of_Excavation: str | None = None
     description: str | None = None
     tags: list[str] | None = None
     camera_model: str | None = None
@@ -354,3 +424,9 @@ class BatchIdentifyRequest(BaseModel):
 
 class PendingArtifactSubmitRequest(BaseModel):
     skip_existing_match: bool = False
+
+
+class PendingArtifactSubmitResult(BaseModel):
+    item: PendingArtifactRead
+    duplicate_image_skipped: bool = False
+    duplicate_image_detail: str | None = None

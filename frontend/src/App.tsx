@@ -4,7 +4,7 @@ import "./App.css"
 import BatchConsole from "./BatchConsole"
 import ExifConsole from "./ExifConsole"
 import Gallery from "./Gallery"
-import MuseumConsole from "./MuseumConsole"
+import MuseumBrowser from "./MuseumBrowser"
 
 type HealthResponse = {
   status: string
@@ -173,6 +173,13 @@ type ExhibitionOption = {
 type SubmitNotice = {
   type: "success" | "error"
   text: string
+}
+
+type ArtifactSubmitResult = {
+  id: number
+  name: string
+  duplicate_image_skipped?: boolean
+  duplicate_image_detail?: string | null
 }
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? "" : "http://localhost:8000")).replace(/\/$/, "")
@@ -950,7 +957,7 @@ function App() {
       if (!artifactForm.exhibitionName.trim() || artifactForm.exhibitionName.trim().startsWith("@")) {
         throw new Error("请填写或选择展览名称")
       }
-      await fetchJson<unknown>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
+      const result = await fetchJson<ArtifactSubmitResult>(`${apiBaseUrl}/api/artifacts/submit-cloud`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -977,7 +984,12 @@ function App() {
       })
 
       resetCurrentImage()
-      setSubmitNotice({ type: "success", text: "已提交云端，图片已上传 OSS" })
+      setSubmitNotice({
+        type: "success",
+        text: result.duplicate_image_skipped
+          ? (result.duplicate_image_detail ?? `「${result.name}」已有相同图片，已跳过重复上传`)
+          : "已提交云端，图片已上传 OSS",
+      })
     } catch (err) {
       setSubmitNotice({
         type: "error",
@@ -1042,24 +1054,26 @@ function App() {
         </div>
       </header>
 
-      <div className="view-tabs-shell">
-        <nav className="view-tabs">
-          {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
-            <button
-              type="button"
-              key={item.view}
-              className={view === item.view ? "active" : ""}
-              onClick={() => setView(item.view)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      {!cloudOnly ? (
+        <div className="view-tabs-shell">
+          <nav className="view-tabs">
+            {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
+              <button
+                type="button"
+                key={item.view}
+                className={view === item.view ? "active" : ""}
+                onClick={() => setView(item.view)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </nav>
+        </div>
+      ) : null}
 
       {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 
-      {view === "museums" ? <MuseumConsole apiBaseUrl={apiBaseUrl} /> : null}
+      {view === "museums" ? <MuseumBrowser apiBaseUrl={apiBaseUrl} /> : null}
 
       {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 

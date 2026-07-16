@@ -20,6 +20,10 @@ data/*_web_state.json
 data/web_chrome_profile/
 data/login_chrome_profile/
 data/chrome_profile*/
+data/google_photos_config.json
+data/google_photos_token.json
+data/qwen_dom_probe.json
+data/qwen_dom_probe.png
 
 # Local batch import images (mounted into the container)
 import/*

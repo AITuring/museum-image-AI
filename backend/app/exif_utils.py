@@ -143,12 +143,12 @@ def _compose_subject_text(
     *,
     era: str | None,
     museum_name: str | None,
-    unearthed_at: str | None,
+    place_of_excavation: str | None,
 ) -> str | None:
     parts = [
         _clean_text(era),
         _clean_text(museum_name),
-        _clean_text(unearthed_at),
+        _clean_text(place_of_excavation),
     ]
     merged = " | ".join(part for part in parts if part)
     return merged or None
@@ -163,7 +163,7 @@ def update_image_exif_metadata(
     longitude: float | None = None,
     museum_name: str | None = None,
     era: str | None = None,
-    unearthed_at: str | None = None,
+    place_of_excavation: str | None = None,
     software_name: str = "museum-image-AI",
 ) -> bytes:
     if not image_bytes:
@@ -177,7 +177,7 @@ def update_image_exif_metadata(
             subject_text = _compose_subject_text(
                 era=era,
                 museum_name=museum_name,
-                unearthed_at=unearthed_at,
+                place_of_excavation=place_of_excavation,
             )
 
             if title_text:
