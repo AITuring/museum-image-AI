@@ -92,6 +92,7 @@ ARTIFACT_DESCRIPTION_SYSTEM_PROMPT = """
 
 请根据这些已知字段和图片内容，只输出 JSON：
 {
+  "reasoning": "80-180字中文思路，说明描述依据来自哪些已知字段和图片线索",
   "description": "120-260字中文描述",
   "tags": ["标签1", "标签2", "标签3"]
 }
@@ -100,7 +101,8 @@ ARTIFACT_DESCRIPTION_SYSTEM_PROMPT = """
 1. 以上述结构化字段为主，不要篡改或重命名这些字段。
 2. description 可以补充器型、材质、纹饰、工艺、场景题材、用途、出土背景等，但证据不足时宁可省略，不要编造。
 3. tags 返回 3-8 个中文标签，优先保留器类、材质、纹饰、题材、工艺、墓葬/遗址背景，不要重复名称、时代、馆藏单位。
-4. 如果图片无法提供额外信息，也要基于已知字段给出克制、准确的描述。
+4. reasoning 只写模型给出描述的依据摘要，不要输出无关寒暄。
+5. 如果图片无法提供额外信息，也要基于已知字段给出克制、准确的描述。
 """.strip()
 
 @dataclass
@@ -177,6 +179,37 @@ def get_preferred_text_provider() -> VisionProvider | None:
 
     providers, _ = get_enabled_providers()
     return providers[0] if providers else None
+
+
+def get_description_providers() -> tuple[list[VisionProvider], list[str]]:
+    providers: list[VisionProvider] = []
+    unavailable: list[str] = []
+
+    if settings.dashscope_api_key:
+        providers.append(
+            VisionProvider(
+                name="qwen",
+                base_url=settings.dashscope_base_url.rstrip("/"),
+                api_key=settings.dashscope_api_key,
+                model=settings.web_structuring_model,
+            )
+        )
+    else:
+        unavailable.append("qwen")
+
+    if settings.volcengine_api_key:
+        providers.append(
+            VisionProvider(
+                name="doubao",
+                base_url=settings.volcengine_base_url.rstrip("/"),
+                api_key=settings.volcengine_api_key,
+                model=settings.doubao_vision_model,
+            )
+        )
+    else:
+        unavailable.append("doubao")
+
+    return providers, unavailable
 
 
 def build_image_payloads(image_urls: list[str], data_dir: Path) -> list[dict[str, object]]:
@@ -438,6 +471,30 @@ def extract_message_text(data: dict[str, object]) -> str:
     return str(message_content)
 
 
+def extract_message_reasoning(data: dict[str, object]) -> str:
+    message = data.get("choices", [{}])[0].get("message", {})
+    if not isinstance(message, dict):
+        return ""
+
+    reasoning_parts: list[str] = []
+    reasoning_text = message.get("reasoning_content") or message.get("reasoning")
+    if isinstance(reasoning_text, str) and reasoning_text.strip():
+        reasoning_parts.append(reasoning_text.strip())
+
+    message_content = message.get("content")
+    if isinstance(message_content, list):
+        for part in message_content:
+            if not isinstance(part, dict):
+                continue
+            part_type = str(part.get("type", "")).lower()
+            if part_type in {"reasoning", "thinking"}:
+                text = str(part.get("text", "")).strip()
+                if text:
+                    reasoning_parts.append(text)
+
+    return "\n".join(part for part in reasoning_parts if part).strip()
+
+
 def _normalize_tag_value(value: str) -> str:
     return re.sub(r"[\s,，。；;：:、/（）()\[\]【】《》“”\"'·-]+", "", value).lower()
 
@@ -500,7 +557,8 @@ def sanitize_generated_tags(
     return cleaned_tags
 
 
-async def generate_artifact_description(
+def build_artifact_description_payload(
+    provider: VisionProvider,
     *,
     image_urls: list[str],
     data_dir: Path,
@@ -508,11 +566,7 @@ async def generate_artifact_description(
     era: str | None = None,
     museum_name: str | None = None,
     place_of_excavation: str | None = None,
-) -> tuple[VisionProvider, dict[str, object]]:
-    provider = get_preferred_text_provider()
-    if provider is None:
-        raise RuntimeError("未配置可用的大模型，无法生成描述。")
-
+) -> dict[str, object]:
     facts = {
         "artifact_name": artifact_name.strip(),
         "era": (era or "").strip(),
@@ -540,8 +594,106 @@ async def generate_artifact_description(
         ],
         "temperature": 0.2,
     }
+    return payload
+
+
+async def generate_artifact_description_for_provider(
+    provider: VisionProvider,
+    *,
+    image_urls: list[str],
+    data_dir: Path,
+    artifact_name: str,
+    era: str | None = None,
+    museum_name: str | None = None,
+    place_of_excavation: str | None = None,
+) -> dict[str, object]:
+    payload = build_artifact_description_payload(
+        provider,
+        image_urls=image_urls,
+        data_dir=data_dir,
+        artifact_name=artifact_name,
+        era=era,
+        museum_name=museum_name,
+        place_of_excavation=place_of_excavation,
+    )
     data = await request_chat_completion(provider, payload)
-    return provider, parse_json_response(extract_message_text(data))
+    result = parse_json_response(extract_message_text(data))
+    reasoning = (
+        str(result.get("reasoning", "")).strip()
+        or extract_message_reasoning(data)
+    )
+    return {
+        "provider": provider,
+        "result": result,
+        "reasoning": reasoning,
+    }
+
+
+async def generate_artifact_descriptions_parallel(
+    *,
+    image_urls: list[str],
+    data_dir: Path,
+    artifact_name: str,
+    era: str | None = None,
+    museum_name: str | None = None,
+    place_of_excavation: str | None = None,
+) -> tuple[list[dict[str, object]], list[str]]:
+    providers, unavailable = get_description_providers()
+    if not providers:
+        raise RuntimeError("未配置可用的大模型，无法生成描述。")
+
+    tasks = [
+        generate_artifact_description_for_provider(
+            provider,
+            image_urls=image_urls,
+            data_dir=data_dir,
+            artifact_name=artifact_name,
+            era=era,
+            museum_name=museum_name,
+            place_of_excavation=place_of_excavation,
+        )
+        for provider in providers
+    ]
+    settled = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results: list[dict[str, object]] = []
+    for provider, outcome in zip(providers, settled, strict=True):
+        if isinstance(outcome, Exception):
+            results.append(
+                {
+                    "provider": provider,
+                    "error": str(outcome),
+                }
+            )
+            continue
+        results.append(outcome)
+
+    return results, unavailable
+
+
+async def generate_artifact_description(
+    *,
+    image_urls: list[str],
+    data_dir: Path,
+    artifact_name: str,
+    era: str | None = None,
+    museum_name: str | None = None,
+    place_of_excavation: str | None = None,
+) -> tuple[VisionProvider, dict[str, object]]:
+    results, _ = await generate_artifact_descriptions_parallel(
+        image_urls=image_urls,
+        data_dir=data_dir,
+        artifact_name=artifact_name,
+        era=era,
+        museum_name=museum_name,
+        place_of_excavation=place_of_excavation,
+    )
+    for item in results:
+        provider = item.get("provider")
+        result = item.get("result")
+        if isinstance(provider, VisionProvider) and isinstance(result, dict):
+            return provider, result
+    raise RuntimeError("未获取到有效的描述生成结果。")
 
 
 async def request_chat_completion(

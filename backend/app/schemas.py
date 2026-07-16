@@ -205,11 +205,24 @@ class ArtifactDescriptionGenerateRequest(BaseModel):
     Place_of_Excavation: str | None = None
 
 
+class ArtifactDescriptionCandidateRead(BaseModel):
+    provider: str
+    model: str
+    description: str = ""
+    tags: list[str] = Field(default_factory=list)
+    reasoning: str | None = None
+    status: str = "success"
+    error: str | None = None
+
+
 class ArtifactDescriptionGenerateRead(BaseModel):
     provider: str
     model: str
     description: str
     tags: list[str] = Field(default_factory=list)
+    reasoning: str | None = None
+    candidates: list[ArtifactDescriptionCandidateRead] = Field(default_factory=list)
+    unavailable_providers: list[str] = Field(default_factory=list)
 
 
 class ExifArtifactSubmitRequest(BaseModel):

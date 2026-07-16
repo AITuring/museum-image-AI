@@ -52,6 +52,7 @@ from app.reference_data import WENWU_MUSEUM_COORDINATES
 from app.oss import upload_image
 from app.schemas import (
     ArtifactCreate,
+    ArtifactDescriptionCandidateRead,
     ArtifactDescriptionGenerateRead,
     ArtifactDescriptionGenerateRequest,
     ArtifactImageAttach,
@@ -93,6 +94,7 @@ from app.schemas import (
 )
 from app.vision import (
     generate_artifact_description,
+    generate_artifact_descriptions_parallel,
     get_enabled_providers,
     request_provider_analysis,
     stream_provider_analysis,
@@ -1102,8 +1104,14 @@ async def generate_artifact_description_payload(
     era: str | None,
     Place_of_Excavation: str | None,
 ) -> ArtifactDescriptionGenerateRead:
+    fallback_description = build_fallback_description(
+        museum_name=museum_name,
+        name=name,
+        era=era,
+        Place_of_Excavation=Place_of_Excavation,
+    )
     try:
-        provider, result = await generate_artifact_description(
+        raw_results, unavailable_providers = await generate_artifact_descriptions_parallel(
             image_urls=[image_url] if image_url else [],
             data_dir=DATA_DIR,
             artifact_name=name,
@@ -1111,34 +1119,82 @@ async def generate_artifact_description_payload(
             museum_name=museum_name,
             place_of_excavation=Place_of_Excavation,
         )
-        description = optional_text(str(result.get("description", ""))) or build_fallback_description(
-            museum_name=museum_name,
-            name=name,
-            era=era,
-            Place_of_Excavation=Place_of_Excavation,
-        )
-        tags = [
-            str(tag).strip()
-            for tag in result.get("tags", [])
-            if str(tag).strip()
-        ]
+        candidates: list[ArtifactDescriptionCandidateRead] = []
+        preferred_candidate: ArtifactDescriptionCandidateRead | None = None
+
+        for item in raw_results:
+            provider = item.get("provider")
+            if not hasattr(provider, "name") or not hasattr(provider, "model"):
+                continue
+
+            if item.get("error"):
+                candidates.append(
+                    ArtifactDescriptionCandidateRead(
+                        provider=str(provider.name),
+                        model=str(provider.model),
+                        status="error",
+                        error=str(item["error"]),
+                    )
+                )
+                continue
+
+            result = item.get("result")
+            if not isinstance(result, dict):
+                candidates.append(
+                    ArtifactDescriptionCandidateRead(
+                        provider=str(provider.name),
+                        model=str(provider.model),
+                        status="error",
+                        error="模型未返回可解析的 JSON 结果。",
+                    )
+                )
+                continue
+
+            description = optional_text(str(result.get("description", ""))) or fallback_description
+            tags = [
+                str(tag).strip()
+                for tag in result.get("tags", [])
+                if str(tag).strip()
+            ]
+            candidate = ArtifactDescriptionCandidateRead(
+                provider=str(provider.name),
+                model=str(provider.model),
+                description=description,
+                tags=tags,
+                reasoning=optional_text(str(result.get("reasoning", "")))
+                or optional_text(str(item.get("reasoning", ""))),
+                status="success",
+            )
+            candidates.append(candidate)
+
+            if preferred_candidate is None or candidate.provider == "qwen":
+                preferred_candidate = candidate
+
+        if preferred_candidate is not None:
+            return ArtifactDescriptionGenerateRead(
+                provider=preferred_candidate.provider,
+                model=preferred_candidate.model,
+                description=preferred_candidate.description,
+                tags=preferred_candidate.tags,
+                reasoning=preferred_candidate.reasoning,
+                candidates=candidates,
+                unavailable_providers=unavailable_providers,
+            )
+
         return ArtifactDescriptionGenerateRead(
-            provider=provider.name,
-            model=provider.model,
-            description=description,
-            tags=tags,
+            provider="fallback",
+            model="fallback",
+            description=fallback_description,
+            tags=[],
+            candidates=candidates,
+            unavailable_providers=unavailable_providers,
         )
     except Exception as exc:  # noqa: BLE001 - graceful fallback for copy generation
         logger.warning("generate artifact description failed: %s", exc, exc_info=exc)
         return ArtifactDescriptionGenerateRead(
             provider="fallback",
             model="fallback",
-            description=build_fallback_description(
-                museum_name=museum_name,
-                name=name,
-                era=era,
-                Place_of_Excavation=Place_of_Excavation,
-            ),
+            description=fallback_description,
             tags=[],
         )
 

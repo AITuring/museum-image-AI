@@ -116,20 +116,18 @@ Backend health: <http://localhost:8000/api/health\>
 
 ### 启用
 
-在 `.env` 中设置（参见 `.env.example`）：
+在 `.env` 中保留这几个最小配置即可：
 
 ```bash
 QWEN_WEB_ENABLED=true
-WEB_HEADLESS=false                       # 有头模式（Docker 里走 Xvfb）
-WEB_BROWSER_CHANNEL=chrome               # 真实 Google Chrome
-WEB_USER_DATA_DIR=/data/web_chrome_profile
 QWEN_WEB_STORAGE_STATE=/data/qwen_web_state.json
+WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011   # 可选，推荐本机 Docker 开发时使用
 ```
 
 ### Docker 部署
 
 - 后端镜像已安装真实 Chrome 与 Xvfb（见 `backend/Dockerfile`），`CMD` 通过 `xvfb-run` 启动 uvicorn，有头 Chrome 可在无显示器服务器中运行。
-- 把登录得到的 `data/qwen_web_state.json` 挂载/拷贝到容器的 `/data/` 下（与 `QWEN_WEB_STORAGE_STATE` 路径一致）。`data/` 在 compose 中已挂载，`WEB_USER_DATA_DIR` 的持久化 profile 也写在这里。
+- 把登录得到的 `data/qwen_web_state.json` 挂载/拷贝到容器的 `/data/` 下（与 `QWEN_WEB_STORAGE_STATE` 路径一致）。`data/` 在 compose 中已挂载。
 
 ### 宿主机桥接模式（推荐给本机 Docker 开发）
 
@@ -155,9 +153,8 @@ WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011
 ### 注意事项
 
 - 有头真实 Chrome（Xvfb）比纯 API 占用更多 CPU/内存，识别也更慢（需等网页端 agent 跑完）。
-- `WEB_USER_DATA_DIR` 持久化目录同一时刻只能被一个进程占用：后端单进程没问题，但**不要在后端运行时用同一个 profile 跑登录脚本**。
-- 网页端 DOM 变化时，抓取可能失效：可调 `QWEN_WEB_ANSWER_SELECTOR`，或更新 `web_bridge.py` 里的输入框/发送按钮选择器。
-- 网页桥上传前会在内存/临时文件中自动压缩超过 `WEB_UPLOAD_MAX_FILE_BYTES` 的大图，以适配通义网页端限制；压缩会尽量把结果控制在 `WEB_UPLOAD_TARGET_MIN_FILE_BYTES` 到 `WEB_UPLOAD_TARGET_MAX_FILE_BYTES` 之间，并限制最长边不超过 `WEB_UPLOAD_MAX_DIMENSION`。这不会修改本地原图，也不会影响后续提交到 OSS 的原始图片字节。
+- 网页端 DOM 变化时，抓取可能失效，此时需要调整 `backend/app/web_bridge.py` 中的选择器逻辑。
+- 图片上传前会自动做网页桥兼容处理，不会修改你的本地原图。
 
 ## 批量识别入库（本地同步 / Google Photos 同步 → 云端 OSS）
 
@@ -186,10 +183,11 @@ WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011
 
 ```bash
 APP_ROLE=local
-IMPORT_DIR=/abs/path/to/your/images   # 仅用于挂载本地图库到容器；当前前端本地上传不再依赖手填路径
-QWEN_WEB_ENABLED=true                  # 见上一节，需先登录
-CLOUD_API_BASE_URL=https://your-aliyun-server   # 云端地址
-INGEST_TOKEN=<一段随机长字符串>        # 与云端保持一致
+IMPORT_DIR=./import
+QWEN_WEB_ENABLED=true
+QWEN_WEB_STORAGE_STATE=/data/qwen_web_state.json
+CLOUD_API_BASE_URL=https://your-aliyun-server
+INGEST_TOKEN=<与云端一致的共享令牌>
 ```
 
 ### 本地上传 / Google Photos 同步
@@ -220,7 +218,6 @@ http://localhost:8000/api/google-photos/callback
 GOOGLE_PHOTOS_CLIENT_ID=...
 GOOGLE_PHOTOS_CLIENT_SECRET=...
 GOOGLE_PHOTOS_REDIRECT_URI=http://localhost:8000/api/google-photos/callback
-GOOGLE_PHOTOS_TOKEN_PATH=/data/google_photos_token.json
 ```
 
 #### 3）前端操作
@@ -242,11 +239,12 @@ GOOGLE_PHOTOS_TOKEN_PATH=/data/google_photos_token.json
 ```bash
 APP_ROLE=cloud
 INGEST_TOKEN=<与本地相同的字符串>
+DATABASE_URL=postgresql+psycopg://...
 OSS_ACCESS_KEY_ID=...
 OSS_ACCESS_KEY_SECRET=...
 OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
 OSS_BUCKET=your-bucket
-# DATABASE_URL 指向云端 Postgres
+OSS_PUBLIC_BASE_URL=
 ```
 
 ### 云端部署：后端在阿里云（Docker），前端在 Vercel
@@ -255,7 +253,7 @@ OSS_BUCKET=your-bucket
 
 #### 1）阿里云服务器（后端 + DB）
 
-`docker-compose.cloud.yml` 只含 Postgres(+pgvector) 与后端(cloud 角色)，不装 Chrome/Xvfb（`INSTALL_BROWSER=false`，构建精简）。
+`docker-compose.cloud.yml` 只含 Postgres(+pgvector) 与后端(cloud 角色)，不装 Chrome/Xvfb，构建更轻。
 
 ```bash
 git pull
@@ -294,30 +292,61 @@ docker compose -f docker-compose.cloud.yml up -d --build
 - 批量识别串行且慢（网页桥一次一个会话），属预期；可分批跑。
 - 原图通过后端 `GET /api/batch/pending/{id}/image` 提供给前端预览（直接读本地源文件，不复制）。
 
-## 联调命令
+## 环境变量
 
-下面这套命令按“本地 Docker + 可选 Google Photos + 重复上传验证”来走，适合第一次真实联调。
+项目现在只保留最小环境变量集合，完整模板见 `.env.example`。
 
-### 1）准备 `.env`
+### 本地开发最少需要
 
 ```bash
-cp .env.example .env
+APP_ENV=development
+APP_ROLE=local
+DATABASE_URL=postgresql+psycopg://museum:museum123@postgres:5432/museum_image_db
+CORS_ORIGINS=http://localhost:5173
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
-最少要填：
+### 启用通义网页桥
 
 ```bash
 QWEN_WEB_ENABLED=true
-CLOUD_API_BASE_URL=https://your-cloud-api
-INGEST_TOKEN=your-shared-token
+QWEN_WEB_STORAGE_STATE=/data/qwen_web_state.json
+WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011
 ```
 
-如果要测 Google Photos，再补：
+### 启用描述生成
+
+```bash
+DASHSCOPE_API_KEY=你的 key
+WEB_STRUCTURING_MODEL=qwen-plus
+```
+
+### 启用 Google Photos 导入
 
 ```bash
 GOOGLE_PHOTOS_CLIENT_ID=...
 GOOGLE_PHOTOS_CLIENT_SECRET=...
 GOOGLE_PHOTOS_REDIRECT_URI=http://localhost:8000/api/google-photos/callback
+```
+
+### 启用云端提交 / OSS
+
+```bash
+CLOUD_API_BASE_URL=https://your-cloud-api
+INGEST_TOKEN=your-shared-token
+OSS_ACCESS_KEY_ID=...
+OSS_ACCESS_KEY_SECRET=...
+OSS_ENDPOINT=https://oss-cn-hangzhou.aliyuncs.com
+OSS_BUCKET=your-bucket
+OSS_PUBLIC_BASE_URL=
+```
+
+## 联调命令
+
+### 1）准备 `.env`
+
+```bash
+cp .env.example .env
 ```
 
 ### 2）检查 compose 配置
@@ -332,39 +361,25 @@ docker compose config
 docker compose up --build
 ```
 
-### 4）确认后端在线
+### 4）确认服务在线
 
 ```bash
 curl http://localhost:8000/api/health
-```
-
-### 5）确认 Google Photos 配置状态
-
-```bash
 curl http://localhost:8000/api/google-photos/status
 ```
 
-### 6）从浏览器做真实联调
+### 5）从浏览器做真实联调
 
 - 打开 `http://localhost:5173`
-- 进入「批量识别入库」
-- 测本地上传：选择一个包含几张图片的文件夹
-- 测 Google Photos：点「连接 Google Photos」，完成授权后选择相册和图片同步
-- 点「开始识别」
-- 核对后点「提交云端」
+- 进入「批量识别入库」测试本地上传或 Google Photos
+- 进入「EXIF 入库」测试单图上传、名称解析、描述生成、EXIF 回写
+- 核对后提交到云端
 
-### 7）验证待处理池是否落库
+### 6）检查待处理池
 
 ```bash
 curl http://localhost:8000/api/batch/pending
 ```
-
-### 8）验证重复上传是否跳过
-
-同一批图片再次执行一遍本地上传或 Google Photos 同步，然后再次提交，预期结果：
-
-- 本地待处理池阶段：相同图片按 hash 被跳过，不会重复新增。
-- 云端提交阶段：如果图片之前已经入过云端，前端提示“已存在相同图片，已跳过重复上传”。
 
 ## Planned Next Steps
 
