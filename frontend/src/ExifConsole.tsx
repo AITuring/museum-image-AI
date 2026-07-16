@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
+import AMapLoader from "@amap/amap-jsapi-loader"
 
 type ParsedArtifactName = {
   original_name: string
@@ -52,6 +53,7 @@ type FormState = {
   era: string
   placeOfExcavation: string
   displayLocationName: string
+  exhibitionName: string
   latitude: string
   longitude: string
   description: string
@@ -92,6 +94,7 @@ const EMPTY_FORM: FormState = {
   era: "",
   placeOfExcavation: "",
   displayLocationName: "",
+  exhibitionName: "常设",
   latitude: "",
   longitude: "",
   description: "",
@@ -162,6 +165,7 @@ function hasMeaningfulFormValue(form: FormState) {
       form.era.trim() ||
       form.placeOfExcavation.trim() ||
       form.displayLocationName.trim() ||
+      form.exhibitionName.trim() ||
       form.latitude.trim() ||
       form.longitude.trim() ||
       form.description.trim() ||
@@ -177,6 +181,7 @@ function applySharedForm(current: FormState, shared: FormState): FormState {
     era: shared.era,
     placeOfExcavation: shared.placeOfExcavation,
     displayLocationName: shared.displayLocationName,
+    exhibitionName: shared.exhibitionName,
     latitude: shared.latitude,
     longitude: shared.longitude,
     description: shared.description,
@@ -209,6 +214,113 @@ function toNullableNumber(value: string) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
+type AMapEvent = { lnglat?: { getLng: () => number; getLat: () => number } }
+type AMapInstance = {
+  on: (event: string, handler: (event: AMapEvent) => void) => void
+  clearMap: () => void
+  setZoomAndCenter: (zoom: number, center: [number, number]) => void
+  add: (marker: unknown) => void
+}
+type AMapSdk = {
+  Map: new (element: HTMLDivElement, options: Record<string, unknown>) => AMapInstance
+  Marker: new (options: Record<string, unknown>) => { on: (event: string, handler: (event: AMapEvent) => void) => void }
+  Geocoder: new (options: Record<string, unknown>) => {
+    getAddress: (position: [number, number], callback: (status: string, result: { regeocode?: { formattedAddress?: string } }) => void) => void
+  }
+}
+
+declare global {
+  interface Window {
+    AMap?: AMapSdk
+    _AMapSecurityConfig?: Record<string, string>
+  }
+}
+
+const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE as string | undefined
+const AMAP_SCRIPT_SRC = import.meta.env.VITE_AMAP_SCRIPT_SRC as string | undefined
+
+function loadAmap(): Promise<AMapSdk> {
+  if (window.AMap) return Promise.resolve(window.AMap)
+  if (!AMAP_SCRIPT_SRC) return Promise.reject(new Error("未配置高德地图脚本"))
+  const key = new URL(AMAP_SCRIPT_SRC).searchParams.get("key")
+  if (!key) return Promise.reject(new Error("高德地图 Key 不完整"))
+  if (AMAP_SECURITY_CODE) window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
+  return AMapLoader.load({
+    key,
+    version: "2.0",
+    plugins: ["AMap.Geocoder", "AMap.PlaceSearch"],
+  }) as Promise<AMapSdk>
+}
+
+function GpsMapPicker({ latitude, longitude, onPick }: {
+  latitude: string
+  longitude: string
+  onPick: (latitude: string, longitude: string, locationName?: string) => void
+}) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const mapRef = useRef<AMapInstance | null>(null)
+  const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading")
+
+  async function applyPoint(event: AMapEvent) {
+    if (!event.lnglat) return
+    const nextLatitude = event.lnglat.getLat().toFixed(6)
+    const nextLongitude = event.lnglat.getLng().toFixed(6)
+    let locationName = ""
+    try {
+      const AMap = await loadAmap()
+      locationName = await new Promise<string>((resolve) => {
+        new AMap.Geocoder({}).getAddress([Number(nextLongitude), Number(nextLatitude)], (status, result) => {
+          resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")
+        })
+      })
+    } catch {
+      // Coordinates remain usable even if reverse geocoding is unavailable.
+    }
+    onPick(nextLatitude, nextLongitude, locationName || undefined)
+  }
+
+  useEffect(() => {
+    if (!containerRef.current || !AMAP_SCRIPT_SRC) { setState("missing"); return }
+    let disposed = false
+    const mount = async () => {
+      try {
+      const AMap = await loadAmap()
+      if (disposed || !containerRef.current) return
+      const latitudeValue = Number(latitude) || 39.90923
+      const longitudeValue = Number(longitude) || 116.397428
+      const map = new AMap.Map(containerRef.current, { zoom: 15, center: [longitudeValue, latitudeValue] })
+      map.on("click", (event) => {
+        void applyPoint(event)
+      })
+      mapRef.current = map
+      setState("ready")
+      } catch {
+        if (!disposed) setState("error")
+      }
+    }
+    void mount()
+    return () => { disposed = true }
+  }, [])
+
+  useEffect(() => {
+    const latitudeValue = Number(latitude)
+    const longitudeValue = Number(longitude)
+    const map = mapRef.current
+    if (!map || !window.AMap || !Number.isFinite(latitudeValue) || !Number.isFinite(longitudeValue)) return
+    map.clearMap()
+    map.setZoomAndCenter(15, [longitudeValue, latitudeValue])
+    const marker = new window.AMap.Marker({ position: [longitudeValue, latitudeValue], draggable: true })
+    marker.on("dragend", (event) => {
+      void applyPoint(event)
+    })
+    map.add(marker)
+  }, [latitude, longitude, onPick])
+
+  if (state === "missing") return <p className="muted gps-map-hint">高德地图配置未载入，请检查前端重启后是否读取项目 .env。</p>
+  if (state === "error") return <p className="error-text">地图加载失败，请直接填写坐标。</p>
+  return <div className="gps-map-wrap"><div ref={containerRef} className="gps-map" />{state === "loading" ? <span>正在加载地图…</span> : null}</div>
+}
+
 function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
@@ -221,6 +333,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [descriptionProgress, setDescriptionProgress] = useState<string[]>([])
   const [submittingAll, setSubmittingAll] = useState(false)
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
 
@@ -457,19 +570,41 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
 
     setGenerating(true)
+    setDescriptionProgress(["准备研究线索…"])
     setSubmitNotice(null)
     try {
-      const generated = await fetchJson<GeneratedDescription>(`${apiBaseUrl}/api/artifacts/generate-description`, {
+      const descriptionForm = new FormData()
+      descriptionForm.append("file", selectedItem.localFile)
+      descriptionForm.append("museum_name", targetForm.museumName.trim())
+      descriptionForm.append("name", targetForm.name.trim())
+      descriptionForm.append("era", targetForm.era.trim())
+      descriptionForm.append("Place_of_Excavation", targetForm.placeOfExcavation.trim())
+      const response = await fetch(`${apiBaseUrl}/api/artifacts/generate-description-stream-file`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_url: null,
-          museum_name: targetForm.museumName.trim() || null,
-          name: targetForm.name.trim(),
-          era: targetForm.era.trim() || null,
-          Place_of_Excavation: targetForm.placeOfExcavation.trim() || null,
-        }),
+        body: descriptionForm,
       })
+      if (!response.ok || !response.body) throw new Error(`生成描述失败（HTTP ${response.status}）`)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let pending = ""
+      let generated: GeneratedDescription | null = null
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        pending += decoder.decode(value, { stream: true })
+        const lines = pending.split("\n")
+        pending = lines.pop() ?? ""
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue
+          const event = JSON.parse(line.slice(5).trim()) as { type: string; message?: string; result?: GeneratedDescription }
+          if (event.type === "progress" && event.message) {
+            const message = event.message
+            setDescriptionProgress((current) => current[current.length - 1] === message ? current : [...current, message].slice(-4))
+          }
+          if (event.type === "result" && event.result) generated = event.result
+        }
+      }
+      if (!generated) throw new Error("模型未返回可用结果")
 
       const nextSharedForm: FormState = {
         ...cloneFormState(targetForm),
@@ -562,6 +697,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         data.append("Place_of_Excavation", target.form.placeOfExcavation.trim() || "")
         data.append("description", target.form.description.trim() || "")
         data.append("display_location_name", target.form.displayLocationName.trim() || "")
+        data.append("exhibition_name", target.form.exhibitionName.trim() || "常设")
         if (latitude !== null) data.append("latitude", String(latitude))
         if (longitude !== null) data.append("longitude", String(longitude))
       }
@@ -788,6 +924,14 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         />
                       </label>
                       <label className="field">
+                        <span>对应展览</span>
+                        <input
+                          value={sharedForm.exhibitionName}
+                          placeholder="例如：常设展 / 汉唐文明展"
+                          onChange={(event) => updateSharedForm({ exhibitionName: event.target.value })}
+                        />
+                      </label>
+                      <label className="field">
                         <span>纬度 / 经度</span>
                         <div className="field-row">
                           <input
@@ -961,6 +1105,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         ) : null}
                       </label>
 
+                      <label className="field">
+                        <span>对应展览</span>
+                        <input
+                          value={selectedItem.form.exhibitionName}
+                          placeholder="例如：常设展 / 汉唐文明展"
+                          onChange={(event) => updateSelectedForm({ exhibitionName: event.target.value })}
+                        />
+                      </label>
+
                       <div className="field-row">
                         <label className="field">
                           <span>纬度</span>
@@ -979,6 +1132,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                           />
                         </label>
                       </div>
+                      <GpsMapPicker
+                        latitude={selectedItem.form.latitude}
+                        longitude={selectedItem.form.longitude}
+                        onPick={(latitude, longitude, displayLocationName) => updateSelectedForm({
+                          latitude,
+                          longitude,
+                          ...(displayLocationName ? { displayLocationName } : {}),
+                        })}
+                      />
                     </div>
                   </section>
 
@@ -994,6 +1156,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </button>
                         {selectedItem.descriptionMeta ? <p className="muted">{selectedItem.descriptionMeta}</p> : null}
                       </div>
+                      {generating ? (
+                        <ol className="research-trace" aria-live="polite">
+                          {descriptionProgress.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}
+                        </ol>
+                      ) : null}
                       <div className="exif-model-grid">
                         {selectedItem.candidates.length > 0 ? selectedItem.candidates.map((candidate) => (
                           <article key={`${candidate.provider}-${candidate.model}`} className={`result-block exif-model-card ${candidate.status !== "success" ? "is-error" : ""}`}>

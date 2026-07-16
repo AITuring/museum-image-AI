@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -1971,15 +1972,63 @@ async def generate_artifact_description_file_api(
     era: str | None = Form(None),
     Place_of_Excavation: str | None = Form(None),
 ) -> ArtifactDescriptionGenerateRead:
+    image_urls: list[str] = []
     if file is not None:
-        await file.read()
+        image_bytes = await file.read()
+        if image_bytes:
+            content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+            image_urls = [f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"]
 
     return await generate_artifact_description_payload(
-        image_urls=[],
+        image_urls=image_urls,
         museum_name=museum_name,
         name=name,
         era=era,
         Place_of_Excavation=Place_of_Excavation,
+    )
+
+
+@app.post(f"{settings.api_prefix}/artifacts/generate-description-stream-file")
+async def generate_artifact_description_stream_file_api(
+    file: UploadFile | None = File(None),
+    museum_name: str | None = Form(None),
+    name: str = Form(...),
+    era: str | None = Form(None),
+    Place_of_Excavation: str | None = Form(None),
+) -> StreamingResponse:
+    image_urls: list[str] = []
+    if file is not None:
+        image_bytes = await file.read()
+        if image_bytes:
+            content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
+            image_urls = [f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"]
+
+    async def event_generator():
+        phases = [
+            "已读取文件名与已确认字段，正在建立编目线索",
+            "正在观察图像中的材质、器形、纹饰与文字线索",
+            "正在组织可核查的研究描述与特征标签",
+        ]
+        yield f"data: {json.dumps({'type': 'progress', 'message': phases[0]}, ensure_ascii=False)}\n\n"
+        task = asyncio.create_task(generate_artifact_description_payload(
+            image_urls=image_urls,
+            museum_name=museum_name,
+            name=name,
+            era=era,
+            Place_of_Excavation=Place_of_Excavation,
+        ))
+        phase_index = 1
+        while not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=1.2)
+            except asyncio.TimeoutError:
+                yield f"data: {json.dumps({'type': 'progress', 'message': phases[phase_index % len(phases)]}, ensure_ascii=False)}\n\n"
+                phase_index += 1
+        result = await task
+        yield f"data: {json.dumps({'type': 'result', 'result': result.model_dump()}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -2085,6 +2134,7 @@ async def submit_artifact_with_exif_file(
     description: str | None = Form(None),
     tags: str = Form("[]"),
     display_location_name: str | None = Form(None),
+    exhibition_name: str | None = Form("常设"),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
     existing_artifact_id: int | None = Form(None),
@@ -2170,7 +2220,7 @@ async def submit_artifact_with_exif_file(
             camera_model=None,
             lens_model=None,
             capture_museum_name=display_location_name,
-            exhibition_name="常设",
+            exhibition_name=exhibition_name,
             capture_location=display_location_name,
             latitude=latitude,
             longitude=longitude,

@@ -5367,3 +5367,29 @@ button.ghost {
   .topbar::before { display: none; }
   .exif-workbench-head::after { right: 16px; }
 }
+
+.gps-map-wrap {
+  position: relative;
+  min-height: 240px;
+  overflow: hidden;
+  border: 1px solid rgba(87, 65, 43, 0.13);
+  border-radius: 7px;
+  background: var(--ui-surface-wash);
+}
+
+.gps-map { width: 100%; min-height: 240px; }
+.gps-map-wrap > span { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-soft); background: rgba(255,252,245,.72); }
+.gps-map-hint { margin: 0; padding: 10px 12px; border-left: 3px solid var(--ui-human); background: var(--ui-human-wash); font-size: .8rem; }
+
+.research-trace {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0 0;
+  padding: 10px 12px 10px 30px;
+  border-left: 2px solid rgba(139, 61, 49, 0.45);
+  background: rgba(248, 238, 230, 0.56);
+  color: var(--ink-soft);
+  font-size: .82rem;
+}
+
+.research-trace li:last-child { color: var(--accent); font-weight: 700; }
