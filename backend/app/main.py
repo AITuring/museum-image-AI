@@ -312,6 +312,7 @@ def run_startup_migrations(connection) -> None:
     }
     image_column_definitions = {
         "image_hash": "VARCHAR(64)",
+        "source_hash": "VARCHAR(64)",
         "camera_model": "VARCHAR(255)",
         "lens_model": "VARCHAR(255)",
         "capture_museum_id": "INTEGER",
@@ -334,6 +335,12 @@ def run_startup_migrations(connection) -> None:
         text(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_artifact_images_image_hash "
             "ON artifact_images (image_hash)"
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_artifact_images_source_hash "
+            "ON artifact_images (source_hash)"
         )
     )
     legacy_image_rows = connection.execute(
@@ -766,6 +773,8 @@ def normalize_era_label(value: str | None) -> str | None:
     text_value = optional_text(value)
     if text_value is None:
         return None
+    if text_value.startswith("五代十国"):
+        return text_value
     for token in ERA_TOKEN_CANDIDATES:
         if text_value == token or text_value.startswith(token):
             if token.endswith(("代", "时期", "朝")):
@@ -806,7 +815,10 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
 
     for segment in segments:
         normalized_era = normalize_era_label(segment)
-        if era is None and normalized_era in {normalize_era_label(token) for token in ERA_TOKEN_CANDIDATES}:
+        if era is None and (
+            normalized_era in {normalize_era_label(token) for token in ERA_TOKEN_CANDIDATES}
+            or segment.startswith("五代十国")
+        ):
             era = normalized_era
             continue
         if catalog_no is None and CATALOG_NO_PATTERN.match(segment):
@@ -996,6 +1008,12 @@ def find_artifact_image_by_hash_local(db: Session, image_hash: str) -> ArtifactI
     return db.scalar(artifact_image_query().where(ArtifactImage.image_hash == image_hash))
 
 
+def find_artifact_image_by_source_hash_local(db: Session, source_hash: str | None) -> ArtifactImage | None:
+    if not source_hash:
+        return None
+    return db.scalar(artifact_image_query().where(ArtifactImage.source_hash == source_hash))
+
+
 def build_duplicate_image_detail(image: ArtifactImage | ArtifactImageRead) -> str:
     meta: list[str] = []
     museum_name = getattr(image, "museum_name", None)
@@ -1135,6 +1153,7 @@ async def submit_artifact_to_cloud(
     aperture: str | None,
     iso: int | None,
     edit_method: str | None,
+    source_hash: str | None = None,
 ) -> ArtifactRead:
     if not settings.cloud_api_base_url:
         raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
@@ -1167,6 +1186,7 @@ async def submit_artifact_to_cloud(
         "aperture": aperture or "",
         "iso": "" if iso is None else str(iso),
         "edit_method": edit_method or "",
+        "source_hash": source_hash or "",
     }
     if existing_artifact_id is not None:
         submit_data["existing_artifact_id"] = str(existing_artifact_id)
@@ -2022,8 +2042,9 @@ async def generate_artifact_description_stream_file_api(
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=1.2)
             except asyncio.TimeoutError:
-                yield f"data: {json.dumps({'type': 'progress', 'message': phases[phase_index % len(phases)]}, ensure_ascii=False)}\n\n"
-                phase_index += 1
+                if phase_index < len(phases):
+                    yield f"data: {json.dumps({'type': 'progress', 'message': phases[phase_index]}, ensure_ascii=False)}\n\n"
+                    phase_index += 1
         result = await task
         yield f"data: {json.dumps({'type': 'result', 'result': result.model_dump()}, ensure_ascii=False)}\n\n"
 
@@ -2163,6 +2184,7 @@ async def submit_artifact_with_exif_file(
     original_bytes = await file.read()
     if not original_bytes:
         raise HTTPException(status_code=400, detail="图片内容为空。")
+    source_hash = hash_bytes(original_bytes)
 
     try:
         parsed_tags = json.loads(tags or "[]")
@@ -2229,6 +2251,7 @@ async def submit_artifact_with_exif_file(
             aperture=None,
             iso=None,
             edit_method=None,
+            source_hash=source_hash,
         )
     except Exception as exc:
         # #region debug-point B:submit-error
@@ -2273,6 +2296,7 @@ async def ingest_artifact(
     aperture: str | None = Form(None),
     iso: str | None = Form(None),
     edit_method: str | None = Form(None),
+    source_hash: str | None = Form(None),
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> Artifact:
@@ -2283,7 +2307,7 @@ async def ingest_artifact(
     if not contents:
         raise HTTPException(status_code=400, detail="图片内容为空。")
     image_hash = hash_bytes(contents)
-    duplicate_image = find_artifact_image_by_hash_local(db, image_hash)
+    duplicate_image = find_artifact_image_by_source_hash_local(db, source_hash) or find_artifact_image_by_hash_local(db, image_hash)
     if duplicate_image is not None:
         return build_duplicate_artifact_read(duplicate_image)
 
@@ -2368,6 +2392,7 @@ async def ingest_artifact(
         ArtifactImage(
             url=image_url,
             image_hash=image_hash,
+            source_hash=source_hash or image_hash,
             capture_museum_id=capture_museum.id if capture_museum is not None else None,
             exhibition_id=exhibition.id if exhibition is not None else None,
             capture_location=optional_text(capture_location),

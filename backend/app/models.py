@@ -221,6 +221,9 @@ class ArtifactImage(Base):
     )
     url: Mapped[str] = mapped_column(String(512), nullable=False)
     image_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    # Hash of the bytes before Museum writes EXIF. Unlike image_hash this remains
+    # stable when a reviewed image is saved again with the same metadata.
+    source_hash: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     camera_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     lens_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
     capture_museum_id: Mapped[int | None] = mapped_column(

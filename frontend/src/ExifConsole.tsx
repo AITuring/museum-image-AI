@@ -43,6 +43,11 @@ type SubmitNotice = {
   text: string
 }
 
+type ArtifactSubmitResult = {
+  duplicate_image_skipped?: boolean
+  duplicate_image_detail?: string | null
+}
+
 type ExifConsoleProps = {
   apiBaseUrl: string
 }
@@ -63,16 +68,20 @@ type FormState = {
 type ExifWorkbenchItem = {
   id: string
   fileName: string
+  originalFileName: string
   previewUrl: string
   localFile: File
   fileHandle: WritableFileHandle | null
   parsedName: ParsedArtifactName | null
   form: FormState
+  originalForm: FormState
   candidates: DescriptionCandidate[]
   unavailableProviders: string[]
   descriptionMeta: string | null
   submitState: "idle" | "submitting" | "submitted" | "error"
   submitMessage: string | null
+  uploadProgress: number
+  uploadStage: string | null
 }
 
 type WritableFileStream = { write(data: Blob): Promise<void>; close(): Promise<void> }
@@ -80,6 +89,7 @@ type WritableFileHandle = {
   name: string
   getFile(): Promise<File>
   createWritable(): Promise<WritableFileStream>
+  requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
 }
 type FilePickerWindow = Window & {
   showOpenFilePicker?: (options: {
@@ -118,6 +128,27 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
     throw new Error(message)
   }
   return (await response.json()) as T
+}
+
+function postFormDataWithProgress<T>(url: string, formData: FormData, onProgress: (progress: number) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open("POST", url)
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(Math.min(95, 45 + Math.round((event.loaded / event.total) * 50)))
+    }
+    request.onerror = () => reject(new Error("图片上传连接失败"))
+    request.onload = () => {
+      let payload: { detail?: string } | T | null = null
+      try { payload = JSON.parse(request.responseText) as { detail?: string } | T } catch { /* non-json error */ }
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error((payload as { detail?: string } | null)?.detail || `HTTP ${request.status}`))
+        return
+      }
+      resolve(payload as T)
+    }
+    request.send(formData)
+  })
 }
 
 async function loadMuseumSuggestions(
@@ -227,6 +258,18 @@ function fileBaseName(name: string) {
 function normalizedFileName(baseName: string, referenceName: string) {
   const normalized = baseName.trim().replace(/[\\/:*?"<>|]/g, "")
   return normalized ? `${normalized}${fileExtension(referenceName)}` : referenceName
+}
+
+function changedParts(item: ExifWorkbenchItem) {
+  const changed: string[] = []
+  if (item.fileName !== item.originalFileName) changed.push("名称")
+  const initial = item.originalForm
+  const current = item.form
+  if (initial.latitude !== current.latitude || initial.longitude !== current.longitude) changed.push("GPS")
+  if (initial.displayLocationName !== current.displayLocationName || initial.exhibitionName !== current.exhibitionName) changed.push("展出")
+  if (initial.name !== current.name || initial.era !== current.era || initial.museumName !== current.museumName || initial.placeOfExcavation !== current.placeOfExcavation) changed.push("信息")
+  if (initial.description !== current.description || initial.tags.join("\u0000") !== current.tags.join("\u0000")) changed.push("内容")
+  return changed
 }
 
 type AMapEvent = { lnglat?: { getLng: () => number; getLat: () => number } }
@@ -343,6 +386,7 @@ function GpsMapPicker({ latitude, longitude, onPick }: {
 
 function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const itemsRef = useRef<ExifWorkbenchItem[]>([])
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tagInput, setTagInput] = useState("")
@@ -356,6 +400,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [descriptionProgress, setDescriptionProgress] = useState<string[]>([])
   const [batchPrefix, setBatchPrefix] = useState("")
   const [batchSuffix, setBatchSuffix] = useState("")
+  const [batchRemove, setBatchRemove] = useState("")
+  const [batchLocationName, setBatchLocationName] = useState("")
+  const [batchExhibitionName, setBatchExhibitionName] = useState("常设")
+  const [batchLatitude, setBatchLatitude] = useState("")
+  const [batchLongitude, setBatchLongitude] = useState("")
+  const [parsingFileName, setParsingFileName] = useState(false)
   const [submittingAll, setSubmittingAll] = useState(false)
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
 
@@ -378,11 +428,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
   }, [items])
 
-  useEffect(() => {
-    return () => {
-      items.forEach((item) => URL.revokeObjectURL(item.previewUrl))
-    }
-  }, [items])
+  const batchRenameCount = useMemo(() => items.filter((item) => (
+    normalizedFileName(`${batchPrefix}${fileBaseName(item.fileName).split(batchRemove).join("")}${batchSuffix}`, item.fileName) !== item.fileName
+  )).length, [items, batchPrefix, batchRemove, batchSuffix])
+
+  useEffect(() => { itemsRef.current = items }, [items])
+
+  useEffect(() => () => {
+    itemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
+  }, [])
 
   useEffect(() => {
     if (!selectedItem || !showMuseumSuggestions) {
@@ -404,6 +458,44 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     return () => window.clearTimeout(timer)
   }, [apiBaseUrl, selectedItem, showLocationSuggestions])
 
+  useEffect(() => {
+    if (!selectedItem?.fileName.trim()) return
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setParsingFileName(true)
+      try {
+        const parsed = await fetchJson<ParsedArtifactName>(
+          `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: selectedItem.fileName }).toString()}`,
+        )
+        if (cancelled) return
+        let museum: MuseumOption | null = null
+        if (parsed.museum_name) {
+          try { museum = await resolveMuseum(apiBaseUrl, parsed.museum_name) } catch { /* keep parsed metadata */ }
+        }
+        if (cancelled) return
+        updateItem(selectedItem.id, (item) => ({
+          ...item,
+          parsedName: parsed,
+          form: {
+            ...item.form,
+            name: parsed.artifact_name ?? item.form.name,
+            era: parsed.era ?? item.form.era,
+            museumName: parsed.museum_name ?? item.form.museumName,
+            placeOfExcavation: parsed.Place_of_Excavation ?? item.form.placeOfExcavation,
+            displayLocationName: parsed.museum_name ?? item.form.displayLocationName,
+            latitude: museum?.latitude?.toString() ?? item.form.latitude,
+            longitude: museum?.longitude?.toString() ?? item.form.longitude,
+          },
+        }))
+      } catch {
+        // Keep manual fields usable while the filename is incomplete.
+      } finally {
+        if (!cancelled) setParsingFileName(false)
+      }
+    }, 280)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [apiBaseUrl, selectedId, selectedItem?.fileName])
+
   function updateItem(itemId: string, updater: (item: ExifWorkbenchItem) => ExifWorkbenchItem) {
     setItems((current) => current.map((item) => (item.id === itemId ? updater(item) : item)))
   }
@@ -422,16 +514,80 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function renameSelected(baseName: string) {
     if (!selectedItem) return
-    updateItem(selectedItem.id, (item) => ({ ...item, fileName: normalizedFileName(baseName, item.fileName) }))
+    updateItem(selectedItem.id, (item) => ({
+      ...item,
+      fileName: normalizedFileName(baseName, item.fileName),
+      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+    }))
   }
 
   function applyBatchRename() {
-    if (!batchPrefix && !batchSuffix) return
+    if (!batchPrefix && !batchSuffix && !batchRemove) return
+    const renamed = items.map((item) => ({
+      id: item.id,
+      fileName: normalizedFileName(
+        `${batchPrefix}${fileBaseName(item.fileName).split(batchRemove).join("")}${batchSuffix}`,
+        item.fileName,
+      ),
+    }))
     setItems((current) => current.map((item) => ({
       ...item,
-      fileName: normalizedFileName(`${batchPrefix}${fileBaseName(item.fileName)}${batchSuffix}`, item.fileName),
+      fileName: renamed.find((entry) => entry.id === item.id)?.fileName ?? item.fileName,
+      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
     })))
+    void Promise.all(renamed.map(async (entry) => {
+      try {
+        const parsed = await fetchJson<ParsedArtifactName>(
+          `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: entry.fileName }).toString()}`,
+        )
+        updateItem(entry.id, (item) => ({
+          ...item,
+          parsedName: parsed,
+          form: {
+            ...item.form,
+            name: parsed.artifact_name ?? item.form.name,
+            era: parsed.era ?? item.form.era,
+            museumName: parsed.museum_name ?? item.form.museumName,
+            placeOfExcavation: parsed.Place_of_Excavation ?? item.form.placeOfExcavation,
+            displayLocationName: parsed.museum_name ?? item.form.displayLocationName,
+          },
+        }))
+      } catch { /* retain the renamed filename and existing metadata */ }
+    }))
     setSubmitNotice({ type: "success", text: `已按规则更新 ${items.length} 个目标文件名，入库时将使用新名称` })
+  }
+
+  function useSelectedLocationForBatch() {
+    if (!selectedItem) return
+    setBatchLocationName(selectedItem.form.displayLocationName)
+    setBatchExhibitionName(selectedItem.form.exhibitionName)
+    setBatchLatitude(selectedItem.form.latitude)
+    setBatchLongitude(selectedItem.form.longitude)
+    setSubmitNotice({ type: "success", text: "已带入当前图片的展出地点与 GPS，可继续微调后应用到全部图片" })
+  }
+
+  function applyBatchLocation() {
+    const latitude = toNullableNumber(batchLatitude)
+    const longitude = toNullableNumber(batchLongitude)
+    if ((latitude === null) !== (longitude === null)) {
+      setSubmitNotice({ type: "error", text: "批量 GPS 需要同时填写纬度和经度" })
+      return
+    }
+    setItems((current) => current.map((item) => ({
+      ...item,
+      form: {
+        ...item.form,
+        displayLocationName: batchLocationName.trim() || item.form.displayLocationName,
+        exhibitionName: batchExhibitionName.trim() || item.form.exhibitionName,
+        latitude: latitude === null ? item.form.latitude : String(latitude),
+        longitude: longitude === null ? item.form.longitude : String(longitude),
+      },
+      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+    })))
+    setSubmitNotice({ type: "success", text: `已将展出地点与 GPS 应用到 ${items.length} 张图片` })
   }
 
   function updateSharedForm(patch: Partial<FormState>) {
@@ -500,16 +656,20 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     return {
       id: buildItemId(file, index),
       fileName: file.name,
+      originalFileName: file.name,
       previewUrl: URL.createObjectURL(file),
       localFile: file,
       fileHandle,
       parsedName,
       form,
+      originalForm: cloneFormState(form),
       candidates: [],
       unavailableProviders: [],
       descriptionMeta: null,
       submitState: "idle",
       submitMessage: null,
+      uploadProgress: 0,
+      uploadStage: null,
     }
   }
 
@@ -526,8 +686,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         types: [{ description: "文物图片", accept: { "image/*": [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"] } }],
       })
       setUploading(true)
-      const builtItems = await Promise.all(handles.map(async (handle, index) =>
-        createWorkbenchItem(await handle.getFile(), index, handle)))
+      const builtItems = await Promise.all(handles.map(async (handle, index) => {
+        const permission = await handle.requestPermission?.({ mode: "readwrite" })
+        const writableHandle = permission === "denied" ? null : handle
+        return createWorkbenchItem(await handle.getFile(), index, writableHandle)
+      }))
       setItems((current) => [...current, ...builtItems])
       setSelectedId((current) => current ?? builtItems[0]?.id ?? null)
       setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片，并获得原地回写授权` })
@@ -600,7 +763,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       return
     }
     const fallbackName = selectedItem.parsedName?.artifact_name || fileBaseName(selectedItem.fileName)
-    const targetForm = items.length > 1 ? sharedForm : selectedItem.form
+    // A filename edit always belongs to the current image. Shared fields are
+    // only applied after the operator explicitly chooses “应用到全部图片”.
+    const targetForm = selectedItem.form
     const resolvedForm = targetForm.name.trim() ? targetForm : { ...targetForm, name: fallbackName }
     if (!resolvedForm.name.trim()) return
     if (!targetForm.name.trim()) {
@@ -638,7 +803,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           const event = JSON.parse(line.slice(5).trim()) as { type: string; message?: string; result?: GeneratedDescription }
           if (event.type === "progress" && event.message) {
             const message = event.message
-            setDescriptionProgress((current) => current[current.length - 1] === message ? current : [...current, message].slice(-4))
+            setDescriptionProgress((current) => current.includes(message) ? current : [...current, message])
           }
           if (event.type === "result" && event.result) generated = event.result
         }
@@ -716,6 +881,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (!target) {
       return
     }
+    if (target.submitState === "submitted" && changedParts(target).length === 0) {
+      setSubmitNotice({ type: "success", text: "该图片已入库且没有新的修改，无需重复提交。" })
+      return
+    }
     if (!target.form.name.trim() || !target.form.museumName.trim()) {
       updateItem(itemId, (item) => ({
         ...item,
@@ -725,7 +894,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       return
     }
 
-    updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null }))
+    updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null, uploadProgress: 8, uploadStage: "正在准备 EXIF 信息" }))
     try {
       const latitude = toNullableNumber(target.form.latitude)
       const longitude = toNullableNumber(target.form.longitude)
@@ -745,7 +914,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         type: target.localFile.type,
         lastModified: target.localFile.lastModified,
       })
+      let localWriteSucceeded = false
       if (target.fileHandle) {
+        updateItem(itemId, (item) => ({ ...item, uploadProgress: 16, uploadStage: "正在生成可回写的图片" }))
         const exifForm = new FormData()
         exifForm.append("file", target.localFile)
         appendMetadata(exifForm)
@@ -755,36 +926,51 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         })
         if (!response.ok) throw new Error(`本地 EXIF 回写准备失败（HTTP ${response.status}）`)
         const editedBlob = await response.blob()
-        const writable = await target.fileHandle.createWritable()
-        await writable.write(editedBlob)
-        await writable.close()
+        try {
+          const writable = await target.fileHandle.createWritable()
+          await writable.write(editedBlob)
+          await writable.close()
+          localWriteSucceeded = true
+        } catch {
+          // Browser permission can expire between selection and submit. The
+          // reviewed bytes still continue to cloud ingest below.
+          setSubmitNotice({ type: "error", text: "本地原图未获写入权限，已继续提交更新后的副本到云端" })
+        }
         uploadFile = new File([editedBlob], target.fileName, {
           type: editedBlob.type || target.localFile.type,
           lastModified: Date.now(),
         })
       }
 
+      updateItem(itemId, (item) => ({ ...item, uploadProgress: 45, uploadStage: "正在上传 OSS 并写入档案" }))
+
       const formData = new FormData()
       formData.append("file", uploadFile)
       appendMetadata(formData)
       formData.append("tags", JSON.stringify(target.form.tags))
-      await fetchJson(`${apiBaseUrl}/api/artifacts/exif-submit-file`, {
-        method: "POST",
-        body: formData,
+      const result = await postFormDataWithProgress<ArtifactSubmitResult>(`${apiBaseUrl}/api/artifacts/exif-submit-file`, formData, (progress) => {
+        updateItem(itemId, (item) => ({ ...item, uploadProgress: progress, uploadStage: "正在上传 OSS 并写入档案" }))
       })
       updateItem(itemId, (item) => ({
         ...item,
         localFile: uploadFile,
+        originalFileName: item.fileName,
+        originalForm: cloneFormState(item.form),
         submitState: "submitted",
-        submitMessage: target.fileHandle
+        submitMessage: result.duplicate_image_skipped
+          ? (result.duplicate_image_detail || "云端已存在相同原图，本次未重复上传。")
+          : localWriteSucceeded
           ? "已覆盖本地原图，并同步上传 OSS 与云端数据库"
           : "已写入云端图片 EXIF 并完成入库；本地原图未覆盖",
+        uploadProgress: 100,
+        uploadStage: "已完成",
       }))
     } catch (error) {
       updateItem(itemId, (item) => ({
         ...item,
         submitState: "error",
         submitMessage: error instanceof Error ? error.message : "提交失败",
+        uploadStage: "提交失败",
       }))
     }
   }
@@ -795,7 +981,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
     setSubmittingAll(true)
     setSubmitNotice(null)
-    for (const item of items) {
+    for (const item of items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)) {
       await submitOne(item.id)
     }
     setSubmittingAll(false)
@@ -854,7 +1040,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               </div>
               <div className="exif-queue-actions">
                 <button type="button" className="ghost" onClick={() => void clearAll()} disabled={items.length === 0}>清空</button>
-                <button type="button" className="primary" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0}>
+                <button type="button" className="primary" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0 || items.every((item) => item.submitState === "submitted" && changedParts(item).length === 0)}>
                   {submittingAll ? "提交中..." : "全部入库"}
                 </button>
               </div>
@@ -862,11 +1048,32 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             <details className="batch-rename-panel">
               <summary>批量修改目标文件名</summary>
               <div>
-                <input value={batchPrefix} placeholder="统一前缀" onChange={(event) => setBatchPrefix(event.target.value)} />
-                <input value={batchSuffix} placeholder="统一后缀" onChange={(event) => setBatchSuffix(event.target.value)} />
+                <input value={batchRemove} placeholder="删除文本" onChange={(event) => setBatchRemove(event.target.value)} />
+                <input value={batchPrefix} placeholder="添加前缀" onChange={(event) => setBatchPrefix(event.target.value)} />
+                <input value={batchSuffix} placeholder="添加后缀" onChange={(event) => setBatchSuffix(event.target.value)} />
                 <button type="button" className="ghost" onClick={applyBatchRename} disabled={items.length === 0}>应用</button>
               </div>
-              <p className="muted">只修改入库与导出文件名；原地改名需通过文件夹授权。</p>
+              <p className="muted">将变更 {batchRenameCount}/{items.length} 个文件名；名称变动后会即时重解析时代、馆藏与出土信息。</p>
+            </details>
+            <details className="batch-location-panel">
+              <summary>批量修改展出地点与 GPS</summary>
+              <button type="button" className="text-button" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>采用当前图片的地点</button>
+              <div className="batch-location-fields">
+                <input value={batchLocationName} placeholder="展出地点名称" onChange={(event) => setBatchLocationName(event.target.value)} />
+                <input value={batchExhibitionName} placeholder="对应展览" onChange={(event) => setBatchExhibitionName(event.target.value)} />
+                <input value={batchLatitude} placeholder="纬度" onChange={(event) => setBatchLatitude(event.target.value)} />
+                <input value={batchLongitude} placeholder="经度" onChange={(event) => setBatchLongitude(event.target.value)} />
+              </div>
+              <GpsMapPicker
+                latitude={batchLatitude}
+                longitude={batchLongitude}
+                onPick={(latitude, longitude, locationName) => {
+                  setBatchLatitude(latitude)
+                  setBatchLongitude(longitude)
+                  if (locationName) setBatchLocationName(locationName)
+                }}
+              />
+              <button type="button" className="primary" onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</button>
             </details>
             <div className="exif-queue-list">
               {items.length > 0 ? items.map((item) => (
@@ -883,7 +1090,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   <div className="exif-queue-copy">
                     <strong title={item.fileName}>{item.fileName}</strong>
                     <span>{item.form.name || item.parsedName?.artifact_name || "待确认名称"}</span>
-                    <em>
+                    <em className={`queue-submit-state ${item.submitState}`}>
                       {item.submitState === "submitted"
                         ? "已提交"
                         : item.submitState === "submitting"
@@ -892,6 +1099,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                             ? "提交失败"
                             : "待处理"}
                     </em>
+                    {changedParts(item).length > 0 ? (
+                      <span className="queue-change-list" aria-label="待提交的变更">
+                        {changedParts(item).map((part) => <b key={part}>{part}已改</b>)}
+                      </span>
+                    ) : null}
+                    {item.submitState === "submitting" ? (
+                      <span className="queue-upload" aria-label={`${item.uploadStage ?? "提交中"} ${item.uploadProgress}%`}>
+                        <i style={{ width: `${item.uploadProgress}%` }} />
+                        <small>{item.uploadStage ?? "提交中"} · {item.uploadProgress}%</small>
+                      </span>
+                    ) : null}
                   </div>
                   <span
                     className="exif-remove"
@@ -1037,6 +1255,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       />
                       <em>{fileExtension(selectedItem.fileName)}</em>
                     </label>
+                    <p className="muted exif-file-parse-status">
+                      {parsingFileName ? "正在从文件名更新字段…" : "文件名变化会自动回填时代、名称、出土与馆藏"}
+                    </p>
                     {selectedItem.parsedName ? (
                       <div className="result-meta">
                         {selectedItem.parsedName.era ? <span>时代：{selectedItem.parsedName.era}</span> : null}
@@ -1216,9 +1437,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         {selectedItem.descriptionMeta ? <p className="muted">{selectedItem.descriptionMeta}</p> : null}
                       </div>
                       {generating ? (
-                        <ol className="research-trace" aria-live="polite">
-                          {descriptionProgress.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}
-                        </ol>
+                        <div className="research-trace" aria-live="polite">
+                          {descriptionProgress.map((step) => <span key={step}>{step}</span>)}
+                          <span className="research-trace-waiting">模型正在生成研究结果…</span>
+                        </div>
                       ) : null}
                       <div className="exif-model-grid">
                         {selectedItem.candidates.length > 0 ? selectedItem.candidates.map((candidate) => (
@@ -1313,8 +1535,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>{submitNotice.text}</p>
                   ) : <span />}
                 </div>
-                <button type="submit" className="primary" disabled={selectedItem.submitState === "submitting"}>
-                  {selectedItem.submitState === "submitting" ? "正在入库…" : "保存并入库"}
+                <button type="submit" className="primary" disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}>
+                  {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : "保存并入库"}
                 </button>
               </div>
             </form>

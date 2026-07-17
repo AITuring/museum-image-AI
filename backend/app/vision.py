@@ -587,13 +587,16 @@ def build_artifact_description_payload(
 
     payload = {
         "model": provider.model,
-        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": ARTIFACT_DESCRIPTION_SYSTEM_PROMPT},
             {"role": "user", "content": content_parts},
         ],
         "temperature": 0.2,
     }
+    # Some Ark/Doubao endpoints reject OpenAI-compatible JSON mode with HTTP 400.
+    # The system prompt still mandates JSON and the parser accepts fenced JSON.
+    if provider.name != "doubao":
+        payload["response_format"] = {"type": "json_object"}
     return payload
 
 
@@ -713,6 +716,11 @@ async def request_chat_completion(
                     },
                     json=payload,
                 )
+                if not response.is_success:
+                    detail = response.text.strip().replace("\n", " ")[:800]
+                    raise RuntimeError(
+                        f"{provider.name} 请求失败（HTTP {response.status_code}）：{detail or '服务未返回错误详情'}"
+                    )
                 response.raise_for_status()
                 return response.json()
         except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.RemoteProtocolError) as exc:
