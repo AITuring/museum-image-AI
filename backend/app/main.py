@@ -1004,6 +1004,20 @@ def hash_bytes(contents: bytes) -> str:
     return digest.hexdigest()
 
 
+def verify_written_gps(image_bytes: bytes, latitude: float | None, longitude: float | None) -> None:
+    """Fail loudly instead of uploading an image whose requested GPS was not written."""
+    if latitude is None or longitude is None:
+        return
+    metadata = extract_exif_metadata(image_bytes)
+    if (
+        metadata.latitude is None
+        or metadata.longitude is None
+        or abs(metadata.latitude - latitude) > 0.00001
+        or abs(metadata.longitude - longitude) > 0.00001
+    ):
+        raise HTTPException(status_code=500, detail="图片 GPS 写入校验失败，未提交入库。")
+
+
 def find_artifact_image_by_hash_local(db: Session, image_hash: str) -> ArtifactImage | None:
     return db.scalar(artifact_image_query().where(ArtifactImage.image_hash == image_hash))
 
@@ -2061,6 +2075,7 @@ async def prepare_artifact_exif_file(
     era: str | None = Form(None),
     Place_of_Excavation: str | None = Form(None),
     description: str | None = Form(None),
+    display_location_name: str | None = Form(None),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
 ) -> Response:
@@ -2083,7 +2098,9 @@ async def prepare_artifact_exif_file(
         museum_name=museum_name,
         era=era,
         place_of_excavation=Place_of_Excavation,
+        display_location_name=display_location_name,
     )
+    verify_written_gps(image_bytes, latitude, longitude)
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
     return Response(content=image_bytes, media_type=content_type)
 
@@ -2112,7 +2129,9 @@ async def submit_artifact_with_exif(payload: ExifArtifactSubmitRequest) -> Artif
         museum_name=payload.museum_name,
         era=payload.era,
         place_of_excavation=payload.Place_of_Excavation,
+        display_location_name=payload.display_location_name,
     )
+    verify_written_gps(image_bytes, payload.latitude, payload.longitude)
     image_path.write_bytes(image_bytes)
     return await submit_artifact_to_cloud(
         image_bytes=image_bytes,
@@ -2210,7 +2229,9 @@ async def submit_artifact_with_exif_file(
         museum_name=museum_name,
         era=era,
         place_of_excavation=Place_of_Excavation,
+        display_location_name=display_location_name,
     )
+    verify_written_gps(image_bytes, latitude, longitude)
     # #region debug-point B:submit-after-exif
     report_debug_event(
         session_id="exif-submit-parse",

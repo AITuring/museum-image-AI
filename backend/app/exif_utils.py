@@ -6,6 +6,7 @@ from fractions import Fraction
 from io import BytesIO
 
 from PIL import Image
+from PIL.TiffImagePlugin import IFDRational
 
 TAG_IMAGE_DESCRIPTION = 270
 TAG_MODEL = 272
@@ -130,13 +131,20 @@ def _encode_xp_text(value: str | None) -> bytes | None:
     return f"{text}\x00".encode("utf-16le")
 
 
-def _decimal_to_gps_rational(value: float) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+def _decimal_to_gps_rational(value: float) -> tuple[IFDRational, IFDRational, IFDRational]:
     absolute = abs(float(value))
     degrees = int(absolute)
     minutes_float = (absolute - degrees) * 60
     minutes = int(minutes_float)
     seconds = round((minutes_float - minutes) * 60 * 1_000_000)
-    return ((degrees, 1), (minutes, 1), (seconds, 1_000_000))
+    # Pillow's EXIF writer requires IFDRational objects here. Plain (n, d)
+    # tuples look valid but cause the whole save to fail, silently leaving the
+    # source file untouched in our previous error-safe path.
+    return (
+        IFDRational(degrees, 1),
+        IFDRational(minutes, 1),
+        IFDRational(seconds, 1_000_000),
+    )
 
 
 def _compose_subject_text(
@@ -164,6 +172,7 @@ def update_image_exif_metadata(
     museum_name: str | None = None,
     era: str | None = None,
     place_of_excavation: str | None = None,
+    display_location_name: str | None = None,
     software_name: str = "museum-image-AI",
 ) -> bytes:
     if not image_bytes:
@@ -189,8 +198,15 @@ def update_image_exif_metadata(
                 exif.pop(TAG_IMAGE_DESCRIPTION, None)
                 exif.pop(TAG_XP_TITLE, None)
 
-            if description_text:
-                xp_comment = _encode_xp_text(description_text)
+            # EXIF has no universal human-readable "exhibition location" field.
+            # Keep it together with the catalogue description so exported photos
+            # retain the operator-entered place in common photo viewers.
+            location_text = _clean_text(display_location_name)
+            comment_text = "\n".join(
+                item for item in (description_text, f"展出地点：{location_text}" if location_text else None) if item
+            ) or None
+            if comment_text:
+                xp_comment = _encode_xp_text(comment_text)
                 if xp_comment is not None:
                     exif[TAG_XP_COMMENT] = xp_comment
             else:
@@ -211,7 +227,7 @@ def update_image_exif_metadata(
                 gps_ifd = {}
 
             if latitude is not None and longitude is not None:
-                gps_ifd[GPS_VERSION_ID] = (2, 3, 0, 0)
+                gps_ifd[GPS_VERSION_ID] = b"\x02\x03\x00\x00"
                 gps_ifd[GPS_LATITUDE_REF] = "N" if latitude >= 0 else "S"
                 gps_ifd[GPS_LATITUDE] = _decimal_to_gps_rational(latitude)
                 gps_ifd[GPS_LONGITUDE_REF] = "E" if longitude >= 0 else "W"
