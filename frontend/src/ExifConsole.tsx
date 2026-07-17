@@ -1039,8 +1039,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <p className="muted">{stats.submittedCount}/{stats.itemCount} 已完成</p>
               </div>
               <div className="exif-queue-actions">
+                <button type="button" className="primary" onClick={() => void handleOpenWritableFiles()} disabled={uploading}>
+                  {uploading ? "读取中" : "添加图片"}
+                </button>
                 <button type="button" className="ghost" onClick={() => void clearAll()} disabled={items.length === 0}>清空</button>
-                <button type="button" className="primary" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0 || items.every((item) => item.submitState === "submitted" && changedParts(item).length === 0)}>
+                <button type="button" className="ghost" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0 || items.every((item) => item.submitState === "submitted" && changedParts(item).length === 0)}>
                   {submittingAll ? "提交中..." : "全部入库"}
                 </button>
               </div>

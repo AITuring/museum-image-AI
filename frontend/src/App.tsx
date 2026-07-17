@@ -690,7 +690,6 @@ function App() {
   useEffect(() => {
     const normalizedView = normalizeViewFromPath(window.location.pathname)
     const targetPath = getPathForView(normalizedView)
-    setViewState(normalizedView)
     if (window.location.pathname !== targetPath) {
       window.history.replaceState({}, "", targetPath)
     }
@@ -760,8 +759,8 @@ function App() {
   useEffect(() => {
     const rawQuery = artifactForm.captureMuseumName.trim()
     if (!rawQuery.startsWith("@")) {
-      setMuseumSuggestions([])
-      return
+      const timer = window.setTimeout(() => setMuseumSuggestions([]), 0)
+      return () => window.clearTimeout(timer)
     }
     const q = rawQuery.slice(1).trim()
     const controller = new AbortController()
@@ -794,14 +793,15 @@ function App() {
     const nextSuggestions = eraOptions
       .filter((option) => !query || option.name.toLowerCase().includes(query))
       .slice(0, 8)
-    setEraSuggestions(nextSuggestions)
+    const timer = window.setTimeout(() => setEraSuggestions(nextSuggestions), 0)
+    return () => window.clearTimeout(timer)
   }, [artifactForm.era, eraOptions, showEraSuggestions])
 
   useEffect(() => {
     const rawQuery = artifactForm.exhibitionName.trim()
     if (!selectedCaptureMuseum || !rawQuery.startsWith("@")) {
-      setExhibitionSuggestions([])
-      return
+      const timer = window.setTimeout(() => setExhibitionSuggestions([]), 0)
+      return () => window.clearTimeout(timer)
     }
     const q = rawQuery.slice(1).trim()
     const controller = new AbortController()
@@ -834,9 +834,11 @@ function App() {
     const museumName = artifactForm.museumName.trim()
     const era = artifactForm.era.trim()
     if (!name || !museumName || !era) {
-      setMatchedArtifact(null)
-      setSameArtifactDecision(null)
-      return
+      const timer = window.setTimeout(() => {
+        setMatchedArtifact(null)
+        setSameArtifactDecision(null)
+      }, 0)
+      return () => window.clearTimeout(timer)
     }
 
     const controller = new AbortController()
@@ -1003,21 +1005,31 @@ function App() {
   const hasResult = orderedStreams.some((stream) => stream.candidate)
   const displayPreview = previewUrl ?? (uploadedImage ? toAbsoluteUrl(uploadedImage.url) : null)
   const streamError = orderedStreams.length === 0 && !streaming && uploadedImage ? artifactError : null
-
-  const flowSteps = [
-    { label: "上传图片", done: Boolean(uploadedImage), active: !uploadedImage },
-    {
-      label: "实时识别",
-      done: hasResult,
-      active: Boolean(uploadedImage) && !hasResult,
-    },
-    {
-      label: "修改确认",
-      done: Boolean(selectedCandidateKey),
-      active: hasResult && !selectedCandidateKey,
-    },
-    { label: "提交云端", done: false, active: Boolean(selectedCandidateKey) },
+  const selectedStream = selectedCandidateKey ? providerStreams[selectedCandidateKey] : null
+  const selectedCandidate = selectedStream?.candidate ?? null
+  const bestStream = bestCandidateKey ? providerStreams[bestCandidateKey] : null
+  const bestCandidate = bestStream?.candidate ?? null
+  const primaryCandidate = selectedCandidate ?? bestCandidate
+  const requiredFields = [
+    Boolean(uploadedImage),
+    Boolean(artifactForm.museumName.trim()),
+    Boolean(artifactForm.name.trim()),
+    Boolean(artifactForm.captureMuseumName.trim()) && !artifactForm.captureMuseumName.trim().startsWith("@"),
+    Boolean(artifactForm.exhibitionName.trim()) && !artifactForm.exhibitionName.trim().startsWith("@"),
   ]
+  const readyCount = requiredFields.filter(Boolean).length
+  const archiveReady = readyCount === requiredFields.length
+  const singleStatusLabel = artifactSubmitting
+    ? "提交中"
+    : archiveReady
+      ? "可提交"
+      : hasResult
+        ? "待校对"
+        : uploadedImage
+          ? streaming
+            ? "识别中"
+            : "待识别"
+          : "待上传"
 
   return (
     <main className="app-shell">
@@ -1061,55 +1073,20 @@ function App() {
 
       {view === "single" && !cloudOnly ? (
       <>
-      <section className="hero-banner">
-        <div className="hero-copy">
-          <p className="eyebrow">Single Image Workflow</p>
-          <h2>从一张照片，到一条端正可信的文物记录</h2>
-          <p className="muted">
-            上传图片后自动调用多模型识别、检索佐证与结果裁决；你只需在统一表单里校订后提交。
-          </p>
-        </div>
-        <div className="hero-metrics" aria-label="流程说明">
-          <div className="hero-metric">
-            <span className="hero-metric-label">流程</span>
-            <strong>上传 / 识别 / 校订 / 入库</strong>
-          </div>
-          <div className="hero-metric">
-            <span className="hero-metric-label">风格</span>
-            <strong>书卷气 · 温润 · 清晰对齐</strong>
-          </div>
-          <div className="hero-metric">
-            <span className="hero-metric-label">结果</span>
-            <strong>图像、证据、元数据一处完成</strong>
-          </div>
-        </div>
-      </section>
-
-      <ol className="flow-bar">
-        {flowSteps.map((step, index) => (
-          <li
-            key={step.label}
-            className={`flow-step ${step.done ? "done" : ""} ${step.active ? "active" : ""}`}
-          >
-            <span className="flow-index">{step.done ? "✓" : index + 1}</span>
-            <span className="flow-label">{step.label}</span>
-          </li>
-        ))}
-      </ol>
-
-      <div className="layout">
-        <section className="column column-left">
-          <div className="panel">
-            <div className="section-heading">
-              <span className="step-badge">1</span>
+      <section className="single-workbench">
+        <aside className="single-rail" aria-label="图片与候选结果">
+          <section className="single-panel single-upload-panel">
+            <div className="single-panel-head">
               <div>
-                <h2>上传文物图片</h2>
-                <p className="muted">上传后将自动并行调用多模型，实时显示分析与结果。</p>
+                <span className="single-kicker">INPUT</span>
+                <h2>图片</h2>
               </div>
+              <span className={`single-status ${uploadedImage ? "ok" : uploading ? "busy" : ""}`}>
+                {uploading ? "上传中" : uploadedImage ? "已上传" : "待上传"}
+              </span>
             </div>
-
             <label
-              className={`dropzone ${dragging ? "dragging" : ""} ${displayPreview ? "has-image" : ""}`}
+              className={`single-dropzone ${dragging ? "dragging" : ""} ${displayPreview ? "has-image" : ""}`}
               onDragOver={(event) => {
                 event.preventDefault()
                 setDragging(true)
@@ -1139,257 +1116,84 @@ function App() {
               {displayPreview ? (
                 <img src={displayPreview} alt={uploadedImage?.filename ?? "预览"} />
               ) : (
-                <div className="dropzone-empty">
-                  <span className="dropzone-icon">＋</span>
-                  <strong>点击或拖拽图片到此处</strong>
-                  <span className="muted">支持 JPG / PNG，单张</span>
-                </div>
+                <span>
+                  <strong>添加图片</strong>
+                  <em>点击或拖拽 JPG / PNG</em>
+                </span>
               )}
             </label>
-
-            <div className="upload-actions">
+            <div className="single-actions">
               <button
                 type="button"
-                className="ghost"
+                className="primary"
                 onClick={() => uploadedImage && void analyzeImageStream(uploadedImage)}
                 disabled={!uploadedImage || streaming}
               >
-                {streaming ? "识图中…" : "重新识图"}
+                {streaming ? "识别中..." : "重新识别"}
               </button>
-              {(selectedFile || uploadedImage) && (
-                <button type="button" className="ghost danger" onClick={resetCurrentImage}>
-                  清空
-                </button>
-              )}
+              <button type="button" className="ghost" onClick={resetCurrentImage} disabled={!selectedFile && !uploadedImage}>
+                清空
+              </button>
             </div>
-
-            {uploading ? <p className="muted">图片上传中…</p> : null}
+            {uploadedImage ? (
+              <div className="single-meta-list">
+                <span title={uploadedImage.filename}>文件：{uploadedImage.filename}</span>
+                <span>机型：{uploadedImage.camera_model || "未读取"}</span>
+                <span>镜头：{uploadedImage.lens_model || "未读取"}</span>
+              </div>
+            ) : null}
             {unavailableProviders.length > 0 ? (
               <p className="muted">未配置模型：{unavailableProviders.join("、")}</p>
             ) : null}
             {artifactError ? <p className="error-text">{artifactError}</p> : null}
-          </div>
-        </section>
+          </section>
 
-        <section className="column column-right">
-          <div className="section-heading floating">
-            <span className="step-badge">2</span>
-            <div>
-              <h2>模型实时识别</h2>
-              <p className="muted">每个模型独立展示思维链、检索证据与最终结论。</p>
+          <section className="single-panel">
+            <div className="single-panel-head">
+              <div>
+                <span className="single-kicker">CANDIDATES</span>
+                <h2>候选结论</h2>
+              </div>
+              <span className="single-count">{orderedStreams.filter((stream) => stream.candidate).length}</span>
             </div>
-          </div>
-
-          {orderedStreams.length === 0 ? (
-            <div className={`empty-state ${streamError ? "error" : ""}`}>
-              <span className="empty-icon">{streamError ? "⚠️" : streaming ? "⏳" : "🔍"}</span>
-              <strong>{streamError ? "识图失败" : streaming ? "正在连接模型…" : "等待识图"}</strong>
-              <p className="muted">
-                {streamError
-                  ? streamError
-                  : streaming
-                    ? "已上传图片，正在建立实时识别连接。"
-                    : "上传一张文物图片后，这里会实时滚动显示模型的分析过程。"}
-              </p>
-              {streamError && uploadedImage ? (
-                <button
-                  type="button"
-                  className="primary small"
-                  onClick={() => void analyzeImageStream(uploadedImage)}
-                >
-                  重试识图
-                </button>
-              ) : null}
+            <div className="single-candidate-list">
+              {orderedStreams.some((stream) => stream.candidate) ? orderedStreams.map((stream) => {
+                const candidate = stream.candidate
+                if (!candidate) return null
+                return (
+                  <button
+                    key={`candidate-${stream.provider}`}
+                    type="button"
+                    className={`single-candidate ${selectedCandidateKey === stream.provider ? "active" : ""}`}
+                    onClick={() => handleApplyCandidate(candidate)}
+                  >
+                    <span>
+                      <strong>{candidate.artifact_name}</strong>
+                      <em>{stream.provider} · {formatConfidence(candidate.confidence) ?? "可信度待估"}</em>
+                    </span>
+                    {stream.provider === bestCandidateKey ? <b>推荐</b> : null}
+                  </button>
+                )
+              }) : (
+                <p className="muted">识别完成后，候选会在这里集中展示；点一次即可填入右侧表单。</p>
+              )}
             </div>
-          ) : null}
-
-          <div className="stream-list">
-            {orderedStreams.map((stream) => {
-              const candidate = stream.candidate
-              const isBusy = !["done", "result", "error"].includes(stream.stage)
-              return (
-                <article
-                  key={stream.provider}
-                  className={`stream-card ${selectedCandidateKey === stream.provider ? "selected" : ""}`}
-                >
-                  <div className="stream-card-head">
-                    <div className="provider-id">
-                      <span className={`pulse ${isBusy ? "busy" : stream.stage === "error" ? "failed" : "ok"}`} />
-                      <div>
-                        <strong>{stream.provider}</strong>
-                        {stream.model ? <span className="muted">{stream.model}</span> : null}
-                      </div>
-                    </div>
-                    <div className="stream-tags">
-                      {stream.provider === bestCandidateKey && candidate ? (
-                        <span className="badge best">推荐</span>
-                      ) : null}
-                      {stream.cached ? <span className="badge cache">缓存</span> : null}
-                      {candidate ? (
-                        <span className="badge conf">
-                          可信度 {formatConfidence(candidate.confidence) ?? "—"}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="stepper">
-                    {PIPELINE_STEPS.map((step, index) => {
-                      const status = stream.stage === "error" ? "pending" : stepStatus(stream.stage, index)
-                      return (
-                        <div key={step.key} className={`stepper-item ${status}`}>
-                          <span className="stepper-dot">{status === "done" ? "✓" : index + 1}</span>
-                          <span className="stepper-label">{step.label}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  <p className={`stage-status ${stream.stage}`}>{STAGE_LABEL[stream.stage]}</p>
-
-                  {stream.error ? <p className="error-text">{stream.error}</p> : null}
-
-                  {stream.analysis ? (
-                    <div className="reasoning-block">
-                      <div className="reasoning-head">
-                        <span className="reasoning-title">思维链 · 看图分析</span>
-                        {stream.stage === "analyzing" ? <span className="typing">输出中…</span> : null}
-                      </div>
-                      <p className="reasoning-text">{stream.analysis}</p>
-                    </div>
-                  ) : stream.stage === "analyzing" ? (
-                    <div className="skeleton-lines">
-                      <span />
-                      <span />
-                      <span />
-                    </div>
-                  ) : null}
-
-                  {stream.previewCandidates.length > 0 ? (
-                    <div className="chip-row">
-                      {stream.previewCandidates.map((item, index) => (
-                        <span className="guess-chip" key={`${stream.provider}-guess-${index}`}>
-                          {item.name ?? "候选"}
-                          {item.confidence !== undefined ? (
-                            <em>{Math.round((item.confidence ?? 0) * 100)}%</em>
-                          ) : null}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {stream.queries.length > 0 ? (
-                    <div className="query-row">
-                      <span className="muted small">检索词：</span>
-                      {stream.queries.map((query, index) => (
-                        <span className="query-chip" key={`${stream.provider}-q-${index}`}>
-                          {query}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  {stream.hits.length > 0 ? (
-                    <details className="evidence">
-                      <summary>检索证据（{stream.hits.length}）</summary>
-                      <div className="evidence-list">
-                        {stream.hits.map((hit) => (
-                          <a
-                            key={`${stream.provider}-${hit.url}`}
-                            className="evidence-card"
-                            href={hit.url}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            <strong>{hit.title}</strong>
-                            {hit.source ? <span className="evidence-source">{hit.source}</span> : null}
-                            <p>{hit.snippet || hit.url}</p>
-                          </a>
-                        ))}
-                      </div>
-                    </details>
-                  ) : null}
-
-                  {candidate ? (
-                    <div className="result-block">
-                      <div className="result-head">
-                        <h3>{candidate.artifact_name}</h3>
-                        <button
-                          type="button"
-                          className="primary small"
-                          onClick={() => handleApplyCandidate(candidate)}
-                        >
-                          采用
-                        </button>
-                      </div>
-                      <div className="result-meta">
-                        <span>时代：{candidate.era || "待确认"}</span>
-                        <span>馆藏：{candidate.museum_name || "待识别"}</span>
-                      </div>
-                      {candidate.description ? <p className="result-desc">{candidate.description}</p> : null}
-                      {candidate.tags.length > 0 ? (
-                        <div className="tag-row">
-                          {candidate.tags.map((tag) => (
-                            <span key={`${stream.provider}-tag-${tag}`}>{tag}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {candidate.reasoning && candidate.reasoning !== stream.analysis ? (
-                        <details className="evidence">
-                          <summary>裁决依据</summary>
-                          <p className="reasoning-text">{candidate.reasoning}</p>
-                        </details>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </article>
-              )
-            })}
-          </div>
+          </section>
 
           {matchedArtifact ? (
-            <section className="backend-match-card">
+            <section className="single-panel backend-match-card">
               <div className="backend-match-head">
                 <div>
-                  <h3>后端疑似同一件</h3>
-                  <p className="muted">
-                    {matchedArtifact.match_reason} 匹配度 {Math.round(matchedArtifact.match_score * 100)}%
-                  </p>
+                  <h3>疑似同一件</h3>
+                  <p className="muted">{matchedArtifact.match_reason} · {Math.round(matchedArtifact.match_score * 100)}%</p>
                 </div>
-                <span className="badge conf">{matchedArtifact.artifact.images.length} 张历史图片</span>
+                <span className="badge conf">{matchedArtifact.artifact.images.length} 图</span>
               </div>
               <div className="backend-match-meta">
-                <span>名称：{matchedArtifact.artifact.name}</span>
-                <span>时代：{matchedArtifact.artifact.era || "待确认"}</span>
-                <span>馆藏：{matchedArtifact.artifact.museum_name}</span>
+                <span>{matchedArtifact.artifact.name}</span>
+                <span>{matchedArtifact.artifact.era || "时代待确认"}</span>
+                <span>{matchedArtifact.artifact.museum_name}</span>
               </div>
-              {matchedArtifact.artifact.tags.length > 0 ? (
-                <div className="tag-row">
-                  {matchedArtifact.artifact.tags.map((tag) => (
-                    <span key={`backend-match-tag-${tag}`}>{tag}</span>
-                  ))}
-                </div>
-              ) : null}
-              {matchedArtifact.artifact.description ? (
-                <p className="result-desc">{matchedArtifact.artifact.description}</p>
-              ) : (
-                <p className="muted small">库中这条记录暂无描述。</p>
-              )}
-              {matchedArtifact.artifact.images.length > 0 ? (
-                <div className="existing-artifact-gallery">
-                  {matchedArtifact.artifact.images.map((image) => (
-                    <a
-                      key={image.id}
-                      href={toAbsoluteUrl(image.url)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="existing-artifact-thumb"
-                    >
-                      <img src={toAbsoluteUrl(image.url)} alt={matchedArtifact.artifact.name} loading="lazy" />
-                    </a>
-                  ))}
-                </div>
-              ) : null}
               <div className="backend-match-actions">
                 <button
                   type="button"
@@ -1405,67 +1209,162 @@ function App() {
                     }))
                     setTagInput("")
                     setSameArtifactDecision("yes")
-                    setArtifactMessage(
-                      `已确认与「${matchedArtifact.artifact.name}」是同一件，并已将库内名称、时代、描述、标签同步到表单`,
-                    )
+                    setArtifactMessage(`已合并到「${matchedArtifact.artifact.name}」`)
                     setArtifactError(null)
                   }}
                 >
-                  是同一件
+                  合并
                 </button>
                 <button
                   type="button"
                   className={`ghost ${sameArtifactDecision === "no" ? "selected-action" : ""}`}
                   onClick={() => {
                     setSameArtifactDecision("no")
-                    setArtifactMessage("已标记为不是同一件，提交时会新建文物记录")
+                    setArtifactMessage("已标记为新建文物")
                     setArtifactError(null)
                   }}
                 >
-                  不是同一件
+                  新建
                 </button>
               </div>
-              {sameArtifactDecision === "yes" ? (
-                <p className="success-text">后续你在表单里改名称、时代、描述，提交时会直接更新这条已有文物。</p>
-              ) : sameArtifactDecision === "no" ? (
-                <p className="muted small">如名称、时代、馆藏仍匹配，云端入库时仍会自动合并到这条已有文物。</p>
-              ) : (
-                <p className="muted small">如不手动处理，提交时也会优先合并到这条已有文物，避免生成重复卡片。</p>
-              )}
             </section>
           ) : null}
+        </aside>
 
-          {hasResult ? (
-            <p className="muted small center">提示：可对比多模型结论，点击「采用」自动填入下方入库表单。</p>
-          ) : null}
-        </section>
-      </div>
-
-      <form className="panel form-wide" onSubmit={handleCreateArtifact}>
-        <div className="section-heading">
-          <span className="step-badge">3</span>
-          <div>
-            <h2>确认并提交云端</h2>
-            <p className="muted">采用上方候选后可微调，提交时会写线上数据库并上传图片到 OSS。</p>
-          </div>
-        </div>
-
-        <div className="form-fields">
-          <section className="form-section">
-            <div className="form-section-head">
-              <span className="form-section-kicker">BASIC</span>
-              <h3>基本信息</h3>
+        <section className="single-stream-panel" aria-label="模型识别过程">
+          <div className="single-workbench-head">
+            <div>
+              <span className="single-kicker">RECOGNITION</span>
+              <h2>模型识别与证据</h2>
             </div>
-            <div className="form-section-body">
-              <div className="field-row">
+            <div className="single-head-metrics">
+              <span>{orderedStreams.length || 0} 个模型</span>
+              <span>{orderedStreams.reduce((sum, stream) => sum + stream.hits.length, 0)} 条证据</span>
+            </div>
+          </div>
+          {orderedStreams.length === 0 ? (
+            <div className={`single-empty ${streamError ? "error" : ""}`}>
+              <strong>{streamError ? "识图失败" : streaming ? "正在连接模型..." : "等待图片"}</strong>
+              <p>
+                {streamError
+                  ? streamError
+                  : streaming
+                    ? "上传完成后正在建立实时识别连接。"
+                    : "左侧添加图片后，这里显示每个模型的分析、检索和裁决。"}
+              </p>
+              {streamError && uploadedImage ? (
+                <button type="button" className="primary small" onClick={() => void analyzeImageStream(uploadedImage)}>
+                  重试
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <div className="single-stream-list">
+              {orderedStreams.map((stream) => {
+                const candidate = stream.candidate
+                const isBusy = !["done", "result", "error"].includes(stream.stage)
+                return (
+                  <article key={stream.provider} className={`single-stream-card ${selectedCandidateKey === stream.provider ? "selected" : ""}`}>
+                    <div className="single-stream-row">
+                      <div className="provider-id">
+                        <span className={`pulse ${isBusy ? "busy" : stream.stage === "error" ? "failed" : "ok"}`} />
+                        <div>
+                          <strong>{stream.provider}</strong>
+                          {stream.model ? <span className="muted">{stream.model}</span> : null}
+                        </div>
+                      </div>
+                      <div className="stream-tags">
+                        <span className={`stage-status ${stream.stage}`}>{STAGE_LABEL[stream.stage]}</span>
+                        {stream.provider === bestCandidateKey && candidate ? <span className="badge best">推荐</span> : null}
+                        {candidate ? <span className="badge conf">{formatConfidence(candidate.confidence) ?? "—"}</span> : null}
+                      </div>
+                    </div>
+                    <div className="stepper">
+                      {PIPELINE_STEPS.map((step, index) => {
+                        const status = stream.stage === "error" ? "pending" : stepStatus(stream.stage, index)
+                        return (
+                          <div key={step.key} className={`stepper-item ${status}`}>
+                            <span className="stepper-dot">{status === "done" ? "✓" : index + 1}</span>
+                            <span className="stepper-label">{step.label}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    {stream.error ? <p className="error-text">{stream.error}</p> : null}
+                    {candidate ? (
+                      <div className="single-result-grid">
+                        <div>
+                          <strong>{candidate.artifact_name}</strong>
+                          <p className="result-desc">{candidate.description || "暂无描述"}</p>
+                        </div>
+                        <button type="button" className="primary small" onClick={() => handleApplyCandidate(candidate)}>
+                          采用
+                        </button>
+                      </div>
+                    ) : null}
+                    {stream.analysis ? (
+                      <details className="single-details" open={!candidate}>
+                        <summary>分析过程</summary>
+                        <p className="reasoning-text">{stream.analysis}</p>
+                      </details>
+                    ) : null}
+                    {stream.hits.length > 0 ? (
+                      <details className="single-details">
+                        <summary>检索证据（{stream.hits.length}）</summary>
+                        <div className="evidence-list">
+                          {stream.hits.map((hit) => (
+                            <a key={`${stream.provider}-${hit.url}`} className="evidence-card" href={hit.url} target="_blank" rel="noreferrer">
+                              <strong>{hit.title}</strong>
+                              {hit.source ? <span className="evidence-source">{hit.source}</span> : null}
+                              <p>{hit.snippet || hit.url}</p>
+                            </a>
+                          ))}
+                        </div>
+                      </details>
+                    ) : null}
+                  </article>
+                )
+              })}
+            </div>
+          )}
+        </section>
+
+        <form className="single-archive" onSubmit={handleCreateArtifact} aria-label="归档表单">
+          <div className="single-workbench-head">
+            <div>
+              <span className="single-kicker">ARCHIVE</span>
+              <h2>归档信息</h2>
+            </div>
+            <span className={`single-status ${archiveReady ? "ok" : ""}`}>{singleStatusLabel}</span>
+          </div>
+          <div className="single-readiness">
+            <span className={uploadedImage ? "done" : ""}>图片</span>
+            <span className={artifactForm.museumName.trim() ? "done" : ""}>馆藏</span>
+            <span className={artifactForm.name.trim() ? "done" : ""}>名称</span>
+            <span className={artifactForm.captureMuseumName.trim() && !artifactForm.captureMuseumName.trim().startsWith("@") ? "done" : ""}>拍摄馆</span>
+            <span className={artifactForm.exhibitionName.trim() && !artifactForm.exhibitionName.trim().startsWith("@") ? "done" : ""}>展览</span>
+          </div>
+          {primaryCandidate ? (
+            <div className="single-current-candidate">
+              <span>当前候选</span>
+              <strong>{primaryCandidate.artifact_name}</strong>
+              <em>{primaryCandidate.era || "时代待确认"} · {primaryCandidate.museum_name || "馆藏待确认"}</em>
+            </div>
+          ) : null}
+
+          <div className="single-archive-scroll">
+            <section className="form-section">
+              <div className="form-section-head">
+                <span className="form-section-kicker">BASIC</span>
+                <h3>文物</h3>
+              </div>
+              <div className="form-section-body">
                 <label className="field">
-                  <span>博物馆名称</span>
+                  <span>馆藏单位</span>
                   <input
                     value={artifactForm.museumName}
                     onFocus={() => setShowArtifactMuseumSuggestions(true)}
-                    onBlur={() => {
-                      window.setTimeout(() => setShowArtifactMuseumSuggestions(false), 120)
-                    }}
+                    onBlur={() => window.setTimeout(() => setShowArtifactMuseumSuggestions(false), 120)}
                     onChange={(event) => {
                       setArtifactForm((current) => ({ ...current, museumName: event.target.value }))
                       setShowArtifactMuseumSuggestions(true)
@@ -1497,22 +1396,16 @@ function App() {
                   <input
                     required
                     value={artifactForm.name}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, name: event.target.value }))
-                    }
+                    onChange={(event) => setArtifactForm((current) => ({ ...current, name: event.target.value }))}
                     placeholder="例如：如意云纹金盘"
                   />
                 </label>
-              </div>
-              <div className="field-row">
                 <label className="field">
                   <span>时代</span>
                   <input
                     value={artifactForm.era}
                     onFocus={() => setShowEraSuggestions(true)}
-                    onBlur={() => {
-                      window.setTimeout(() => setShowEraSuggestions(false), 120)
-                    }}
+                    onBlur={() => window.setTimeout(() => setShowEraSuggestions(false), 120)}
                     onChange={(event) => {
                       setArtifactForm((current) => ({ ...current, era: event.target.value }))
                       setShowEraSuggestions(true)
@@ -1539,22 +1432,117 @@ function App() {
                     </div>
                   ) : null}
                 </label>
+              </div>
+            </section>
+
+            <section className="form-section">
+              <div className="form-section-head">
+                <span className="form-section-kicker">PLACE</span>
+                <h3>拍摄地点</h3>
+              </div>
+              <div className="form-section-body">
+                <label className="field">
+                  <span>拍摄时博物馆</span>
+                  <input
+                    value={artifactForm.captureMuseumName}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setArtifactForm((current) => ({ ...current, captureMuseumName: value }))
+                      if (selectedCaptureMuseum?.name !== value) setSelectedCaptureMuseum(null)
+                    }}
+                    placeholder="输入 @ 后联想检索，例如：@南博"
+                  />
+                  {museumSuggestions.length > 0 ? (
+                    <div className="suggestion-list">
+                      {museumSuggestions.map((museum) => (
+                        <button
+                          key={museum.id}
+                          type="button"
+                          className="suggestion-item"
+                          onClick={() => {
+                            setSelectedCaptureMuseum(museum)
+                            setMuseumSuggestions([])
+                            setArtifactForm((current) => ({
+                              ...current,
+                              captureMuseumName: museum.name,
+                              exhibitionName: current.exhibitionName.trim().startsWith("@") || !current.exhibitionName.trim()
+                                ? "常设"
+                                : current.exhibitionName,
+                            }))
+                          }}
+                        >
+                          {museum.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </label>
+                <label className="field">
+                  <span>展览</span>
+                  <input
+                    value={artifactForm.exhibitionName}
+                    onChange={(event) => setArtifactForm((current) => ({ ...current, exhibitionName: event.target.value }))}
+                    placeholder={selectedCaptureMuseum ? "默认常设，输入 @ 检索该馆展览" : "默认常设，可直接填写"}
+                  />
+                  {exhibitionSuggestions.length > 0 ? (
+                    <div className="suggestion-list">
+                      {exhibitionSuggestions.map((exhibition) => (
+                        <button
+                          key={exhibition.id}
+                          type="button"
+                          className="suggestion-item"
+                          onClick={() => {
+                            setExhibitionSuggestions([])
+                            setArtifactForm((current) => ({ ...current, exhibitionName: exhibition.name }))
+                          }}
+                        >
+                          <span>{exhibition.name}</span>
+                          {exhibition.start_at || exhibition.end_at ? (
+                            <em>{exhibition.start_at?.slice(0, 10) ?? "未知"} - {exhibition.end_at?.slice(0, 10) ?? "至今"}</em>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </label>
+                <div className="field-row">
+                  <label className="field">
+                    <span>纬度</span>
+                    <input value={artifactForm.latitude} onChange={(event) => setArtifactForm((current) => ({ ...current, latitude: event.target.value }))} />
+                  </label>
+                  <label className="field">
+                    <span>经度</span>
+                    <input value={artifactForm.longitude} onChange={(event) => setArtifactForm((current) => ({ ...current, longitude: event.target.value }))} />
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <section className="form-section">
+              <div className="form-section-head">
+                <span className="form-section-kicker">TEXT</span>
+                <h3>描述与标签</h3>
+              </div>
+              <div className="form-section-body">
+                <label className="field">
+                  <span>描述</span>
+                  <textarea
+                    rows={5}
+                    value={artifactForm.description}
+                    onChange={(event) => setArtifactForm((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="文物简介，可选"
+                  />
+                </label>
                 <label className="field">
                   <span>标签</span>
                   <div className="tag-editor">
                     <div className="tag-editor-chips">
-                      {artifactForm.tags.length > 0 ? (
-                        artifactForm.tags.map((tag) => (
-                          <span key={tag} className="tag-chip">
-                            {tag}
-                            <button type="button" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>
-                              ×
-                            </button>
-                          </span>
-                        ))
-                      ) : (
-                        <span className="tag-editor-placeholder">暂无标签</span>
-                      )}
+                      {artifactForm.tags.length > 0 ? artifactForm.tags.map((tag) => (
+                        <span key={tag} className="tag-chip">
+                          {tag}
+                          <button type="button" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>×</button>
+                        </span>
+                      )) : <span className="tag-editor-placeholder">暂无标签</span>}
                     </div>
                     <input
                       value={tagInput}
@@ -1574,260 +1562,50 @@ function App() {
                   </div>
                 </label>
               </div>
-            </div>
-          </section>
+            </section>
 
-          <section className="form-section">
-            <div className="form-section-head">
-              <span className="form-section-kicker">CAPTURE</span>
-              <h3>拍摄与展览</h3>
-            </div>
-            <div className="form-section-body">
-              <div className="field-row">
-                <label className="field">
-                  <span>机型</span>
-                  <input
-                    value={artifactForm.cameraModel}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, cameraModel: event.target.value }))
-                    }
-                    placeholder="自动读取，可手动补充"
-                  />
-                </label>
-                <label className="field">
-                  <span>镜头</span>
-                  <input
-                    value={artifactForm.lensModel}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, lensModel: event.target.value }))
-                    }
-                    placeholder="自动读取，可手动补充"
-                  />
-                </label>
-              </div>
-              <div className="field-row">
-                <label className="field">
-                  <span>拍摄时博物馆</span>
-                  <input
-                    value={artifactForm.captureMuseumName}
-                    onChange={(event) => {
-                      const value = event.target.value
-                      setArtifactForm((current) => ({ ...current, captureMuseumName: value }))
-                      if (selectedCaptureMuseum?.name !== value) {
-                        setSelectedCaptureMuseum(null)
-                      }
-                    }}
-                    placeholder="输入 @ 后联想检索，例如：@南博"
-                  />
-                  {artifactForm.captureMuseumName.trim().startsWith("@") ? (
-                    <span className="field-help">输入 `@关键词` 后，从下方结果选择拍摄时所在博物馆。</span>
-                  ) : null}
-                  {museumSuggestions.length > 0 ? (
-                    <div className="suggestion-list">
-                      {museumSuggestions.map((museum) => (
-                        <button
-                          key={museum.id}
-                          type="button"
-                          className="suggestion-item"
-                          onClick={() => {
-                            setSelectedCaptureMuseum(museum)
-                            setMuseumSuggestions([])
-                            setArtifactForm((current) => ({
-                              ...current,
-                              captureMuseumName: museum.name,
-                              exhibitionName:
-                                current.exhibitionName.trim().startsWith("@") || !current.exhibitionName.trim()
-                                  ? "常设"
-                                  : current.exhibitionName,
-                            }))
-                          }}
-                        >
-                          {museum.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </label>
-                <label className="field">
-                  <span>展览</span>
-                  <input
-                    value={artifactForm.exhibitionName}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, exhibitionName: event.target.value }))
-                    }
-                    placeholder={
-                      selectedCaptureMuseum
-                        ? "默认常设，输入 @ 后联想检索该馆展览"
-                        : "默认常设，可直接填写"
-                    }
-                  />
-                  {artifactForm.exhibitionName.trim().startsWith("@") && selectedCaptureMuseum ? (
-                    <span className="field-help">当前按 `{selectedCaptureMuseum.name}` 的展览库联想检索。</span>
-                  ) : null}
-                  {exhibitionSuggestions.length > 0 ? (
-                    <div className="suggestion-list">
-                      {exhibitionSuggestions.map((exhibition) => (
-                        <button
-                          key={exhibition.id}
-                          type="button"
-                          className="suggestion-item"
-                          onClick={() => {
-                            setExhibitionSuggestions([])
-                            setArtifactForm((current) => ({
-                              ...current,
-                              exhibitionName: exhibition.name,
-                            }))
-                          }}
-                        >
-                          <span>{exhibition.name}</span>
-                          {exhibition.start_at || exhibition.end_at ? (
-                            <em>
-                              {exhibition.start_at?.slice(0, 10) ?? "未知"} - {exhibition.end_at?.slice(0, 10) ?? "至今"}
-                            </em>
-                          ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </label>
-              </div>
-            </div>
-          </section>
-
-          <section className="form-section">
-            <div className="form-section-head">
-              <span className="form-section-kicker">META</span>
-              <h3>时间、坐标与参数</h3>
-            </div>
-            <div className="form-section-body">
-              <div className="field-row">
-                <label className="field">
-                  <span>纬度</span>
-                  <input
-                    value={artifactForm.latitude}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, latitude: event.target.value }))
-                    }
-                    placeholder="例如：32.060255"
-                  />
-                </label>
-                <label className="field">
-                  <span>经度</span>
-                  <input
-                    value={artifactForm.longitude}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, longitude: event.target.value }))
-                    }
-                    placeholder="例如：118.796877"
-                  />
-                </label>
-              </div>
-              <div className="field-row">
-                <label className="field">
-                  <span>拍摄时间</span>
-                  <input
-                    value={artifactForm.capturedAt}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, capturedAt: event.target.value }))
-                    }
-                    placeholder="例如：2024-05-01T14:30:00"
-                  />
-                </label>
-                <label className="field">
-                  <span>上传时间</span>
-                  <input value={artifactForm.uploadedAt} readOnly placeholder="上传后自动生成" />
-                </label>
-              </div>
-              <div className="field-row">
-                <label className="field">
-                  <span>快门</span>
-                  <input
-                    value={artifactForm.shutterSpeed}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, shutterSpeed: event.target.value }))
-                    }
-                    placeholder="例如：1/125s"
-                  />
-                </label>
-                <label className="field">
-                  <span>光圈</span>
-                  <input
-                    value={artifactForm.aperture}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, aperture: event.target.value }))
-                    }
-                    placeholder="例如：f/2.8"
-                  />
-                </label>
-              </div>
-              <div className="field-row">
-                <label className="field">
-                  <span>感光度</span>
-                  <input
-                    value={artifactForm.iso}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, iso: event.target.value }))
-                    }
-                    placeholder="例如：400"
-                  />
-                </label>
+            <details className="single-advanced">
+              <summary>相机参数</summary>
+              <div className="single-advanced-grid">
+                <label className="field"><span>机型</span><input value={artifactForm.cameraModel} onChange={(event) => setArtifactForm((current) => ({ ...current, cameraModel: event.target.value }))} /></label>
+                <label className="field"><span>镜头</span><input value={artifactForm.lensModel} onChange={(event) => setArtifactForm((current) => ({ ...current, lensModel: event.target.value }))} /></label>
+                <label className="field"><span>拍摄时间</span><input value={artifactForm.capturedAt} onChange={(event) => setArtifactForm((current) => ({ ...current, capturedAt: event.target.value }))} /></label>
+                <label className="field"><span>上传时间</span><input value={artifactForm.uploadedAt} readOnly /></label>
+                <label className="field"><span>快门</span><input value={artifactForm.shutterSpeed} onChange={(event) => setArtifactForm((current) => ({ ...current, shutterSpeed: event.target.value }))} /></label>
+                <label className="field"><span>光圈</span><input value={artifactForm.aperture} onChange={(event) => setArtifactForm((current) => ({ ...current, aperture: event.target.value }))} /></label>
+                <label className="field"><span>感光度</span><input value={artifactForm.iso} onChange={(event) => setArtifactForm((current) => ({ ...current, iso: event.target.value }))} /></label>
                 <label className="field">
                   <span>修图方式</span>
-                  <select
-                    value={artifactForm.editMethod}
-                    onChange={(event) =>
-                      setArtifactForm((current) => ({ ...current, editMethod: event.target.value }))
-                    }
-                  >
+                  <select value={artifactForm.editMethod} onChange={(event) => setArtifactForm((current) => ({ ...current, editMethod: event.target.value }))}>
                     <option value="">未填写</option>
                     <option value="简单调整">简单调整</option>
                     <option value="堆栈合成">堆栈合成</option>
                   </select>
                 </label>
               </div>
-            </div>
-          </section>
+            </details>
+          </div>
 
-          <section className="form-section form-section-compact">
-            <div className="form-section-head">
-              <span className="form-section-kicker">TEXT</span>
-              <h3>补充描述</h3>
+          <div className="single-submit-bar">
+            <div>
+              {submitNotice ? (
+                <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>{submitNotice.text}</p>
+              ) : artifactMessage ? (
+                <p className="success-text">{artifactMessage}</p>
+              ) : (
+                <p className="muted">已完成 {readyCount}/{requiredFields.length} 项必填信息</p>
+              )}
             </div>
-            <div className="form-section-body">
-              <label className="field">
-                <span>描述</span>
-                <textarea
-                  rows={3}
-                  value={artifactForm.description}
-                  onChange={(event) =>
-                    setArtifactForm((current) => ({ ...current, description: event.target.value }))
-                  }
-                  placeholder="文物简介，可选"
-                />
-              </label>
-            </div>
-          </section>
-        </div>
-
-        <div className="form-footer">
-          {submitNotice ? (
-            <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>
-              {submitNotice.text}
-            </p>
-          ) : artifactMessage ? (
-            <p className="success-text">{artifactMessage}</p>
-          ) : (
-            <span />
-          )}
-          <button type="submit" className="primary" disabled={artifactSubmitting || !uploadedImage}>
-            {artifactSubmitting
-              ? "提交中..."
-              : matchedArtifact && sameArtifactDecision !== "no"
-                ? "更新已有文物并上传图片"
-                : "提交云端"}
-          </button>
-        </div>
-      </form>
+            <button type="submit" className="primary" disabled={artifactSubmitting || !uploadedImage}>
+              {artifactSubmitting
+                ? "提交中..."
+                : matchedArtifact && sameArtifactDecision !== "no"
+                  ? "更新并上传"
+                  : "提交云端"}
+            </button>
+          </div>
+        </form>
+      </section>
       {submitNotice ? (
         <div className={`submit-toast ${submitNotice.type}`}>
           <div className="submit-toast-body">
