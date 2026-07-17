@@ -5393,3 +5393,19 @@ button.ghost {
 }
 
 .research-trace li:last-child { color: var(--accent); font-weight: 700; }
+
+.batch-rename-panel {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(87, 65, 43, 0.1);
+  color: var(--ink-soft);
+  font-size: .78rem;
+}
+.batch-rename-panel summary { cursor: pointer; font-weight: 700; }
+.batch-rename-panel > div { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; margin-top: 8px; }
+.batch-rename-panel input { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid var(--ui-line-accent); border-radius: 5px; background: var(--panel); }
+.batch-rename-panel p { margin: 7px 0 0; font-size: .72rem; }
+
+.exif-file-rename { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; align-items: center; margin-top: 12px; color: var(--ink-soft); font-size: .78rem; }
+.exif-file-rename input { min-width: 0; height: 34px; padding: 0 9px; border: 1px solid var(--ui-line-accent); border-radius: 5px; background: var(--panel); color: var(--ink); }
+.exif-file-rename em { color: var(--ink-faint); font-style: normal; }
