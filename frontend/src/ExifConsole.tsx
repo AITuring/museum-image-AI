@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
-import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Tag, Tooltip } from "antd"
+import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Table, Tag, Tooltip } from "antd"
 import {
   Camera,
   Check,
@@ -2407,23 +2407,40 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <span>{rows.length} 项将变更</span>
                     </div>
                   </header>
-                  <div className="metadata-sync-diff-table">
-                    <div className="metadata-sync-diff-head"><span>字段</span><span>同步前</span><span>同步后</span></div>
-                    {rows.map((row) => (
-                      <div key={row.label} className={`metadata-sync-diff-row ${row.willClearTarget ? "will-clear" : ""}`}>
-                        <strong className="metadata-sync-diff-field">{row.label}</strong>
-                        <div className={`metadata-sync-diff-value before ${row.targetValue === "未填写" ? "is-empty" : ""}`} title={row.targetValue}>
-                          <small>同步前</small>
-                          <span>{row.targetValue}</span>
-                        </div>
-                        <div className={`metadata-sync-diff-value after ${row.sourceValue === "未填写" ? "is-empty" : ""}`} title={row.sourceValue}>
-                          <small>同步后</small>
-                          <span>{row.sourceValue}</span>
-                        </div>
-                        {row.willClearTarget ? <Tag color="warning">将清空</Tag> : null}
-                      </div>
-                    ))}
-                  </div>
+                  <Table<MetadataSyncDiffRow>
+                    className="metadata-sync-diff-table"
+                    size="small"
+                    pagination={false}
+                    rowKey="label"
+                    dataSource={rows}
+                    tableLayout="fixed"
+                    columns={[
+                      {
+                        title: "字段",
+                        dataIndex: "label",
+                        key: "label",
+                        width: 120,
+                        render: (value: string) => <strong className="metadata-sync-table-field">{value}</strong>,
+                      },
+                      {
+                        title: "同步前",
+                        dataIndex: "targetValue",
+                        key: "targetValue",
+                        render: (value: string) => <span className={value === "未填写" ? "is-empty" : ""} title={value}>{value}</span>,
+                      },
+                      {
+                        title: "同步后",
+                        dataIndex: "sourceValue",
+                        key: "sourceValue",
+                        render: (value: string, row) => (
+                          <span className={`metadata-sync-table-after ${value === "未填写" ? "is-empty" : ""}`} title={value}>
+                            <span>{value}</span>
+                            {row.willClearTarget ? <Tag color="warning">将清空</Tag> : null}
+                          </span>
+                        ),
+                      },
+                    ]}
+                  />
                 </section>
               ))}
               {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).length > 4 ? (
