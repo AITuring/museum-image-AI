@@ -1,7 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
-import { AutoComplete, Button, Card, Input, Tag, Tooltip } from "antd"
-import { Check, ChevronDown, CloudUpload, ImagePlus, Loader2, Trash2, X } from "lucide-react"
+import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Tag, Tooltip } from "antd"
+import {
+  Camera,
+  Check,
+  ChevronDown,
+  CloudUpload,
+  FileCheck2,
+  FolderOpen,
+  ImagePlus,
+  Landmark,
+  Loader2,
+  MapPin,
+  Sparkles,
+  Trash2,
+  X,
+  type LucideIcon,
+} from "lucide-react"
 
 const Textarea = Input.TextArea
 
@@ -76,6 +91,37 @@ type FormState = {
   tags: string[]
 }
 
+type MetadataSyncScopeKey = "location" | "camera" | "exposure" | "time" | "content"
+type MetadataSyncTargetMode = "current" | "others"
+type MetadataSyncSelection = Record<MetadataSyncScopeKey, boolean>
+type MetadataSyncDiffRow = {
+  label: string
+  targetValue: string
+  sourceValue: string
+  changed: boolean
+  willClearTarget: boolean
+}
+
+const METADATA_SYNC_SCOPES: Array<{
+  key: MetadataSyncScopeKey
+  title: string
+  description: string
+}> = [
+  { key: "location", title: "地点与 GPS", description: "展出地点、对应展览与经纬度" },
+  { key: "camera", title: "相机与镜头", description: "相机型号与镜头型号" },
+  { key: "exposure", title: "拍摄参数", description: "快门、光圈与 ISO" },
+  { key: "time", title: "拍摄时间", description: "原始拍摄日期与时间" },
+  { key: "content", title: "描述与标签", description: "文物描述与标签，默认不选择" },
+]
+
+const DEFAULT_METADATA_SYNC_SELECTION: MetadataSyncSelection = {
+  location: true,
+  camera: true,
+  exposure: true,
+  time: true,
+  content: false,
+}
+
 type ImageExifMetadata = {
   camera_model: string | null
   lens_model: string | null
@@ -108,17 +154,31 @@ type ExifWorkbenchItem = {
 
 type WritableFileStream = { write(data: Blob): Promise<void>; close(): Promise<void> }
 type WritableFileHandle = {
+  kind?: "file"
   name: string
   getFile(): Promise<File>
   createWritable(): Promise<WritableFileStream>
+  queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
+  requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
+}
+type WritableDirectoryHandle = {
+  kind?: "directory"
+  name: string
+  values(): AsyncIterableIterator<WritableFileHandle | WritableDirectoryHandle>
+  getFileHandle(name: string, options?: { create?: boolean }): Promise<WritableFileHandle>
+  removeEntry(name: string): Promise<void>
+  queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
   requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
 }
 type FilePickerWindow = Window & {
+  showDirectoryPicker?: (options?: { mode?: "read" | "readwrite" }) => Promise<WritableDirectoryHandle>
   showOpenFilePicker?: (options: {
     multiple: boolean
     types: Array<{ description: string; accept: Record<string, string[]> }>
   }) => Promise<WritableFileHandle[]>
 }
+
+const IMAGE_FILE_PATTERN = /\.(?:jpe?g|png|webp|tiff?)$/i
 
 const EMPTY_FORM: FormState = {
   museumName: "",
@@ -140,6 +200,23 @@ const EMPTY_FORM: FormState = {
 }
 
 const EXIF_FILE_INPUT_ID = "exif-workbench-file-input"
+
+function FormSectionHeader({ icon: Icon, title, description }: {
+  icon: LucideIcon
+  title: string
+  description: string
+}) {
+  return (
+    <div className="ui-card-header form-section-head">
+      <Tooltip title={description} placement="topLeft" trigger={["hover", "focus"]}>
+        <span className="exif-section-title" tabIndex={0}>
+          <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
+          <span>{title}</span>
+        </span>
+      </Tooltip>
+    </div>
+  )
+}
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
@@ -196,6 +273,27 @@ async function loadMuseumSuggestions(
   }
 }
 
+async function verifyWritablePermission(handle: WritableFileHandle | WritableDirectoryHandle) {
+  const descriptor = { mode: "readwrite" as const }
+  try {
+    if (await handle.queryPermission?.(descriptor) === "granted") return true
+    if (await handle.requestPermission?.(descriptor) === "granted") return true
+    return !handle.queryPermission && !handle.requestPermission
+  } catch {
+    return false
+  }
+}
+
+async function listDirectoryImageEntries(handle: WritableDirectoryHandle) {
+  const entries: Array<{ handle: WritableFileHandle; file: File }> = []
+  for await (const entry of handle.values()) {
+    if (entry.kind === "directory" || !IMAGE_FILE_PATTERN.test(entry.name)) continue
+    const fileHandle = entry as WritableFileHandle
+    entries.push({ handle: fileHandle, file: await fileHandle.getFile() })
+  }
+  return entries.sort((left, right) => left.file.name.localeCompare(right.file.name, "zh-CN"))
+}
+
 async function resolveMuseum(apiBaseUrl: string, name: string): Promise<MuseumOption | null> {
   const items = await fetchJson<MuseumOption[]>(
     `${apiBaseUrl}/api/museums?${new URLSearchParams({ q: name, limit: "8" }).toString()}`,
@@ -214,6 +312,85 @@ function cloneFormState(form: FormState): FormState {
   return {
     ...form,
     tags: [...form.tags],
+  }
+}
+
+function metadataSyncValue(value: string | string[]) {
+  if (Array.isArray(value)) return value.length > 0 ? value.join("、") : "未填写"
+  return value.trim() || "未填写"
+}
+
+function buildMetadataSyncDiffRows(
+  target: FormState,
+  source: FormState,
+  scope: MetadataSyncScopeKey,
+): MetadataSyncDiffRow[] {
+  const fields: Array<{ label: string; target: string | string[]; source: string | string[] }> = scope === "location"
+    ? [
+        { label: "展出地点", target: target.displayLocationName, source: source.displayLocationName },
+        { label: "对应展览", target: target.exhibitionName, source: source.exhibitionName },
+        { label: "纬度", target: target.latitude, source: source.latitude },
+        { label: "经度", target: target.longitude, source: source.longitude },
+      ]
+    : scope === "camera"
+      ? [
+          { label: "相机型号", target: target.cameraModel, source: source.cameraModel },
+          { label: "镜头型号", target: target.lensModel, source: source.lensModel },
+        ]
+      : scope === "exposure"
+        ? [
+            { label: "快门", target: target.shutterSpeed, source: source.shutterSpeed },
+            { label: "光圈", target: target.aperture, source: source.aperture },
+            { label: "ISO", target: target.iso, source: source.iso },
+          ]
+        : scope === "time"
+          ? [{ label: "拍摄时间", target: target.capturedAt, source: source.capturedAt }]
+          : [
+              { label: "描述", target: target.description, source: source.description },
+              { label: "标签", target: target.tags, source: source.tags },
+            ]
+
+  return fields.map((field) => {
+    const targetValue = metadataSyncValue(field.target)
+    const sourceValue = metadataSyncValue(field.source)
+    const sourceIsEmpty = sourceValue === "未填写"
+    return {
+      label: field.label,
+      targetValue,
+      sourceValue,
+      changed: targetValue !== sourceValue,
+      willClearTarget: sourceIsEmpty && targetValue !== "未填写",
+    }
+  })
+}
+
+function applySourceMetadata(
+  target: FormState,
+  source: FormState,
+  selection: MetadataSyncSelection,
+): FormState {
+  return {
+    ...target,
+    ...(selection.location ? {
+      displayLocationName: source.displayLocationName,
+      exhibitionName: source.exhibitionName,
+      latitude: source.latitude,
+      longitude: source.longitude,
+    } : {}),
+    ...(selection.camera ? {
+      cameraModel: source.cameraModel,
+      lensModel: source.lensModel,
+    } : {}),
+    ...(selection.exposure ? {
+      shutterSpeed: source.shutterSpeed,
+      aperture: source.aperture,
+      iso: source.iso,
+    } : {}),
+    ...(selection.time ? { capturedAt: source.capturedAt } : {}),
+    ...(selection.content ? {
+      description: source.description,
+      tags: [...source.tags],
+    } : {}),
   }
 }
 
@@ -451,6 +628,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const locatingDisplayLocationRef = useRef(false)
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null)
   const [tagInput, setTagInput] = useState("")
   const [sharedForm, setSharedForm] = useState<FormState>(buildBaseForm())
   const [museumSuggestions, setMuseumSuggestions] = useState<MuseumOption[]>([])
@@ -458,6 +636,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [showMuseumSuggestions, setShowMuseumSuggestions] = useState(false)
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [bindingDirectory, setBindingDirectory] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [descriptionProgress, setDescriptionProgress] = useState<string[]>([])
   const [batchPrefix, setBatchPrefix] = useState("")
@@ -467,6 +646,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [batchExhibitionName, setBatchExhibitionName] = useState("常设")
   const [batchLatitude, setBatchLatitude] = useState("")
   const [batchLongitude, setBatchLongitude] = useState("")
+  const [metadataSyncSourceId, setMetadataSyncSourceId] = useState("")
+  const [metadataSyncTargetMode, setMetadataSyncTargetMode] = useState<MetadataSyncTargetMode>("others")
+  const [metadataSyncSelection, setMetadataSyncSelection] = useState<MetadataSyncSelection>(DEFAULT_METADATA_SYNC_SELECTION)
+  const [metadataSyncPreviewOpen, setMetadataSyncPreviewOpen] = useState(false)
   const [parsingFileName, setParsingFileName] = useState(false)
   const [submittingAll, setSubmittingAll] = useState(false)
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
@@ -494,7 +677,38 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     normalizedFileName(`${batchPrefix}${fileBaseName(item.fileName).split(batchRemove).join("")}${batchSuffix}`, item.fileName) !== item.fileName
   )).length, [items, batchPrefix, batchRemove, batchSuffix])
 
+  const metadataSyncSource = useMemo(
+    () => items.find((item) => item.id === metadataSyncSourceId) ?? null,
+    [items, metadataSyncSourceId],
+  )
+
+  const metadataSyncTargets = useMemo(() => {
+    if (!metadataSyncSource) return []
+    if (metadataSyncTargetMode === "current") {
+      return selectedItem && selectedItem.id !== metadataSyncSource.id ? [selectedItem] : []
+    }
+    return items.filter((item) => item.id !== metadataSyncSource.id)
+  }, [items, metadataSyncSource, metadataSyncTargetMode, selectedItem])
+
+  const metadataSyncDiffs = useMemo(() => metadataSyncTargets.map((target) => {
+    const rows = METADATA_SYNC_SCOPES
+      .filter((scope) => metadataSyncSelection[scope.key])
+      .flatMap((scope) => buildMetadataSyncDiffRows(target.form, metadataSyncSource?.form ?? EMPTY_FORM, scope.key))
+      .filter((row) => row.changed)
+    return { target, rows }
+  }), [metadataSyncSelection, metadataSyncSource, metadataSyncTargets])
+
+  const metadataSyncChangedCount = useMemo(
+    () => metadataSyncDiffs.reduce((count, entry) => count + entry.rows.length, 0),
+    [metadataSyncDiffs],
+  )
+
   useEffect(() => { itemsRef.current = items }, [items])
+
+  useEffect(() => {
+    if (metadataSyncSourceId && items.some((item) => item.id === metadataSyncSourceId)) return
+    setMetadataSyncSourceId(items[0]?.id ?? "")
+  }, [items, metadataSyncSourceId])
 
   useEffect(() => () => {
     itemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
@@ -686,6 +900,51 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setSubmitNotice({ type: "success", text: "已带入当前图片的展出地点与 GPS，可继续微调后应用到全部图片" })
   }
 
+  function selectMetadataSyncPreset(preset: "location" | "capture" | "all") {
+    setMetadataSyncSelection(preset === "location"
+      ? { location: true, camera: false, exposure: false, time: false, content: false }
+      : preset === "capture"
+        ? { location: false, camera: true, exposure: true, time: true, content: false }
+        : { location: true, camera: true, exposure: true, time: true, content: true })
+  }
+
+  function openMetadataSyncPreview() {
+    if (!metadataSyncSource) {
+      setSubmitNotice({ type: "error", text: "请先选择一张来源照片" })
+      return
+    }
+    if (!Object.values(metadataSyncSelection).some(Boolean)) {
+      setSubmitNotice({ type: "error", text: "请至少选择一组需要同步的信息" })
+      return
+    }
+    if (metadataSyncTargets.length === 0) {
+      setSubmitNotice({
+        type: "error",
+        text: metadataSyncTargetMode === "current" && selectedItem?.id === metadataSyncSource.id
+          ? "当前图片就是来源照片，请选择另一张目标图片"
+          : "没有可同步的目标照片",
+      })
+      return
+    }
+    setMetadataSyncPreviewOpen(true)
+  }
+
+  function applyMetadataSync() {
+    if (!metadataSyncSource || metadataSyncTargets.length === 0) return
+    const targetIds = new Set(metadataSyncTargets.map((item) => item.id))
+    setItems((current) => current.map((item) => targetIds.has(item.id) ? {
+      ...item,
+      form: applySourceMetadata(item.form, metadataSyncSource.form, metadataSyncSelection),
+      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+    } : item))
+    setMetadataSyncPreviewOpen(false)
+    setSubmitNotice({
+      type: "success",
+      text: `已从“${metadataSyncSource.fileName}”同步 ${metadataSyncChangedCount} 项信息到 ${metadataSyncTargets.length} 张照片`,
+    })
+  }
+
   function applyBatchLocation() {
     const latitude = toNullableNumber(batchLatitude)
     const longitude = toNullableNumber(batchLongitude)
@@ -813,32 +1072,124 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
   }
 
-  async function handleOpenWritableFiles() {
-    const picker = (window as FilePickerWindow).showOpenFilePicker
-    if (!picker) {
+  function handleSelectImages() {
+    fileInputRef.current?.click()
+  }
+
+  async function handleSelectDirectory() {
+    const pickerWindow = window as FilePickerWindow
+    if (!pickerWindow.showDirectoryPicker) {
       fileInputRef.current?.click()
-      setSubmitNotice({ type: "error", text: "当前浏览器不支持原地写入；可继续云端入库，原地覆盖请使用最新版 Chrome。" })
+      setSubmitNotice({ type: "error", text: "当前浏览器不支持文件夹读写授权；可继续选择图片并云端入库，原地覆盖请使用最新版 Chrome 或 Edge。" })
       return
     }
     try {
-      const handles = await picker({
-        multiple: true,
-        types: [{ description: "文物图片", accept: { "image/*": [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"] } }],
-      })
       setUploading(true)
-      const builtItems = await Promise.all(handles.map(async (handle, index) => {
-        const permission = await handle.requestPermission?.({ mode: "readwrite" })
-        const writableHandle = permission === "denied" ? null : handle
-        return createWorkbenchItem(await handle.getFile(), index, writableHandle)
-      }))
+      const nextDirectoryHandle = await pickerWindow.showDirectoryPicker({ mode: "readwrite" })
+      if (!await verifyWritablePermission(nextDirectoryHandle)) {
+        setSubmitNotice({ type: "error", text: "需要授予文件夹读写权限，才能批量回写照片" })
+        return
+      }
+
+      const entries = await listDirectoryImageEntries(nextDirectoryHandle)
+
+      const currentNames = new Set(items.flatMap((item) => [item.fileName, item.originalFileName]))
+      const addedEntries = entries.filter((entry) => !currentNames.has(entry.file.name))
+      const builtItems: ExifWorkbenchItem[] = []
+      for (let index = 0; index < addedEntries.length; index += 1) {
+        const entry = addedEntries[index]
+        builtItems.push(await createWorkbenchItem(entry.file, items.length + index, entry.handle))
+      }
+
+      setDirectoryHandle(nextDirectoryHandle)
       setItems((current) => [...current, ...builtItems])
       setSelectedId((current) => current ?? builtItems[0]?.id ?? null)
-      setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片，并获得原地回写授权` })
+      setSubmitNotice({
+        type: "success",
+        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片，并获得批量原地回写权限`,
+      })
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return
-      setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "读取本地图片失败" })
+      setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "读取照片文件夹失败" })
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function handleBindDirectory() {
+    const pickerWindow = window as FilePickerWindow
+    if (!pickerWindow.showDirectoryPicker) {
+      setSubmitNotice({ type: "error", text: "当前浏览器不支持文件夹授权，请使用最新版 Chrome 或 Edge" })
+      return
+    }
+    if (items.length === 0) {
+      setSubmitNotice({ type: "error", text: "请先添加需要处理的图片，再授权其所在文件夹" })
+      return
+    }
+
+    setBindingDirectory(true)
+    try {
+      const nextDirectoryHandle = await pickerWindow.showDirectoryPicker({ mode: "readwrite" })
+      if (!await verifyWritablePermission(nextDirectoryHandle)) {
+        setSubmitNotice({ type: "error", text: "需要授予文件夹读写权限，才能绑定并回写原照片" })
+        return
+      }
+      const entries = await listDirectoryImageEntries(nextDirectoryHandle)
+      const entriesByName = new Map<string, Array<{ handle: WritableFileHandle; file: File; index: number }>>()
+      entries.forEach((entry, index) => {
+        const candidates = entriesByName.get(entry.file.name) ?? []
+        candidates.push({ ...entry, index })
+        entriesByName.set(entry.file.name, candidates)
+      })
+
+      let matched = 0
+      let exactMatched = 0
+      let fallbackMatched = 0
+      let missing = 0
+      let ambiguous = 0
+      const usedIndexes = new Set<number>()
+      setItems((current) => current.map((item) => {
+        if (item.fileHandle) return item
+        const candidates = (entriesByName.get(item.originalFileName) ?? entriesByName.get(item.fileName) ?? [])
+          .filter((entry) => !usedIndexes.has(entry.index))
+        if (candidates.length === 0) {
+          missing += 1
+          return item
+        }
+        const exact = candidates.filter((entry) => (
+          entry.file.size === item.localFile.size && entry.file.lastModified === item.localFile.lastModified
+        ))
+        if (exact.length === 1) {
+          usedIndexes.add(exact[0].index)
+          matched += 1
+          exactMatched += 1
+          return { ...item, fileHandle: exact[0].handle }
+        }
+        const sameSize = candidates.filter((entry) => entry.file.size === item.localFile.size)
+        if (sameSize.length === 1) {
+          usedIndexes.add(sameSize[0].index)
+          matched += 1
+          fallbackMatched += 1
+          return { ...item, fileHandle: sameSize[0].handle }
+        }
+        ambiguous += 1
+        return item
+      }))
+      setDirectoryHandle(nextDirectoryHandle)
+      const summary = [`已绑定 ${matched} 张`]
+      if (exactMatched > 0) summary.push(`精确匹配 ${exactMatched} 张`)
+      if (fallbackMatched > 0) summary.push(`文件名和大小匹配 ${fallbackMatched} 张`)
+      if (missing > 0) summary.push(`${missing} 张未找到`)
+      if (ambiguous > 0) summary.push(`${ambiguous} 张重名未绑定`)
+      setSubmitNotice({
+        type: matched > 0 ? "success" : "error",
+        text: `${nextDirectoryHandle.name}：${summary.join("，")}；未载入文件夹内其他照片`,
+      })
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return
+      setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "授权并绑定原文件夹失败" })
+    } finally {
+      setBindingDirectory(false)
     }
   }
 
@@ -893,6 +1244,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     currentItems.forEach((item) => URL.revokeObjectURL(item.previewUrl))
     setItems([])
     setSelectedId(null)
+    setDirectoryHandle(null)
     setTagInput("")
     setSharedForm(buildBaseForm())
     setSubmitNotice(null)
@@ -1061,6 +1413,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         lastModified: target.localFile.lastModified,
       })
       let localWriteSucceeded = false
+      let resolvedWriteHandle = target.fileHandle
       if (target.fileHandle) {
         updateItem(itemId, (item) => ({ ...item, uploadProgress: 16, uploadStage: "正在生成可回写的图片" }))
         const exifForm = new FormData()
@@ -1073,14 +1426,34 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         if (!response.ok) throw new Error(`本地 EXIF 回写准备失败（HTTP ${response.status}）`)
         const editedBlob = await response.blob()
         try {
-          const writable = await target.fileHandle.createWritable()
+          if (directoryHandle && !await verifyWritablePermission(directoryHandle)) {
+            throw new Error("文件夹写入权限已失效，请重新选择照片文件夹")
+          }
+          if (directoryHandle && target.fileName !== target.originalFileName) {
+            try {
+              await directoryHandle.getFileHandle(target.fileName)
+              throw new Error(`文件夹中已存在“${target.fileName}”，请更换目标文件名`)
+            } catch (error) {
+              if (error instanceof Error && error.message.includes("请更换目标文件名")) throw error
+              if ((error as Error).name !== "NotFoundError") throw error
+            }
+            resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName, { create: true })
+          }
+          if (!resolvedWriteHandle) throw new Error("未找到可写入的本地文件")
+          const writable = await resolvedWriteHandle.createWritable()
           await writable.write(editedBlob)
           await writable.close()
+          if (directoryHandle && target.fileName !== target.originalFileName) {
+            await directoryHandle.removeEntry(target.originalFileName)
+          }
           localWriteSucceeded = true
-        } catch {
+        } catch (error) {
           // Browser permission can expire between selection and submit. The
           // reviewed bytes still continue to cloud ingest below.
-          setSubmitNotice({ type: "error", text: "本地原图未获写入权限，已继续提交更新后的副本到云端" })
+          setSubmitNotice({
+            type: "error",
+            text: error instanceof Error ? `${error.message}；已继续提交更新后的副本到云端` : "本地原图未获写入权限，已继续提交更新后的副本到云端",
+          })
         }
         uploadFile = new File([editedBlob], target.fileName, {
           type: editedBlob.type || target.localFile.type,
@@ -1100,6 +1473,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       updateItem(itemId, (item) => ({
         ...item,
         localFile: uploadFile,
+        fileHandle: localWriteSucceeded ? resolvedWriteHandle : item.fileHandle,
         originalFileName: item.fileName,
         originalForm: cloneFormState(item.form),
         submitState: "submitted",
@@ -1162,8 +1536,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           <p className="muted">解析文件名、校对展出地点、补全描述，一次完成本地 EXIF、OSS 和云数据库。</p>
         </div>
         <div className="upload-actions exif-toolbar">
-          <Button htmlType="button" type="primary" onClick={() => void handleOpenWritableFiles()} disabled={uploading}>
-            {uploading ? "正在读取…" : "添加图片"}
+          {directoryHandle ? <Tag color="success">已授权：{directoryHandle.name}</Tag> : null}
+          <Button htmlType="button" type="primary" icon={<ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={handleSelectImages} disabled={uploading}>
+            添加图片
+          </Button>
+          <Button htmlType="button" icon={<FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={() => void handleSelectDirectory()} disabled={uploading || bindingDirectory}>
+            {uploading ? "正在载入文件夹…" : "载入文件夹"}
+          </Button>
+          <Button htmlType="button" icon={<FileCheck2 size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={() => void handleBindDirectory()} disabled={items.length === 0 || uploading || bindingDirectory}>
+            {bindingDirectory ? "正在授权…" : "授权原文件夹"}
           </Button>
         </div>
         <input
@@ -1187,7 +1568,19 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <p className="muted">当前批次 {stats.itemCount} 张，优先处理名称和地点信息</p>
               </div>
               <div className="exif-queue-actions" role="toolbar" aria-label="图片列表操作">
-                <Tooltip title={uploading ? "正在读取图片" : "添加图片"} mouseEnterDelay={0.45}>
+                <Tooltip title="添加指定图片" mouseEnterDelay={0.45}>
+                  <Button
+                    htmlType="button"
+                    type="text"
+                    size="small"
+                    className="icon-button exif-queue-action"
+                    icon={<ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    onClick={handleSelectImages}
+                    disabled={uploading}
+                    aria-label="添加图片"
+                  />
+                </Tooltip>
+                <Tooltip title={uploading ? "正在载入文件夹" : "载入文件夹全部照片"} mouseEnterDelay={0.45}>
                   <Button
                     htmlType="button"
                     type="text"
@@ -1195,10 +1588,24 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     className="icon-button exif-queue-action"
                     icon={uploading
                       ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                      : <ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
-                    onClick={() => void handleOpenWritableFiles()}
-                    disabled={uploading}
-                    aria-label={uploading ? "正在读取图片" : "添加图片"}
+                      : <FolderOpen size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    onClick={() => void handleSelectDirectory()}
+                    disabled={uploading || bindingDirectory}
+                    aria-label="载入文件夹"
+                  />
+                </Tooltip>
+                <Tooltip title={bindingDirectory ? "正在授权原文件夹" : "只绑定队列照片的原文件"} mouseEnterDelay={0.45}>
+                  <Button
+                    htmlType="button"
+                    type="text"
+                    size="small"
+                    className="icon-button exif-queue-action"
+                    icon={bindingDirectory
+                      ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+                      : <FileCheck2 size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    onClick={() => void handleBindDirectory()}
+                    disabled={items.length === 0 || uploading || bindingDirectory}
+                    aria-label="授权原文件夹"
                   />
                 </Tooltip>
                 <Tooltip title="清空图片列表" mouseEnterDelay={0.45}>
@@ -1278,11 +1685,98 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 </div>
                 <p className="muted">名称变动后会自动重解析时代、馆藏与出土信息，适合先统一处理文件名。</p>
               </details>
+              <details className="metadata-sync-panel">
+                <summary>
+                  <span className="exif-tool-summary-copy">
+                    <strong>从照片同步信息</strong>
+                    <small>地点、展览、相机、镜头与拍摄参数</small>
+                  </span>
+                  <span className="exif-tool-summary-meta">
+                    <Tag>{items.length > 1 ? `${items.length - 1} 张可同步` : "至少需要 2 张"}</Tag>
+                    <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
+                </summary>
+                <div className="metadata-sync-controls">
+                  <label className="exif-tool-field metadata-sync-source">
+                    <span>来源照片</span>
+                    <Select
+                      value={metadataSyncSourceId || undefined}
+                      placeholder="选择包含完整信息的照片"
+                      options={items.map((item) => ({
+                        value: item.id,
+                        label: item.fileName,
+                      }))}
+                      onChange={setMetadataSyncSourceId}
+                      disabled={items.length === 0}
+                      popupMatchSelectWidth={360}
+                      showSearch
+                      optionFilterProp="label"
+                    />
+                  </label>
+                  <Button
+                    htmlType="button"
+                    type="default"
+                    onClick={() => selectedItem && setMetadataSyncSourceId(selectedItem.id)}
+                    disabled={!selectedItem || selectedItem.id === metadataSyncSourceId}
+                  >
+                    当前图片设为来源
+                  </Button>
+                </div>
+                <div className="metadata-sync-target-row">
+                  <span>同步到</span>
+                  <Segmented<MetadataSyncTargetMode>
+                    size="small"
+                    value={metadataSyncTargetMode}
+                    options={[
+                      { label: "当前图片", value: "current" },
+                      { label: "全部其他图片", value: "others" },
+                    ]}
+                    onChange={setMetadataSyncTargetMode}
+                  />
+                </div>
+                <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("location")}>只选地点</Button>
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("capture")}>只选拍摄信息</Button>
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("all")}>选择全部</Button>
+                </div>
+                <div className="metadata-sync-scopes">
+                  {METADATA_SYNC_SCOPES.map((scope) => (
+                    <label key={scope.key} className={`metadata-sync-scope ${metadataSyncSelection[scope.key] ? "is-selected" : ""}`}>
+                      <Checkbox
+                        checked={metadataSyncSelection[scope.key]}
+                        onChange={(event) => setMetadataSyncSelection((current) => ({
+                          ...current,
+                          [scope.key]: event.target.checked,
+                        }))}
+                      />
+                      <span>
+                        <strong>{scope.title}</strong>
+                        <small>{scope.description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <div className="metadata-sync-status">
+                  <span>{metadataSyncSource ? `来源：${metadataSyncSource.fileName}` : "尚未选择来源"}</span>
+                  <Tag>{metadataSyncTargets.length} 张目标 · {metadataSyncChangedCount} 项差异</Tag>
+                </div>
+                <div className="exif-tool-actions">
+                  <Button
+                    htmlType="button"
+                    type="primary"
+                    className="exif-tool-submit"
+                    onClick={openMetadataSyncPreview}
+                    disabled={items.length < 2 || !metadataSyncSource}
+                  >
+                    预览并同步
+                  </Button>
+                </div>
+              </details>
               <details className="batch-location-panel">
                 <summary>
                   <span className="exif-tool-summary-copy">
-                    <strong>批量修改展出地点与 GPS</strong>
-                    <small>统一展厅、展览和定位坐标</small>
+                    <strong>手动统一展出地点</strong>
+                    <small>地图选点后统一展览与 GPS</small>
                   </span>
                   <span className="exif-tool-summary-meta">
                     <Tag>{selectedItem ? "可套用当前图片" : "等待选择"}</Tag>
@@ -1347,7 +1841,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <span>{item.form.name || item.parsedName?.artifact_name || "待确认名称"}</span>
                       <Tag
                         color={item.submitState === "submitted" ? "success" : item.submitState === "error" ? "error" : undefined}
-                        className={`queue-submit-state ${item.submitState}`}
+                        className={`queue-submit-state ${item.submitState} ${changedParts(item).length > 0 ? "has-changes" : ""}`}
+                        icon={item.submitState === "submitted"
+                          ? <Check size={11} strokeWidth={2.2} aria-hidden="true" />
+                          : item.submitState === "submitting"
+                            ? <Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />
+                            : item.submitState === "error"
+                              ? <X size={11} strokeWidth={2.2} aria-hidden="true" />
+                              : changedParts(item).length > 0
+                                ? <FileCheck2 size={11} strokeWidth={2} aria-hidden="true" />
+                                : undefined}
                       >
                         {item.submitState === "submitted"
                           ? "已提交"
@@ -1355,7 +1858,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                             ? "提交中"
                             : item.submitState === "error"
                               ? "提交失败"
-                              : "待处理"}
+                              : changedParts(item).length > 0
+                                ? `待提交 · ${changedParts(item).length} 项`
+                                : "待处理"}
                       </Tag>
                       {changedParts(item).length > 0 ? (
                         <span className="queue-change-list" aria-label="待提交的变更">
@@ -1538,10 +2043,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
                 <div className="form-fields exif-form-card-grid">
                   <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <div className="ui-card-header form-section-head">
-                      <div>基础信息</div>
-                      <div>优先确认文物名称、馆藏单位和时代。</div>
-                    </div>
+                    <FormSectionHeader icon={Landmark} title="基础信息" description="优先确认文物名称、馆藏单位和时代。" />
                     <div className="ui-card-content form-section-body">
                       <div className="field-row">
                         <label className="field">
@@ -1602,10 +2104,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </Card>
 
                   <Card className="form-section exif-form-card exif-capture-card" styles={{ body: { padding: 0 } }}>
-                    <div className="ui-card-header form-section-head">
-                      <div>拍摄信息</div>
-                      <div>自动读取图片 EXIF，可在入库前校正。</div>
-                    </div>
+                    <FormSectionHeader icon={Camera} title="拍摄信息" description="自动读取图片 EXIF，可在入库前校正。" />
                     <div className="ui-card-content form-section-body">
                       <div className="field-row">
                         <label className="field">
@@ -1639,10 +2138,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </Card>
 
                   <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <div className="ui-card-header form-section-head">
-                      <div>展出地点</div>
-                      <div>填写展出地点、展览名称和定位坐标。</div>
-                    </div>
+                    <FormSectionHeader icon={MapPin} title="展出地点" description="填写展出地点、展览名称和定位坐标。" />
                     <div className="ui-card-content form-section-body">
                       <label className="field">
                         <span>展出地点名称</span>
@@ -1727,10 +2223,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </Card>
 
                   <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <div className="ui-card-header form-section-head">
-                      <div>AI 补充描述</div>
-                      <div>生成多份候选描述后，选一版写回当前图片。</div>
-                    </div>
+                    <FormSectionHeader icon={Sparkles} title="AI 补充描述" description="生成多份候选描述后，选一版写回当前图片。" />
                     <div className="ui-card-content form-section-body">
                       <div className="upload-actions exif-model-actions">
                         <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
@@ -1778,10 +2271,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </Card>
 
                   <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <div className="ui-card-header form-section-head">
-                      <div>最终写入内容</div>
-                      <div>这里的描述与标签会写入 EXIF 和云端数据库。</div>
-                    </div>
+                    <FormSectionHeader icon={FileCheck2} title="最终写入内容" description="这里的描述与标签会写入 EXIF 和云端数据库。" />
                     <div className="ui-card-content form-section-body">
                       <label className="field">
                         <span>描述</span>
@@ -1860,19 +2350,94 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               </span>
               <h2>从一张文物照片开始</h2>
               <p className="muted">选择图片后，系统会从文件名提取基础信息；只需校对后保存入库。</p>
-              <Button
-                htmlType="button"
-                type="primary"
-                icon={<ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />}
-                onClick={() => void handleOpenWritableFiles()}
-                disabled={uploading}
-              >
-                {uploading ? "正在读取…" : "添加图片"}
-              </Button>
+              <div className="upload-actions exif-empty-actions">
+                <Button htmlType="button" type="primary" icon={<ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={handleSelectImages} disabled={uploading}>添加图片</Button>
+                <Button htmlType="button" icon={<FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={() => void handleSelectDirectory()} disabled={uploading}>
+                  {uploading ? "正在载入…" : "载入文件夹"}
+                </Button>
+              </div>
             </div>
           )}
         </section>
       </div>
+      <Modal
+        title="确认照片信息同步"
+        open={metadataSyncPreviewOpen}
+        width={760}
+        centered
+        destroyOnHidden
+        onCancel={() => setMetadataSyncPreviewOpen(false)}
+        footer={[
+          <Button key="cancel" htmlType="button" onClick={() => setMetadataSyncPreviewOpen(false)}>取消</Button>,
+          <Button key="apply" htmlType="button" type="primary" onClick={applyMetadataSync} disabled={metadataSyncChangedCount === 0}>
+            同步到 {metadataSyncTargets.length} 张照片
+          </Button>,
+        ]}
+      >
+        <div className="metadata-sync-preview">
+          <div className="metadata-sync-preview-summary">
+            <div>
+              <span>来源照片</span>
+              <strong>{metadataSyncSource?.fileName ?? "未选择"}</strong>
+            </div>
+            <div>
+              <span>目标范围</span>
+              <strong>{metadataSyncTargetMode === "current" ? "当前图片" : `全部其他图片（${metadataSyncTargets.length} 张）`}</strong>
+            </div>
+            <div>
+              <span>预计变更</span>
+              <strong>{metadataSyncChangedCount} 项</strong>
+            </div>
+          </div>
+          <div className="metadata-sync-preview-scopes">
+            {METADATA_SYNC_SCOPES.filter((scope) => metadataSyncSelection[scope.key]).map((scope) => (
+              <Tag key={scope.key} color="blue">{scope.title}</Tag>
+            ))}
+          </div>
+          {metadataSyncDiffs.every((entry) => entry.rows.length === 0) ? (
+            <div className="metadata-sync-no-change">来源照片与目标照片在所选范围内没有差异。</div>
+          ) : (
+            <div className="metadata-sync-preview-targets">
+              {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).slice(0, 4).map(({ target, rows }) => (
+                <section key={target.id} className="metadata-sync-preview-target">
+                  <header>
+                    <img src={target.previewUrl} alt="" />
+                    <div>
+                      <strong>{target.fileName}</strong>
+                      <span>{rows.length} 项将变更</span>
+                    </div>
+                  </header>
+                  <div className="metadata-sync-diff-table">
+                    <div className="metadata-sync-diff-head"><span>字段</span><span>同步前</span><span>同步后</span></div>
+                    {rows.map((row) => (
+                      <div key={row.label} className={`metadata-sync-diff-row ${row.willClearTarget ? "will-clear" : ""}`}>
+                        <strong className="metadata-sync-diff-field">{row.label}</strong>
+                        <div className={`metadata-sync-diff-value before ${row.targetValue === "未填写" ? "is-empty" : ""}`} title={row.targetValue}>
+                          <small>同步前</small>
+                          <span>{row.targetValue}</span>
+                        </div>
+                        <div className={`metadata-sync-diff-value after ${row.sourceValue === "未填写" ? "is-empty" : ""}`} title={row.sourceValue}>
+                          <small>同步后</small>
+                          <span>{row.sourceValue}</span>
+                        </div>
+                        {row.willClearTarget ? <Tag color="warning">将清空</Tag> : null}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).length > 4 ? (
+                <p className="muted metadata-sync-more-targets">
+                  另有 {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).length - 4} 张目标照片将在确认后同步。
+                </p>
+              ) : null}
+            </div>
+          )}
+          {metadataSyncDiffs.some((entry) => entry.rows.some((row) => row.willClearTarget)) ? (
+            <p className="metadata-sync-clear-warning">来源照片中有空字段，确认后会清空目标照片对应内容。</p>
+          ) : null}
+        </div>
+      </Modal>
     </section>
   )
 }
