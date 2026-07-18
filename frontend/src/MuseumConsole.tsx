@@ -1,9 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
+import { Button, Input } from "antd"
 
 const AMAP_SCRIPT_ID = "museum-console-amap-script"
 const AMAP_SECURITY_CODE = "3ba01835420271d5405dccba5e089b46"
 const AMAP_SCRIPT_SRC =
   "https://webapi.amap.com/maps?v=1.4.15&key=7a9513e700e06c00890363af1bd2d926&plugin=AMap.PlaceSearch,AMap.Geocoder"
+
+const { TextArea } = Input
+type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>
 
 type MuseumExhibition = {
   id: number
@@ -532,13 +536,13 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
   }, [applyCoordinateSelection, editing, mapReady])
 
-  function handleSearch(event: FormEvent<HTMLFormElement>) {
+  const handleSearch: FormSubmitHandler = (event) => {
     event.preventDefault()
     setSubmittedQuery(query)
     void loadMuseums(query)
   }
 
-  async function handleSave(event: FormEvent<HTMLFormElement>) {
+  const handleSave: FormSubmitHandler = async (event) => {
     event.preventDefault()
     if (!activeMuseum || !editForm) return
 
@@ -598,7 +602,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           </div>
         </div>
         <form className="gallery-search museum-search" onSubmit={handleSearch}>
-          <input
+          <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索博物馆名称或地点"
@@ -620,7 +624,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       <div className="museum-console-layout">
         <div className="museum-list">
           {items.map((museum) => (
-            <button
+            <button data-ui="interactive-surface"
               type="button"
               key={museum.id}
               className={`museum-list-item ${activeMuseum?.id === museum.id ? "active" : ""}`}
@@ -650,8 +654,8 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </div>
                 <div className="gallery-actions">
                   {!editing ? (
-                    <button
-                      type="button"
+                    <Button
+                      htmlType="button"
                       className="ghost"
                       onClick={() => {
                         setEditForm(buildMuseumEditForm(activeMuseum))
@@ -661,10 +665,10 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       }}
                     >
                       编辑资料
-                    </button>
+                    </Button>
                   ) : (
-                    <button
-                      type="button"
+                    <Button
+                      htmlType="button"
                       className="ghost"
                       onClick={() => {
                         setEditing(false)
@@ -674,7 +678,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       disabled={saving}
                     >
                       取消编辑
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -692,16 +696,16 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   <div className="museum-map-actions">
                     {editing ? (
                       <>
-                        <button
-                          type="button"
+                        <Button
+                          htmlType="button"
                           className="ghost"
                           onClick={() => void handleLocateByName()}
                           disabled={locatingByName || !mapReady}
                         >
                           {locatingByName ? "定位中..." : "按馆名定位"}
-                        </button>
-                        <button
-                          type="button"
+                        </Button>
+                        <Button
+                          htmlType="button"
                           className="ghost"
                           onClick={() => {
                             const original = getMuseumCoordinates(activeMuseum)
@@ -717,7 +721,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                           disabled={!mapReady}
                         >
                           恢复原坐标
-                        </button>
+                        </Button>
                       </>
                     ) : null}
                   </div>
@@ -793,7 +797,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                         <div className="field-row">
                           <label className="field">
                             <span>博物馆名称</span>
-                            <input
+                            <Input
                               value={editForm.name}
                               onChange={(event) =>
                                 setEditForm((current) =>
@@ -805,7 +809,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                           </label>
                           <label className="field">
                             <span>地点</span>
-                            <input
+                            <Input
                               value={editForm.location}
                               onChange={(event) =>
                                 setEditForm((current) =>
@@ -819,7 +823,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                         <div className="field-row">
                           <label className="field">
                             <span>纬度</span>
-                            <input
+                            <Input
                               value={editForm.latitude}
                               onChange={(event) =>
                                 setEditForm((current) =>
@@ -831,7 +835,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                           </label>
                           <label className="field">
                             <span>经度</span>
-                            <input
+                            <Input
                               value={editForm.longitude}
                               onChange={(event) =>
                                 setEditForm((current) =>
@@ -844,7 +848,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                         </div>
                         <label className="field">
                           <span>说明</span>
-                          <textarea
+                          <TextArea
                             rows={6}
                             value={editForm.description}
                             onChange={(event) =>
@@ -867,9 +871,9 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     ) : (
                       <span />
                     )}
-                    <button type="submit" className="primary" disabled={saving}>
+                    <Button htmlType="submit" className="primary" disabled={saving}>
                       {saving ? "保存中..." : "保存博物馆资料"}
-                    </button>
+                    </Button>
                   </div>
                 </form>
               )}

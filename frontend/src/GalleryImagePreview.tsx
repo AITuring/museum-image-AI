@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Button } from "antd"
 import {
   FlipHorizontal2,
   FlipVertical2,
@@ -313,7 +314,7 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
               <span>Minimap</span>
               <span>{Math.round(scale * 100)}%</span>
             </div>
-            <button
+            <button data-ui="interactive-surface"
               type="button"
               className="gallery-image-preview-minimap-shell"
               onPointerDown={handleMinimapPointerDown}
@@ -334,62 +335,62 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
         ) : null}
 
         <div className="gallery-image-preview-toolbar">
-          <button
-            type="button"
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action"
             onClick={() => setScale((current) => Math.max(1, Number((current - 0.2).toFixed(2))))}
             aria-label="缩小"
             data-tooltip="缩小"
           >
             <Minus size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action"
             onClick={() => setScale((current) => Math.min(8, Number((current + 0.2).toFixed(2))))}
             aria-label="放大"
             data-tooltip="放大"
           >
             <Plus size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action"
             onClick={() => setRotation((current) => current - 90)}
             aria-label="左转"
             data-tooltip="左转"
           >
             <RotateCcw size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action"
             onClick={() => setRotation((current) => current + 90)}
             aria-label="右转"
             data-tooltip="右转"
           >
             <RotateCw size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action"
             onClick={() => setFlipX((current) => !current)}
             aria-label="水平翻转"
             data-tooltip="水平翻转"
           >
             <FlipHorizontal2 size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action"
             onClick={() => setFlipY((current) => !current)}
             aria-label="垂直翻转"
             data-tooltip="垂直翻转"
           >
             <FlipVertical2 size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action"
             onClick={() => {
               setScale(1)
@@ -402,16 +403,16 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
             data-tooltip="重置"
           >
             <Undo2 size={16} aria-hidden="true" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            htmlType="button"
             className="gallery-image-preview-action close"
             onClick={onClose}
             aria-label="关闭原比例预览"
             data-tooltip="关闭"
           >
             <X size={16} aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       </div>
     </div>

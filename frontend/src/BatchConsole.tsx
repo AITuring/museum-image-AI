@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { AutoComplete, Button, Input, Select, Tag } from "antd"
+import { X } from "lucide-react"
+
+const Textarea = Input.TextArea
 
 type PendingArtifact = {
   id: number
@@ -1219,9 +1223,8 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const pendingCount = items.filter((i) => i.status === "pending" || i.status === "failed").length
 
   return (
-    <section className="panel form-wide">
+    <section className="panel form-wide batch-workbench">
       <div className="section-heading">
-        <span className="step-badge">B</span>
         <div>
           <h2>批量识别入库</h2>
           <p className="muted">支持本地文件夹或 Google Photos 导入，逐条识别、微调后提交到云端（图片入 OSS）。</p>
@@ -1231,14 +1234,15 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       <div className="scan-row">
         <div className="field scan-input">
           <span>本地文件夹</span>
-          <button
-            type="button"
+          <Button
+            htmlType="button"
+            type="primary"
             className="picker-button"
             onClick={() => folderInputRef.current?.click()}
             disabled={scanning}
           >
             {scanning ? "上传中…" : "选择文件夹并上传"}
-          </button>
+          </Button>
           <input
             ref={folderInputRef}
             type="file"
@@ -1256,8 +1260,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       <div className="field">
         <span>Google Photos</span>
         <div className="upload-actions">
-          <button
-            type="button"
+          <Button
+            htmlType="button"
+            type="primary"
             className="picker-button"
             onClick={handleGooglePhotosPrimaryAction}
             disabled={
@@ -1272,45 +1277,49 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 : googlePhotosStatus?.auth_configured === false
                   ? "配置 Google Photos"
                 : "连接 Google Photos"}
-          </button>
+          </Button>
           {googlePhotosStatus?.enabled !== false ? (
-            <button
-              type="button"
+            <Button
+              htmlType="button"
+              type="text"
               className="ghost"
               onClick={() => void openGooglePhotosConfigModal()}
               disabled={googlePhotosBusy}
             >
               修改配置
-            </button>
+            </Button>
           ) : null}
           {googlePhotosStatus?.auth_configured ? (
-            <button
-              type="button"
+            <Button
+              htmlType="button"
+              type="text"
+              danger
               className="ghost danger"
               onClick={() => void handleClearGooglePhotosToken()}
               disabled={googlePhotosBusy}
             >
               清除授权
-            </button>
+            </Button>
           ) : null}
           {googlePhotosStatus?.connected ? (
             <>
-              <button
-                type="button"
+              <Button
+                htmlType="button"
+                type="text"
                 className="ghost"
                 onClick={() => void handleConnectGooglePhotos()}
                 disabled={googlePhotosBusy}
               >
                 打开 Picker 选图
-              </button>
-              <button
-                type="button"
-                className="primary"
+              </Button>
+              <Button
+                htmlType="button"
+                type="primary"
                 onClick={() => void importGooglePhotosSelection()}
                 disabled={googlePhotosBusy || googlePhotosSelectedIds.length === 0}
               >
                 {googlePhotosBusy ? "导入中…" : `导入所选图片（${googlePhotosSelectedIds.length}）`}
-              </button>
+              </Button>
             </>
           ) : null}
         </div>
@@ -1324,10 +1333,12 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               {googlePhotosMedia.map((item) => {
                 const checked = googlePhotosSelectedIds.includes(item.id)
                 return (
-                  <button
+                  <Button
                     key={item.id}
-                    type="button"
-                    className={checked ? "tag-chip" : "ghost"}
+                    htmlType="button"
+                    size="small"
+                    type={checked ? "primary" : "default"}
+                    className="google-photo-chip"
                     onClick={() =>
                       setGooglePhotosSelectedIds((current) =>
                         current.includes(item.id)
@@ -1337,7 +1348,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     }
                   >
                     {checked ? "已选" : "选择"} · {item.filename}
-                  </button>
+                  </Button>
                 )
               })}
             </div>
@@ -1345,9 +1356,10 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               {googlePhotosMedia.map((item) => {
                 const checked = googlePhotosSelectedIds.includes(item.id)
                 return (
-                  <button
+                  <Button
                     key={`google-photo-${item.id}`}
-                    type="button"
+                    htmlType="button"
+                    type="default"
                     className={`existing-artifact-thumb ${checked ? "selected-action" : ""}`}
                     onClick={() =>
                       setGooglePhotosSelectedIds((current) =>
@@ -1359,14 +1371,15 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     title={item.filename}
                   >
                     <img src={item.thumbnail_url ?? item.base_url} alt={item.filename} loading="lazy" />
-                  </button>
+                  </Button>
                 )
               })}
             </div>
             {googlePhotosNextPageToken ? (
               <div className="upload-actions">
-                <button
-                  type="button"
+                <Button
+                  htmlType="button"
+                  type="text"
                   className="ghost"
                   onClick={() =>
                     void loadGooglePhotosMedia({
@@ -1378,7 +1391,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   disabled={googlePhotosBusy || !googlePhotosSession?.id}
                 >
                   加载更多
-                </button>
+                </Button>
               </div>
             ) : null}
           </>
@@ -1386,22 +1399,24 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
       </div>
 
       <div className="upload-actions">
-        <button
-          type="button"
-          className="primary"
+        <Button
+          htmlType="button"
+          type="primary"
           onClick={() => void handleIdentifyAll([])}
           disabled={identifying || googlePhotosBusy || pendingCount === 0}
         >
           {identifying ? "识别中…" : `开始识别（${pendingCount} 张待识别）`}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          htmlType="button"
+          type="text"
+          danger
           className="ghost danger"
           onClick={() => void handleClearAll()}
           disabled={identifying || scanning || googlePhotosBusy || items.length === 0}
         >
           全部清除
-        </button>
+        </Button>
         {progress ? (
           <span className="muted">
             进度 {progress.done}/{progress.total}
@@ -1414,7 +1429,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       {items.length === 0 ? (
         <div className="empty-state">
-          <span className="empty-icon">📁</span>
           <strong>暂无待处理图片</strong>
           <p className="muted">点击上方按钮选择本地文件夹，或连接 Google Photos 导入图片。</p>
         </div>
@@ -1452,10 +1466,10 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
             <div className="batch-fields">
               <div className="batch-head">
                 <span className="muted small">{item.file_name}</span>
-                <span className={`badge ${item.status === "submitted" ? "best" : "conf"}`}>
+                <Tag color={item.status === "submitted" ? "success" : undefined}>
                   {STATUS_LABEL[item.status] ?? item.status}
                   {item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ""}
-                </span>
+                </Tag>
               </div>
 
               <div className="batch-core-card">
@@ -1466,7 +1480,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <div className="batch-core-grid">
                   <label className={`field ${isMissingValue(item.museum_name) ? "field-invalid" : ""}`}>
                     <span>博物馆 / 出土地</span>
-                    <input
+                    <Input
                       list="batch-museum-options"
                       value={item.museum_name ?? ""}
                       onChange={(e) => patchLocal(item.id, { museum_name: e.target.value || null })}
@@ -1480,7 +1494,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </label>
                   <label className={`field ${isMissingValue(item.name) ? "field-invalid" : ""}`}>
                     <span>文物名称</span>
-                    <input
+                    <Input
                       value={item.name ?? ""}
                       onChange={(e) => patchLocal(item.id, { name: e.target.value })}
                       placeholder="例如：天王俑"
@@ -1493,7 +1507,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </label>
                   <label className={`field ${isMissingValue(item.era) ? "field-soft-missing" : ""}`}>
                     <span>时代</span>
-                    <input
+                    <Input
                       list="batch-era-options"
                       value={item.era ?? ""}
                       onChange={(e) => patchLocal(item.id, { era: e.target.value || null })}
@@ -1513,9 +1527,24 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     }`}
                   >
                     <span>展览</span>
-                    <input
+                    <AutoComplete
                       value={item.exhibition_name ?? ""}
-                      onChange={(e) => patchLocal(item.id, { exhibition_name: e.target.value })}
+                      options={(exhibitionSuggestions[item.id] ?? []).map((exhibition) => ({
+                        key: exhibition.id,
+                        value: exhibition.name,
+                        label: (
+                          <span className="autocomplete-option">
+                            <span>{exhibition.name}</span>
+                            <span className="autocomplete-option-meta">{exhibition.museum_name}</span>
+                          </span>
+                        ),
+                      }))}
+                      filterOption={false}
+                      onChange={(value) => patchLocal(item.id, { exhibition_name: value })}
+                      onSelect={(value) => {
+                        setExhibitionSuggestions((current) => ({ ...current, [item.id]: [] }))
+                        patchLocal(item.id, { exhibition_name: value })
+                      }}
                       placeholder={
                         selectedMuseum
                           ? "默认常设，输入 @ 后联想检索该馆展览"
@@ -1529,24 +1558,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     ) : (
                       <span className="field-help">如果是常设展，可直接保留“常设”。</span>
                     )}
-                    {(exhibitionSuggestions[item.id] ?? []).length > 0 ? (
-                      <div className="suggestion-list">
-                        {(exhibitionSuggestions[item.id] ?? []).map((exhibition) => (
-                          <button
-                            key={exhibition.id}
-                            type="button"
-                            className="suggestion-item"
-                            onClick={() => {
-                              setExhibitionSuggestions((current) => ({ ...current, [item.id]: [] }))
-                              patchLocal(item.id, { exhibition_name: exhibition.name })
-                            }}
-                          >
-                            <span>{exhibition.name}</span>
-                            <em>{exhibition.museum_name}</em>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
                   </label>
                 </div>
               </div>
@@ -1560,7 +1571,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                         {matchedArtifact.match_reason} 匹配度 {Math.round(matchedArtifact.match_score * 100)}%
                       </p>
                     </div>
-                    <span className="badge conf">{matchedArtifact.artifact.images.length} 张历史图片</span>
+                    <Tag>{matchedArtifact.artifact.images.length} 张历史图片</Tag>
                   </div>
                   <div className="backend-match-meta">
                     <span>名称：{matchedArtifact.artifact.name}</span>
@@ -1570,7 +1581,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   {matchedArtifact.artifact.tags.length > 0 ? (
                     <div className="tag-row">
                       {matchedArtifact.artifact.tags.map((tag) => (
-                        <span key={`batch-match-tag-${item.id}-${tag}`}>{tag}</span>
+                        <Tag key={`batch-match-tag-${item.id}-${tag}`}>
+                          {tag}
+                        </Tag>
                       ))}
                     </div>
                   ) : null}
@@ -1595,9 +1608,11 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     </div>
                   ) : null}
                   <div className="backend-match-actions">
-                    <button
-                      type="button"
-                      className={`primary small ${sameArtifactDecision === "yes" ? "selected-action" : ""}`}
+                    <Button
+                      htmlType="button"
+                      type="primary"
+                      size="small"
+                      className={sameArtifactDecision === "yes" ? "selected-action" : undefined}
                       onClick={() => {
                         patchLocal(item.id, {
                           museum_name: matchedArtifact.artifact.museum_name,
@@ -1614,10 +1629,11 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       }}
                     >
                       是同一件
-                    </button>
-                    <button
-                      type="button"
-                      className={`ghost ${sameArtifactDecision === "no" ? "selected-action" : ""}`}
+                    </Button>
+                    <Button
+                      htmlType="button"
+                      type={sameArtifactDecision === "no" ? "primary" : "text"}
+                      className={sameArtifactDecision === "no" ? "selected-action" : "ghost"}
                       onClick={() => {
                         patchLocal(item.id, { existing_artifact_id: null })
                         setSameArtifactDecisions((current) => ({ ...current, [item.id]: "no" }))
@@ -1626,7 +1642,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       }}
                     >
                       不是同一件
-                    </button>
+                    </Button>
                   </div>
                   {sameArtifactDecision === "yes" ? (
                     <p className="success-text">提交时会直接更新这条已有文物，并把当前图片作为新图追加。</p>
@@ -1647,20 +1663,21 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                         item.tags.map((tag) => (
                           <span key={tag} className="tag-chip">
                             {tag}
-                            <button
-                              type="button"
+                            <Button
+                              htmlType="button"
+                              type="text"
                               onClick={() => removeTag(item.id, tag)}
                               aria-label={`删除标签 ${tag}`}
                             >
-                              ×
-                            </button>
+                              <X size={11} strokeWidth={2} aria-hidden="true" />
+                            </Button>
                           </span>
                         ))
                       ) : (
                         <span className="tag-editor-placeholder">暂无标签</span>
                       )}
                     </div>
-                    <input
+                    <Input
                       value={tagInputs[item.id] ?? ""}
                       onChange={(e) =>
                         setTagInputs((current) => ({ ...current, [item.id]: e.target.value }))
@@ -1688,14 +1705,31 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   }`}
                 >
                   <span>拍摄时博物馆</span>
-                  <input
+                  <AutoComplete
                     value={item.capture_museum_name ?? ""}
-                    onChange={(e) => {
-                      const value = e.target.value
+                    options={(museumSuggestions[item.id] ?? []).map((museum) => ({
+                      key: museum.id,
+                      value: museum.name,
+                      label: museum.name,
+                    }))}
+                    filterOption={false}
+                    onChange={(value) => {
                       patchLocal(item.id, {
                         capture_museum_name: value || null,
                         exhibition_name:
                           value && (!(item.exhibition_name ?? "").trim() || (item.exhibition_name ?? "").trim().startsWith("@"))
+                            ? "常设"
+                          : item.exhibition_name,
+                      })
+                    }}
+                    onSelect={(value) => {
+                      const museum = (museumSuggestions[item.id] ?? []).find((option) => option.name === value)
+                      if (!museum) return
+                      setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
+                      patchLocal(item.id, {
+                        capture_museum_name: museum.name,
+                        exhibition_name:
+                          (item.exhibition_name ?? "").trim().startsWith("@") || !(item.exhibition_name ?? "").trim()
                             ? "常设"
                             : item.exhibition_name,
                       })
@@ -1709,35 +1743,12 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   ) : (
                     <span className="field-help">支持直接输入，也可通过 `@关键词` 联想选择标准馆名。</span>
                   )}
-                  {(museumSuggestions[item.id] ?? []).length > 0 ? (
-                    <div className="suggestion-list">
-                      {(museumSuggestions[item.id] ?? []).map((museum) => (
-                        <button
-                          key={museum.id}
-                          type="button"
-                          className="suggestion-item"
-                          onClick={() => {
-                            setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
-                            patchLocal(item.id, {
-                              capture_museum_name: museum.name,
-                              exhibition_name:
-                                (item.exhibition_name ?? "").trim().startsWith("@") || !(item.exhibition_name ?? "").trim()
-                                  ? "常设"
-                                  : item.exhibition_name,
-                            })
-                          }}
-                        >
-                          {museum.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
                 </label>
               </div>
 
               <label className="field">
                 <span>描述</span>
-                <textarea
+                <Textarea
                   rows={4}
                   value={item.description ?? ""}
                   onChange={(e) => patchLocal(item.id, { description: e.target.value })}
@@ -1748,14 +1759,14 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div className="field-row">
                 <label className="field">
                   <span>机型</span>
-                  <input
+                  <Input
                     value={item.camera_model ?? ""}
                     onChange={(e) => patchLocal(item.id, { camera_model: e.target.value })}
                   />
                 </label>
                 <label className="field">
                   <span>镜头</span>
-                  <input
+                  <Input
                     value={item.lens_model ?? ""}
                     onChange={(e) => patchLocal(item.id, { lens_model: e.target.value })}
                   />
@@ -1765,7 +1776,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div className="field-row">
                 <label className="field">
                   <span>经度</span>
-                  <input
+                  <Input
                     value={item.longitude ?? ""}
                     onChange={(e) =>
                       patchLocal(item.id, {
@@ -1777,7 +1788,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </label>
                 <label className="field">
                   <span>纬度</span>
-                  <input
+                  <Input
                     value={item.latitude ?? ""}
                     onChange={(e) =>
                       patchLocal(item.id, {
@@ -1792,35 +1803,37 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div className="field-row">
                 <label className="field">
                   <span>拍摄时间</span>
-                  <input
+                  <Input
                     value={item.captured_at ?? ""}
                     onChange={(e) => patchLocal(item.id, { captured_at: e.target.value })}
                   />
                 </label>
                 <label className="field">
                   <span>修图方式</span>
-                  <select
-                    value={item.edit_method ?? ""}
-                    onChange={(e) => patchLocal(item.id, { edit_method: e.target.value || null })}
-                  >
-                    <option value="">未填写</option>
-                    <option value="简单调整">简单调整</option>
-                    <option value="堆栈合成">堆栈合成</option>
-                  </select>
+                  <Select
+                    allowClear
+                    placeholder="未填写"
+                    value={item.edit_method || undefined}
+                    options={[
+                      { value: "简单调整", label: "简单调整" },
+                      { value: "堆栈合成", label: "堆栈合成" },
+                    ]}
+                    onChange={(value) => patchLocal(item.id, { edit_method: value ?? null })}
+                  />
                 </label>
               </div>
 
               <div className="field-row">
                 <label className="field">
                   <span>快门</span>
-                  <input
+                  <Input
                     value={item.shutter_speed ?? ""}
                     onChange={(e) => patchLocal(item.id, { shutter_speed: e.target.value })}
                   />
                 </label>
                 <label className="field">
                   <span>光圈</span>
-                  <input
+                  <Input
                     value={item.aperture ?? ""}
                     onChange={(e) => patchLocal(item.id, { aperture: e.target.value })}
                   />
@@ -1830,7 +1843,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div className="field-row">
                 <label className="field">
                   <span>感光度</span>
-                  <input
+                  <Input
                     value={item.iso ?? ""}
                     onChange={(e) =>
                       patchLocal(item.id, {
@@ -1845,16 +1858,18 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               {item.analysis ? <p className="muted">{item.analysis}</p> : null}
 
               <div className="batch-actions">
-                <button
-                  type="button"
+                <Button
+                  htmlType="button"
+                  type="text"
                   className="ghost"
                   onClick={() => void handleSave(item)}
                 >
                   保存
-                </button>
-                <button
-                  type="button"
-                  className="primary small"
+                </Button>
+                <Button
+                  htmlType="button"
+                  type="primary"
+                  size="small"
                   onClick={() => void handleSubmit(item)}
                   disabled={item.status === "submitting" || item.status === "submitted"}
                 >
@@ -1863,10 +1878,10 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     : matchedArtifact && sameArtifactDecision !== "no"
                       ? "更新已有文物并上传图片"
                       : "提交云端"}
-                </button>
-                <button type="button" className="ghost danger" onClick={() => void handleDelete(item.id)}>
+                </Button>
+                <Button htmlType="button" type="text" danger className="ghost danger" onClick={() => void handleDelete(item.id)}>
                   删除
-                </button>
+                </Button>
               </div>
             </div>
           </article>
@@ -1889,16 +1904,16 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
             <strong>{submitNotice.type === "error" ? "操作失败" : "操作成功"}</strong>
             <p>{submitNotice.text}</p>
           </div>
-          <button type="button" className="submit-toast-close" onClick={() => setSubmitNotice(null)}>
+          <Button htmlType="button" className="submit-toast-close" onClick={() => setSubmitNotice(null)}>
             ×
-          </button>
+          </Button>
         </div>
       ) : null}
       {showGooglePhotosConfigModal
         ? createPortal(
             <div className="gallery-modal" onClick={() => setShowGooglePhotosConfigModal(false)}>
               <div className="gallery-modal-body bridge-login-modal" onClick={(event) => event.stopPropagation()}>
-                <div className="section-heading">
+                <div className="gallery-detail-head">
                   <div>
                     <h2>配置 Google Photos</h2>
                     <p className="muted">在这里填写 OAuth 参数，保存后会继续拉起 Google 授权。</p>
@@ -1907,7 +1922,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <div className="form-fields">
                   <label className="field">
                     <span>Client ID</span>
-                    <input
+                    <Input
                       value={googlePhotosConfigForm.clientId}
                       onChange={(event) =>
                         setGooglePhotosConfigForm((current) => ({ ...current, clientId: event.target.value }))
@@ -1917,7 +1932,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </label>
                   <label className="field">
                     <span>Client Secret</span>
-                    <input
+                    <Input
                       type="password"
                       value={googlePhotosConfigForm.clientSecret}
                       onChange={(event) =>
@@ -1928,7 +1943,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </label>
                   <label className="field">
                     <span>Redirect URI</span>
-                    <input
+                    <Input
                       value={googlePhotosConfigForm.redirectUri}
                       onChange={(event) =>
                         setGooglePhotosConfigForm((current) => ({ ...current, redirectUri: event.target.value }))
@@ -1938,10 +1953,10 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     <span className="field-help">这个地址要和 Google Cloud Console 里的 Authorized redirect URI 完全一致。</span>
                   </label>
                 </div>
-                <div className="backend-match-actions">
-                  <button
-                    type="button"
-                    className="primary"
+                <div className="gallery-form-footer bridge-login-actions">
+                  <Button
+                    htmlType="button"
+                    type="primary"
                     disabled={
                       googlePhotosBusy ||
                       !googlePhotosConfigForm.clientId.trim() ||
@@ -1951,15 +1966,16 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     onClick={() => void handleSaveGooglePhotosConfig()}
                   >
                     {googlePhotosBusy ? "保存中…" : "保存并继续连接"}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    htmlType="button"
+                    type="text"
                     className="ghost"
                     disabled={googlePhotosBusy}
                     onClick={() => setShowGooglePhotosConfigModal(false)}
                   >
                     取消
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>,

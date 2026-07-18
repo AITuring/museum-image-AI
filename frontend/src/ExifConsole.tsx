@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
+import { AutoComplete, Button, Card, Input, Tag, Tooltip } from "antd"
+import { CloudUpload, ImagePlus, Loader2, Trash2, X } from "lucide-react"
+
+const Textarea = Input.TextArea
 
 type ParsedArtifactName = {
   original_name: string
@@ -1010,16 +1014,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     <section className="exif-console">
       <section className="panel workbench-head exif-workbench-head">
         <div>
-          <p className="eyebrow">Photo EXIF</p>
           <h2>文物图片入库工作台</h2>
           <p className="muted">解析文件名、校对展出地点、补全描述，一次完成本地 EXIF、OSS 和云数据库。</p>
         </div>
         <div className="upload-actions exif-toolbar">
-          <button type="button" className="primary" onClick={() => void handleOpenWritableFiles()} disabled={uploading}>
+          <Button htmlType="button" type="primary" onClick={() => void handleOpenWritableFiles()} disabled={uploading}>
             {uploading ? "正在读取…" : "添加图片"}
-          </button>
+          </Button>
         </div>
         <input
+          aria-label="选择图片"
           id={EXIF_FILE_INPUT_ID}
           ref={fileInputRef}
           type="file"
@@ -1034,96 +1038,183 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         <section className="column column-left exif-sidebar">
           <div className="panel exif-queue-panel">
             <div className="section-heading compact">
-              <div>
+              <div className="exif-sidebar-head">
                 <h2>图片列表</h2>
-                <p className="muted">{stats.submittedCount}/{stats.itemCount} 已完成</p>
+                <p className="muted">当前批次 {stats.itemCount} 张，优先处理名称和地点信息</p>
               </div>
-              <div className="exif-queue-actions">
-                <button type="button" className="primary" onClick={() => void handleOpenWritableFiles()} disabled={uploading}>
-                  {uploading ? "读取中" : "添加图片"}
-                </button>
-                <button type="button" className="ghost" onClick={() => void clearAll()} disabled={items.length === 0}>清空</button>
-                <button type="button" className="ghost" onClick={() => void handleSubmitAll()} disabled={submittingAll || items.length === 0 || items.every((item) => item.submitState === "submitted" && changedParts(item).length === 0)}>
-                  {submittingAll ? "提交中..." : "全部入库"}
-                </button>
+              <div className="exif-queue-actions" role="toolbar" aria-label="图片列表操作">
+                <Tooltip title={uploading ? "正在读取图片" : "添加图片"} mouseEnterDelay={0.45}>
+                  <Button
+                    htmlType="button"
+                    type="text"
+                    size="small"
+                    className="icon-button exif-queue-action"
+                    icon={uploading
+                      ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+                      : <ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    onClick={() => void handleOpenWritableFiles()}
+                    disabled={uploading}
+                    aria-label={uploading ? "正在读取图片" : "添加图片"}
+                  />
+                </Tooltip>
+                <Tooltip title="清空图片列表" mouseEnterDelay={0.45}>
+                  <Button
+                    htmlType="button"
+                    type="text"
+                    size="small"
+                    className="icon-button exif-queue-action exif-queue-action-clear"
+                    icon={<Trash2 size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    onClick={() => void clearAll()}
+                    disabled={items.length === 0}
+                    aria-label="清空图片列表"
+                  />
+                </Tooltip>
+                <Tooltip title={submittingAll ? "正在全部入库" : "全部入库"} mouseEnterDelay={0.45}>
+                  <Button
+                    htmlType="button"
+                    type="primary"
+                    size="small"
+                    className="icon-button exif-queue-action exif-queue-action-submit"
+                    icon={submittingAll
+                      ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+                      : <CloudUpload size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    onClick={() => void handleSubmitAll()}
+                    disabled={submittingAll || items.length === 0 || items.every((item) => item.submitState === "submitted" && changedParts(item).length === 0)}
+                    aria-label={submittingAll ? "正在全部入库" : "全部入库"}
+                  />
+                </Tooltip>
               </div>
             </div>
-            <details className="batch-rename-panel">
-              <summary>批量修改目标文件名</summary>
-              <div>
-                <input value={batchRemove} placeholder="删除文本" onChange={(event) => setBatchRemove(event.target.value)} />
-                <input value={batchPrefix} placeholder="添加前缀" onChange={(event) => setBatchPrefix(event.target.value)} />
-                <input value={batchSuffix} placeholder="添加后缀" onChange={(event) => setBatchSuffix(event.target.value)} />
-                <button type="button" className="ghost" onClick={applyBatchRename} disabled={items.length === 0}>应用</button>
-              </div>
-              <p className="muted">将变更 {batchRenameCount}/{items.length} 个文件名；名称变动后会即时重解析时代、馆藏与出土信息。</p>
-            </details>
-            <details className="batch-location-panel">
-              <summary>批量修改展出地点与 GPS</summary>
-              <button type="button" className="text-button" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>采用当前图片的地点</button>
-              <div className="batch-location-fields">
-                <input value={batchLocationName} placeholder="展出地点名称" onChange={(event) => setBatchLocationName(event.target.value)} />
-                <input value={batchExhibitionName} placeholder="对应展览" onChange={(event) => setBatchExhibitionName(event.target.value)} />
-                <input value={batchLatitude} placeholder="纬度" onChange={(event) => setBatchLatitude(event.target.value)} />
-                <input value={batchLongitude} placeholder="经度" onChange={(event) => setBatchLongitude(event.target.value)} />
-              </div>
-              <GpsMapPicker
-                latitude={batchLatitude}
-                longitude={batchLongitude}
-                onPick={(latitude, longitude, locationName) => {
-                  setBatchLatitude(latitude)
-                  setBatchLongitude(longitude)
-                  if (locationName) setBatchLocationName(locationName)
-                }}
-              />
-              <button type="button" className="primary" onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</button>
-            </details>
+            <div className="exif-sidebar-stats">
+              <Tag>总计 {stats.itemCount}</Tag>
+              <Tag color="success">已入库 {stats.submittedCount}</Tag>
+              <Tag>已补描述 {stats.describedCount}</Tag>
+              <Tag>已带坐标 {stats.gpsCount}</Tag>
+            </div>
+            <div className="exif-sidebar-tools">
+              <details className="batch-rename-panel" open>
+                <summary>
+                  <span>批量修改目标文件名</span>
+                  <Tag>影响 {batchRenameCount}/{items.length}</Tag>
+                </summary>
+                <p className="exif-tool-caption">先清理冗余命名，再批量加前后缀，统一文件名格式。</p>
+                <div className="exif-tool-grid">
+                  <label className="exif-tool-field">
+                    <span>删除文本</span>
+                    <Input value={batchRemove} placeholder="例如：IMG_" onChange={(event) => setBatchRemove(event.target.value)} />
+                  </label>
+                  <label className="exif-tool-field">
+                    <span>添加前缀</span>
+                    <Input value={batchPrefix} placeholder="例如：南博-" onChange={(event) => setBatchPrefix(event.target.value)} />
+                  </label>
+                  <label className="exif-tool-field">
+                    <span>添加后缀</span>
+                    <Input value={batchSuffix} placeholder="例如：-展厅A" onChange={(event) => setBatchSuffix(event.target.value)} />
+                  </label>
+                </div>
+                <div className="exif-tool-actions">
+                  <Button htmlType="button" type="default" className="exif-tool-apply" onClick={applyBatchRename} disabled={items.length === 0}>应用文件名规则</Button>
+                </div>
+                <p className="muted">名称变动后会自动重解析时代、馆藏与出土信息，适合先统一处理文件名。</p>
+              </details>
+              <details className="batch-location-panel" open>
+                <summary>
+                  <span>批量修改展出地点与 GPS</span>
+                  <Tag>{selectedItem ? "可套用当前图片" : "等待选择图片"}</Tag>
+                </summary>
+                <p className="exif-tool-caption">地点名、展览名和坐标建议一起维护，避免后续检索不一致。</p>
+                <div className="batch-location-actions">
+                  <Button htmlType="button" type="default" className="exif-tool-copy" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>
+                    采用当前图片地点
+                  </Button>
+                </div>
+                <div className="batch-location-fields exif-tool-grid">
+                  <label className="exif-tool-field">
+                    <span>展出地点</span>
+                    <Input value={batchLocationName} placeholder="例如：历代青铜馆" onChange={(event) => setBatchLocationName(event.target.value)} />
+                  </label>
+                  <label className="exif-tool-field">
+                    <span>对应展览</span>
+                    <Input value={batchExhibitionName} placeholder="例如：常设展" onChange={(event) => setBatchExhibitionName(event.target.value)} />
+                  </label>
+                  <label className="exif-tool-field">
+                    <span>纬度</span>
+                    <Input value={batchLatitude} placeholder="39.9087" onChange={(event) => setBatchLatitude(event.target.value)} />
+                  </label>
+                  <label className="exif-tool-field">
+                    <span>经度</span>
+                    <Input value={batchLongitude} placeholder="116.3975" onChange={(event) => setBatchLongitude(event.target.value)} />
+                  </label>
+                </div>
+                <div className="exif-sidebar-map">
+                  <GpsMapPicker
+                    latitude={batchLatitude}
+                    longitude={batchLongitude}
+                    onPick={(latitude, longitude, locationName) => {
+                      setBatchLatitude(latitude)
+                      setBatchLongitude(longitude)
+                      if (locationName) setBatchLocationName(locationName)
+                    }}
+                  />
+                </div>
+                <div className="exif-tool-actions">
+                  <Button htmlType="button" type="primary" className="exif-tool-submit" onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</Button>
+                </div>
+              </details>
+            </div>
             <div className="exif-queue-list">
               {items.length > 0 ? items.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`exif-queue-item ${selectedId === item.id ? "active" : ""}`}
-                  onClick={() => {
-                    setSelectedId(item.id)
-                    setTagInput("")
-                  }}
-                >
-                  <img src={item.previewUrl} alt={item.fileName} className="exif-queue-thumb" />
-                  <div className="exif-queue-copy">
-                    <strong title={item.fileName}>{item.fileName}</strong>
-                    <span>{item.form.name || item.parsedName?.artifact_name || "待确认名称"}</span>
-                    <em className={`queue-submit-state ${item.submitState}`}>
-                      {item.submitState === "submitted"
-                        ? "已提交"
-                        : item.submitState === "submitting"
-                          ? "提交中"
-                          : item.submitState === "error"
-                            ? "提交失败"
-                            : "待处理"}
-                    </em>
-                    {changedParts(item).length > 0 ? (
-                      <span className="queue-change-list" aria-label="待提交的变更">
-                        {changedParts(item).map((part) => <b key={part}>{part}已改</b>)}
-                      </span>
-                    ) : null}
-                    {item.submitState === "submitting" ? (
-                      <span className="queue-upload" aria-label={`${item.uploadStage ?? "提交中"} ${item.uploadProgress}%`}>
-                        <i style={{ width: `${item.uploadProgress}%` }} />
-                        <small>{item.uploadStage ?? "提交中"} · {item.uploadProgress}%</small>
-                      </span>
-                    ) : null}
-                  </div>
-                  <span
-                    className="exif-remove"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      void removeItem(item.id)
+                <div key={item.id} className="exif-queue-item-shell">
+                  <Button
+                    htmlType="button"
+                    type={selectedId === item.id ? "primary" : "default"}
+                    className="exif-queue-item"
+                    onClick={() => {
+                      setSelectedId(item.id)
+                      setTagInput("")
                     }}
                   >
-                    ×
-                  </span>
-                </button>
+                    <img src={item.previewUrl} alt={item.fileName} className="exif-queue-thumb" />
+                    <div className="exif-queue-copy">
+                      <strong title={item.fileName}>{item.fileName}</strong>
+                      <span>{item.form.name || item.parsedName?.artifact_name || "待确认名称"}</span>
+                      <Tag
+                        color={item.submitState === "submitted" ? "success" : item.submitState === "error" ? "error" : undefined}
+                        className={`queue-submit-state ${item.submitState}`}
+                      >
+                        {item.submitState === "submitted"
+                          ? "已提交"
+                          : item.submitState === "submitting"
+                            ? "提交中"
+                            : item.submitState === "error"
+                              ? "提交失败"
+                              : "待处理"}
+                      </Tag>
+                      {changedParts(item).length > 0 ? (
+                        <span className="queue-change-list" aria-label="待提交的变更">
+                          {changedParts(item).map((part) => <b key={part}>{part}已改</b>)}
+                        </span>
+                      ) : null}
+                      {item.submitState === "submitting" ? (
+                        <span className="queue-upload" aria-label={`${item.uploadStage ?? "提交中"} ${item.uploadProgress}%`}>
+                          <i style={{ width: `${item.uploadProgress}%` }} />
+                          <small>{item.uploadStage ?? "提交中"} · {item.uploadProgress}%</small>
+                        </span>
+                      ) : null}
+                    </div>
+                  </Button>
+                  <Button
+                    htmlType="button"
+                    type="text"
+                    shape="circle"
+                    size="small"
+                    className="exif-remove"
+                    aria-label={`移除 ${item.fileName}`}
+                    onClick={() => void removeItem(item.id)}
+                  >
+                    <Trash2 size={14} aria-hidden="true" />
+                  </Button>
+                </div>
               )) : <p className="muted">还没有图片，先上传一批图片开始处理。</p>}
             </div>
           </div>
@@ -1146,14 +1237,20 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               </div>
 
               <div className="exif-editor-scroll">
-                <details className="form-section exif-shared-section">
-                  <summary>批量套用同一件文物的信息 <span>可选</span></summary>
+                <details className="exif-shared-section">
+                  <summary>
+                    <div>
+                      <strong>批量套用同一件文物的信息</strong>
+                      <p>多张图片属于同一件文物时，再展开统一填写。</p>
+                    </div>
+                    <span>可选</span>
+                  </summary>
                   <div className="form-section-body">
                     <p className="muted">这些图片指向同一件文物时，在这里统一填写基础字段和描述，再一键应用到全部图片。</p>
                     <div className="field-row">
                       <label className="field">
                         <span>馆藏单位</span>
-                        <input
+                        <Input
                           value={sharedForm.museumName}
                           placeholder="例如：山东省博物馆"
                           onChange={(event) => updateSharedForm({ museumName: event.target.value })}
@@ -1161,7 +1258,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       </label>
                       <label className="field">
                         <span>文物名称</span>
-                        <input
+                        <Input
                           value={sharedForm.name}
                           placeholder="例如：夫妇宴享行乐图"
                           onChange={(event) => updateSharedForm({ name: event.target.value })}
@@ -1171,7 +1268,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <div className="field-row">
                       <label className="field">
                         <span>时代</span>
-                        <input
+                        <Input
                           value={sharedForm.era}
                           placeholder="例如：隋代"
                           onChange={(event) => updateSharedForm({ era: event.target.value })}
@@ -1179,7 +1276,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       </label>
                       <label className="field">
                         <span>出土地</span>
-                        <input
+                        <Input
                           value={sharedForm.placeOfExcavation}
                           placeholder="例如：1976年嘉祥英山一号隋墓出土"
                           onChange={(event) => updateSharedForm({ placeOfExcavation: event.target.value })}
@@ -1189,7 +1286,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <div className="field-row">
                       <label className="field">
                         <span>展出地点名称</span>
-                        <input
+                        <Input
                           value={sharedForm.displayLocationName}
                           placeholder="例如：山东省博物馆"
                           onChange={(event) => updateSharedForm({ displayLocationName: event.target.value })}
@@ -1197,7 +1294,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       </label>
                       <label className="field">
                         <span>对应展览</span>
-                        <input
+                        <Input
                           value={sharedForm.exhibitionName}
                           placeholder="例如：常设展 / 汉唐文明展"
                           onChange={(event) => updateSharedForm({ exhibitionName: event.target.value })}
@@ -1206,12 +1303,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <label className="field">
                         <span>纬度 / 经度</span>
                         <div className="field-row">
-                          <input
+                          <Input
                             value={sharedForm.latitude}
                             placeholder="纬度"
                             onChange={(event) => updateSharedForm({ latitude: event.target.value })}
                           />
-                          <input
+                          <Input
                             value={sharedForm.longitude}
                             placeholder="经度"
                             onChange={(event) => updateSharedForm({ longitude: event.target.value })}
@@ -1221,7 +1318,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                     <label className="field">
                       <span>共享描述</span>
-                      <textarea
+                      <Textarea
                         rows={4}
                         value={sharedForm.description}
                         placeholder="这里的描述会作为同一文物的默认描述应用到全部图片"
@@ -1229,91 +1326,86 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       />
                     </label>
                     <div className="upload-actions exif-shared-actions">
-                      <button type="button" className="ghost" onClick={fillSharedFromSelected}>
+                      <Button htmlType="button" type="default" onClick={fillSharedFromSelected}>
                         从当前图片带入
-                      </button>
-                      <button type="button" className="ghost" onClick={applySharedToAll} disabled={items.length === 0}>
+                      </Button>
+                      <Button htmlType="button" type="default" onClick={applySharedToAll} disabled={items.length === 0}>
                         应用到全部图片
-                      </button>
-                      <button type="button" className="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
+                      </Button>
+                      <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
                         {generating ? "并行生成中..." : "并行生成共享描述"}
-                      </button>
-                      <p className="muted">当前会同步到 {items.length || 0} 张图片</p>
+                      </Button>
                     </div>
+                    <p className="field-help">当前会同步到 {items.length || 0} 张图片，建议先统一名称和地点，再批量生成共享描述。</p>
                   </div>
                 </details>
 
-                <div className="exif-selected-head">
-                  <img src={selectedItem.previewUrl} alt={selectedItem.fileName} className="exif-selected-preview" />
-                  <div className="result-block exif-file-block">
-                    <div className="result-head">
-                      <h3>文件名</h3>
-                    </div>
-                    <p className="result-desc exif-file-name">{selectedItem.fileName}</p>
-                    <label className="exif-file-rename">
-                      <span>目标文件名</span>
-                      <input
-                        value={fileBaseName(selectedItem.fileName)}
-                        onChange={(event) => renameSelected(event.target.value)}
-                      />
-                      <em>{fileExtension(selectedItem.fileName)}</em>
-                    </label>
-                    <p className="muted exif-file-parse-status">
-                      {parsingFileName ? "正在从文件名更新字段…" : "文件名变化会自动回填时代、名称、出土与馆藏"}
-                    </p>
-                    {selectedItem.parsedName ? (
-                      <div className="result-meta">
-                        {selectedItem.parsedName.era ? <span>时代：{selectedItem.parsedName.era}</span> : null}
-                        {selectedItem.parsedName.museum_name ? <span>馆藏：{selectedItem.parsedName.museum_name}</span> : null}
-                        {selectedItem.parsedName.Place_of_Excavation ? <span>出土地：{selectedItem.parsedName.Place_of_Excavation}</span> : null}
+                <Card className="exif-preview-card" styles={{ body: { padding: 0 } }}>
+                  <div className="ui-card-content exif-selected-head">
+                    <img src={selectedItem.previewUrl} alt={selectedItem.fileName} className="exif-selected-preview" />
+                    <div className="exif-file-block">
+                      <div className="result-head">
+                        <h3>文件名</h3>
                       </div>
-                    ) : <p className="muted">当前文件名暂无解析结果，可手动填写。</p>}
-                  </div>
-                </div>
-
-                <div className="form-fields">
-                  <section className="form-section">
-                    <div className="form-section-head">
-                      <span className="form-section-kicker">BASIC</span>
-                      <h3>基础信息</h3>
+                      <p className="result-desc exif-file-name">{selectedItem.fileName}</p>
+                      <label className="exif-file-rename">
+                        <span>目标文件名</span>
+                        <Input
+                          value={fileBaseName(selectedItem.fileName)}
+                          onChange={(event) => renameSelected(event.target.value)}
+                        />
+                        <em>{fileExtension(selectedItem.fileName)}</em>
+                      </label>
+                      <p className="muted exif-file-parse-status">
+                        {parsingFileName ? "正在从文件名更新字段…" : "文件名变化会自动回填时代、名称、出土与馆藏"}
+                      </p>
+                      {selectedItem.parsedName ? (
+                        <div className="result-meta">
+                          {selectedItem.parsedName.era ? <Tag>时代：{selectedItem.parsedName.era}</Tag> : null}
+                          {selectedItem.parsedName.museum_name ? <Tag>馆藏：{selectedItem.parsedName.museum_name}</Tag> : null}
+                          {selectedItem.parsedName.Place_of_Excavation ? <Tag>出土地：{selectedItem.parsedName.Place_of_Excavation}</Tag> : null}
+                        </div>
+                      ) : <p className="muted">当前文件名暂无解析结果，可手动填写。</p>}
                     </div>
-                    <div className="form-section-body">
+                  </div>
+                </Card>
+
+                <div className="form-fields exif-form-card-grid">
+                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
+                    <div className="ui-card-header form-section-head">
+                      <div>基础信息</div>
+                      <div>优先确认文物名称、馆藏单位和时代。</div>
+                    </div>
+                    <div className="ui-card-content form-section-body">
                       <div className="field-row">
                         <label className="field">
                           <span>馆藏单位</span>
-                          <input
+                          <AutoComplete
                             value={selectedItem.form.museumName}
+                            options={museumSuggestions.map((museum) => ({
+                              key: museum.id,
+                              value: museum.name,
+                              label: museum.name,
+                            }))}
+                            filterOption={false}
+                            open={showMuseumSuggestions && museumSuggestions.length > 0}
                             placeholder="例如：山东省博物馆"
                             onFocus={() => setShowMuseumSuggestions(true)}
-                            onBlur={() => window.setTimeout(() => setShowMuseumSuggestions(false), 100)}
-                            onChange={(event) => {
-                              updateSelectedForm({ museumName: event.target.value })
+                            onOpenChange={setShowMuseumSuggestions}
+                            onChange={(value) => {
+                              updateSelectedForm({ museumName: value })
                               setShowMuseumSuggestions(true)
                             }}
+                            onSelect={(value) => {
+                              updateSelectedForm({ museumName: value })
+                              setShowMuseumSuggestions(false)
+                            }}
                           />
-                          {showMuseumSuggestions && museumSuggestions.length > 0 ? (
-                            <div className="suggestion-list">
-                              {museumSuggestions.map((museum) => (
-                                <button
-                                  key={`museum-${museum.id}`}
-                                  type="button"
-                                  className="suggestion-item"
-                                  onMouseDown={(event) => event.preventDefault()}
-                                  onClick={() => {
-                                    updateSelectedForm({ museumName: museum.name })
-                                    setShowMuseumSuggestions(false)
-                                  }}
-                                >
-                                  {museum.name}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
                         </label>
 
                         <label className="field">
                           <span>文物名称</span>
-                          <input
+                          <Input
                             value={selectedItem.form.name}
                             placeholder="例如：夫妇宴享行乐图"
                             onChange={(event) => updateSelectedForm({ name: event.target.value })}
@@ -1324,7 +1416,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <div className="field-row">
                         <label className="field">
                           <span>时代</span>
-                          <input
+                          <Input
                             value={selectedItem.form.era}
                             placeholder="例如：隋代"
                             onChange={(event) => updateSelectedForm({ era: event.target.value })}
@@ -1333,7 +1425,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
                         <label className="field">
                           <span>出土地</span>
-                          <input
+                          <Input
                             value={selectedItem.form.placeOfExcavation}
                             placeholder="例如：1976年嘉祥英山一号隋墓出土"
                             onChange={(event) => updateSelectedForm({ placeOfExcavation: event.target.value })}
@@ -1341,56 +1433,55 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </label>
                       </div>
                     </div>
-                  </section>
+                  </Card>
 
-                  <section className="form-section">
-                    <div className="form-section-head">
-                      <span className="form-section-kicker">GPS</span>
-                      <h3>展出地点</h3>
+                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
+                    <div className="ui-card-header form-section-head">
+                      <div>展出地点</div>
+                      <div>填写展出地点、展览名称和定位坐标。</div>
                     </div>
-                    <div className="form-section-body">
+                    <div className="ui-card-content form-section-body">
                       <label className="field">
                         <span>展出地点名称</span>
-                        <input
+                        <AutoComplete
                           value={selectedItem.form.displayLocationName}
-                          placeholder="例如：山东省博物馆"
-                          onFocus={() => setShowLocationSuggestions(true)}
-                          onBlur={() => window.setTimeout(() => setShowLocationSuggestions(false), 100)}
-                          onChange={(event) => {
-                            updateSelectedForm({ displayLocationName: event.target.value })
-                            setShowLocationSuggestions(true)
-                          }}
-                        />
-                        {showLocationSuggestions && locationSuggestions.length > 0 ? (
-                          <div className="suggestion-list">
-                            {locationSuggestions.map((museum) => (
-                              <button
-                                key={`location-${museum.id}`}
-                                type="button"
-                                className="suggestion-item"
-                                onMouseDown={(event) => event.preventDefault()}
-                                onClick={() => {
-                                  updateSelectedForm({
-                                    displayLocationName: museum.name,
-                                    latitude: museum.latitude?.toString() ?? "",
-                                    longitude: museum.longitude?.toString() ?? "",
-                                  })
-                                  setShowLocationSuggestions(false)
-                                }}
-                              >
+                          options={locationSuggestions.map((museum) => ({
+                            key: museum.id,
+                            value: museum.name,
+                            label: (
+                              <span className="autocomplete-option">
                                 <span>{museum.name}</span>
                                 {(museum.latitude !== null && museum.longitude !== null) ? (
-                                  <em>{museum.latitude}, {museum.longitude}</em>
+                                  <span className="autocomplete-option-meta">{museum.latitude}, {museum.longitude}</span>
                                 ) : null}
-                              </button>
-                            ))}
-                          </div>
-                        ) : null}
+                              </span>
+                            ),
+                          }))}
+                          filterOption={false}
+                          open={showLocationSuggestions && locationSuggestions.length > 0}
+                          placeholder="例如：山东省博物馆"
+                          onFocus={() => setShowLocationSuggestions(true)}
+                          onOpenChange={setShowLocationSuggestions}
+                          onChange={(value) => {
+                            updateSelectedForm({ displayLocationName: value })
+                            setShowLocationSuggestions(true)
+                          }}
+                          onSelect={(value) => {
+                            const museum = locationSuggestions.find((option) => option.name === value)
+                            if (!museum) return
+                            updateSelectedForm({
+                              displayLocationName: museum.name,
+                              latitude: museum.latitude?.toString() ?? "",
+                              longitude: museum.longitude?.toString() ?? "",
+                            })
+                            setShowLocationSuggestions(false)
+                          }}
+                        />
                       </label>
 
                       <label className="field">
                         <span>对应展览</span>
-                        <input
+                        <Input
                           value={selectedItem.form.exhibitionName}
                           placeholder="例如：常设展 / 汉唐文明展"
                           onChange={(event) => updateSelectedForm({ exhibitionName: event.target.value })}
@@ -1400,7 +1491,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <div className="field-row">
                         <label className="field">
                           <span>纬度</span>
-                          <input
+                          <Input
                             value={selectedItem.form.latitude}
                             placeholder="例如：35.117"
                             onChange={(event) => updateSelectedForm({ latitude: event.target.value })}
@@ -1408,7 +1499,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </label>
                         <label className="field">
                           <span>经度</span>
-                          <input
+                          <Input
                             value={selectedItem.form.longitude}
                             placeholder="例如：117.188"
                             onChange={(event) => updateSelectedForm({ longitude: event.target.value })}
@@ -1425,18 +1516,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         })}
                       />
                     </div>
-                  </section>
+                  </Card>
 
-                  <section className="form-section">
-                    <div className="form-section-head">
-                      <span className="form-section-kicker">MODEL</span>
-                      <h3>AI 补充描述</h3>
+                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
+                    <div className="ui-card-header form-section-head">
+                      <div>AI 补充描述</div>
+                      <div>生成多份候选描述后，选一版写回当前图片。</div>
                     </div>
-                    <div className="form-section-body">
+                    <div className="ui-card-content form-section-body">
                       <div className="upload-actions exif-model-actions">
-                        <button type="button" className="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
+                        <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
                           {generating ? "正在生成…" : "生成描述"}
-                        </button>
+                        </Button>
                         {selectedItem.descriptionMeta ? <p className="muted">{selectedItem.descriptionMeta}</p> : null}
                       </div>
                       {generating ? (
@@ -1447,7 +1538,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       ) : null}
                       <div className="exif-model-grid">
                         {selectedItem.candidates.length > 0 ? selectedItem.candidates.map((candidate) => (
-                          <article key={`${candidate.provider}-${candidate.model}`} className={`result-block exif-model-card ${candidate.status !== "success" ? "is-error" : ""}`}>
+                          <article key={`${candidate.provider}-${candidate.model}`} className={`exif-model-card ${candidate.status !== "success" ? "is-error" : ""}`}>
                             <div className="result-head">
                               <h3>{candidate.provider}</h3>
                               <span>{candidate.model}</span>
@@ -1460,11 +1551,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                               <>
                                 <p className="result-desc">{candidate.description || "暂无描述"}</p>
                                 <div className="result-meta">
-                                  {candidate.tags.length > 0 ? candidate.tags.map((tag) => <span key={tag}>{tag}</span>) : <span>暂无标签</span>}
+                                  {candidate.tags.length > 0 ? candidate.tags.map((tag) => (
+                                    <Tag key={tag}>{tag}</Tag>
+                                  )) : <span>暂无标签</span>}
                                 </div>
-                                <button type="button" className="ghost" onClick={() => applyCandidate(candidate)}>
+                                <Button htmlType="button" type="default" onClick={() => applyCandidate(candidate)}>
                                   使用这版
-                                </button>
+                                </Button>
                               </>
                             ) : <p className="error-text">{candidate.error || "模型调用失败"}</p>}
                           </article>
@@ -1474,17 +1567,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         <p className="muted">未配置模型：{selectedItem.unavailableProviders.join(" / ")}</p>
                       ) : null}
                     </div>
-                  </section>
+                  </Card>
 
-                  <section className="form-section">
-                    <div className="form-section-head">
-                      <span className="form-section-kicker">TEXT</span>
-                      <h3>最终写入内容</h3>
+                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
+                    <div className="ui-card-header form-section-head">
+                      <div>最终写入内容</div>
+                      <div>这里的描述与标签会写入 EXIF 和云端数据库。</div>
                     </div>
-                    <div className="form-section-body">
+                    <div className="ui-card-content form-section-body">
                       <label className="field">
                         <span>描述</span>
-                        <textarea
+                        <Textarea
                           rows={5}
                           value={selectedItem.form.description}
                           placeholder="文物描述会写入 EXIF 与云端数据库中"
@@ -1499,19 +1592,23 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                             {selectedItem.form.tags.length > 0 ? selectedItem.form.tags.map((tag) => (
                               <span key={tag} className="tag-chip">
                                 {tag}
-                                <button
-                                  type="button"
+                                <Button
+                                  htmlType="button"
+                                  type="text"
+                                  shape="circle"
+                                  size="small"
+                                  aria-label={`删除标签 ${tag}`}
                                   onClick={() => updateItem(selectedItem.id, (item) => ({
                                     ...item,
                                     form: { ...item.form, tags: item.form.tags.filter((entry) => entry !== tag) },
                                   }))}
                                 >
-                                  ×
-                                </button>
+                                  <X size={11} strokeWidth={2} aria-hidden="true" />
+                                </Button>
                               </span>
                             )) : <span className="tag-editor-placeholder">暂无标签</span>}
                           </div>
-                          <input
+                          <Input
                             value={tagInput}
                             placeholder="输入后回车或逗号添加"
                             onChange={(event) => setTagInput(event.target.value)}
@@ -1526,26 +1623,25 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </div>
                       </label>
                     </div>
-                  </section>
+                  </Card>
                 </div>
               </div>
 
-              <div className="form-footer">
-                <div>
+              <div className="form-footer exif-form-footer">
+                <div className="exif-form-footer-copy">
                   {selectedItem.submitMessage ? (
                     <p className={selectedItem.submitState === "error" ? "error-text" : "success-text"}>{selectedItem.submitMessage}</p>
                   ) : submitNotice ? (
                     <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>{submitNotice.text}</p>
-                  ) : <span />}
+                  ) : <p className="muted">确认当前图片信息无误后，再执行保存入库。</p>}
                 </div>
-                <button type="submit" className="primary" disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}>
+                <Button htmlType="submit" type="primary" disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}>
                   {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : "保存并入库"}
-                </button>
+                </Button>
               </div>
             </form>
           ) : (
             <div className="panel empty-state">
-              <p className="eyebrow">COLLECTION ENTRY</p>
               <h2>从一张文物照片开始</h2>
               <p className="muted">点击右上角“添加图片”，系统会从文件名提取基础信息；只需校对后保存入库。</p>
             </div>

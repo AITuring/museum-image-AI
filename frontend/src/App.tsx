@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
+import { AutoComplete, Button, Input, Select, Tabs, Tag } from "antd"
+import { Camera, Check, ChevronRight, CloudUpload, ImagePlus, RefreshCw, ScanSearch, Trash2, X } from "lucide-react"
 import "./App.css"
-import BatchConsole from "./BatchConsole"
-import ExifConsole from "./ExifConsole"
-import Gallery from "./Gallery"
-import MuseumBrowser from "./MuseumBrowser"
+
+const BatchConsole = lazy(() => import("./BatchConsole"))
+const ExifConsole = lazy(() => import("./ExifConsole"))
+const Gallery = lazy(() => import("./Gallery"))
+const MuseumBrowser = lazy(() => import("./MuseumBrowser"))
+
+type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>
+
+const { TextArea } = Input
 
 type HealthResponse = {
   status: string
@@ -936,7 +943,7 @@ function App() {
     setSubmitNotice(null)
   }
 
-  async function handleCreateArtifact(event: FormEvent<HTMLFormElement>) {
+  const handleCreateArtifact: FormSubmitHandler = async (event) => {
     event.preventDefault()
     setArtifactSubmitting(true)
     setArtifactMessage(null)
@@ -1002,6 +1009,13 @@ function App() {
     }
   }
 
+  const lazyViewFallback = (
+    <section className="panel empty-state">
+      <h2>页面加载中</h2>
+      <p className="muted">正在按需加载当前模块…</p>
+    </section>
+  )
+
   const hasResult = orderedStreams.some((stream) => stream.candidate)
   const displayPreview = previewUrl ?? (uploadedImage ? toAbsoluteUrl(uploadedImage.url) : null)
   const streamError = orderedStreams.length === 0 && !streaming && uploadedImage ? artifactError : null
@@ -1043,16 +1057,16 @@ function App() {
         </div>
         <div className="topbar-actions">
           <nav className="topbar-nav" aria-label="顶部导航">
-            {NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => (
-              <button
-                type="button"
-                key={`top-${item.view}`}
-                className={view === item.view ? "active" : ""}
-                onClick={() => setView(item.view)}
-              >
-                {item.label}
-              </button>
-            ))}
+            <Tabs
+              activeKey={view}
+              className="app-tabs"
+              items={NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => ({
+                key: item.view,
+                label: item.label,
+              }))}
+              size="small"
+              onChange={(value) => setView(value as View)}
+            />
           </nav>
           <div className={`health-pill ${health ? "online" : "offline"}`}>
             <span className="status-dot" />
@@ -1063,13 +1077,15 @@ function App() {
         </div>
       </header>
 
-      {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
+      <Suspense fallback={lazyViewFallback}>
+        {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 
-      {view === "museums" ? <MuseumBrowser apiBaseUrl={apiBaseUrl} /> : null}
+        {view === "museums" ? <MuseumBrowser apiBaseUrl={apiBaseUrl} /> : null}
 
-      {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
+        {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 
-      {view === "exif" && !cloudOnly ? <ExifConsole apiBaseUrl={apiBaseUrl} /> : null}
+        {view === "exif" && !cloudOnly ? <ExifConsole apiBaseUrl={apiBaseUrl} /> : null}
+      </Suspense>
 
       {view === "single" && !cloudOnly ? (
       <>
@@ -1078,7 +1094,6 @@ function App() {
           <section className="single-panel single-upload-panel">
             <div className="single-panel-head">
               <div>
-                <span className="single-kicker">INPUT</span>
                 <h2>图片</h2>
               </div>
               <span className={`single-status ${uploadedImage ? "ok" : uploading ? "busy" : ""}`}>
@@ -1117,23 +1132,25 @@ function App() {
                 <img src={displayPreview} alt={uploadedImage?.filename ?? "预览"} />
               ) : (
                 <span>
+                  <ImagePlus size={20} aria-hidden="true" />
                   <strong>添加图片</strong>
                   <em>点击或拖拽 JPG / PNG</em>
                 </span>
               )}
             </label>
             <div className="single-actions">
-              <button
-                type="button"
-                className="primary"
+              <Button
+                htmlType="button"
                 onClick={() => uploadedImage && void analyzeImageStream(uploadedImage)}
                 disabled={!uploadedImage || streaming}
               >
+                <RefreshCw size={14} aria-hidden="true" />
                 {streaming ? "识别中..." : "重新识别"}
-              </button>
-              <button type="button" className="ghost" onClick={resetCurrentImage} disabled={!selectedFile && !uploadedImage}>
+              </Button>
+              <Button htmlType="button" type="default" onClick={resetCurrentImage} disabled={!selectedFile && !uploadedImage}>
+                <Trash2 size={14} aria-hidden="true" />
                 清空
-              </button>
+              </Button>
             </div>
             {uploadedImage ? (
               <div className="single-meta-list">
@@ -1151,7 +1168,6 @@ function App() {
           <section className="single-panel">
             <div className="single-panel-head">
               <div>
-                <span className="single-kicker">CANDIDATES</span>
                 <h2>候选结论</h2>
               </div>
               <span className="single-count">{orderedStreams.filter((stream) => stream.candidate).length}</span>
@@ -1161,18 +1177,19 @@ function App() {
                 const candidate = stream.candidate
                 if (!candidate) return null
                 return (
-                  <button
+                  <Button
                     key={`candidate-${stream.provider}`}
-                    type="button"
-                    className={`single-candidate ${selectedCandidateKey === stream.provider ? "active" : ""}`}
+                    htmlType="button"
+                    type={selectedCandidateKey === stream.provider ? "primary" : "default"}
+                    className="single-candidate"
                     onClick={() => handleApplyCandidate(candidate)}
                   >
                     <span>
                       <strong>{candidate.artifact_name}</strong>
                       <em>{stream.provider} · {formatConfidence(candidate.confidence) ?? "可信度待估"}</em>
                     </span>
-                    {stream.provider === bestCandidateKey ? <b>推荐</b> : null}
-                  </button>
+                    {stream.provider === bestCandidateKey ? <Tag color="success">推荐</Tag> : null}
+                  </Button>
                 )
               }) : (
                 <p className="muted">识别完成后，候选会在这里集中展示；点一次即可填入右侧表单。</p>
@@ -1187,7 +1204,7 @@ function App() {
                   <h3>疑似同一件</h3>
                   <p className="muted">{matchedArtifact.match_reason} · {Math.round(matchedArtifact.match_score * 100)}%</p>
                 </div>
-                <span className="badge conf">{matchedArtifact.artifact.images.length} 图</span>
+                <Tag>{matchedArtifact.artifact.images.length} 图</Tag>
               </div>
               <div className="backend-match-meta">
                 <span>{matchedArtifact.artifact.name}</span>
@@ -1195,9 +1212,10 @@ function App() {
                 <span>{matchedArtifact.artifact.museum_name}</span>
               </div>
               <div className="backend-match-actions">
-                <button
-                  type="button"
-                  className={`primary small ${sameArtifactDecision === "yes" ? "selected-action" : ""}`}
+                <Button
+                  htmlType="button"
+                  size="small"
+                  type={sameArtifactDecision === "yes" ? "primary" : "default"}
                   onClick={() => {
                     setArtifactForm((current) => ({
                       ...current,
@@ -1214,10 +1232,11 @@ function App() {
                   }}
                 >
                   合并
-                </button>
-                <button
-                  type="button"
-                  className={`ghost ${sameArtifactDecision === "no" ? "selected-action" : ""}`}
+                </Button>
+                <Button
+                  htmlType="button"
+                  size="small"
+                  type={sameArtifactDecision === "no" ? "primary" : "default"}
                   onClick={() => {
                     setSameArtifactDecision("no")
                     setArtifactMessage("已标记为新建文物")
@@ -1225,7 +1244,7 @@ function App() {
                   }}
                 >
                   新建
-                </button>
+                </Button>
               </div>
             </section>
           ) : null}
@@ -1234,7 +1253,6 @@ function App() {
         <section className="single-stream-panel" aria-label="模型识别过程">
           <div className="single-workbench-head">
             <div>
-              <span className="single-kicker">RECOGNITION</span>
               <h2>模型识别与证据</h2>
             </div>
             <div className="single-head-metrics">
@@ -1244,6 +1262,9 @@ function App() {
           </div>
           {orderedStreams.length === 0 ? (
             <div className={`single-empty ${streamError ? "error" : ""}`}>
+              <span className="single-empty-icon" aria-hidden="true">
+                <ScanSearch size={18} />
+              </span>
               <strong>{streamError ? "识图失败" : streaming ? "正在连接模型..." : "等待图片"}</strong>
               <p>
                 {streamError
@@ -1253,9 +1274,9 @@ function App() {
                     : "左侧添加图片后，这里显示每个模型的分析、检索和裁决。"}
               </p>
               {streamError && uploadedImage ? (
-                <button type="button" className="primary small" onClick={() => void analyzeImageStream(uploadedImage)}>
+                <Button htmlType="button" size="small" onClick={() => void analyzeImageStream(uploadedImage)}>
                   重试
-                </button>
+                </Button>
               ) : null}
             </div>
           ) : (
@@ -1297,9 +1318,10 @@ function App() {
                           <strong>{candidate.artifact_name}</strong>
                           <p className="result-desc">{candidate.description || "暂无描述"}</p>
                         </div>
-                        <button type="button" className="primary small" onClick={() => handleApplyCandidate(candidate)}>
+                        <Button htmlType="button" size="small" onClick={() => handleApplyCandidate(candidate)}>
+                          <Check size={13} aria-hidden="true" />
                           采用
-                        </button>
+                        </Button>
                       </div>
                     ) : null}
                     {stream.analysis ? (
@@ -1332,17 +1354,16 @@ function App() {
         <form className="single-archive" onSubmit={handleCreateArtifact} aria-label="归档表单">
           <div className="single-workbench-head">
             <div>
-              <span className="single-kicker">ARCHIVE</span>
               <h2>归档信息</h2>
             </div>
             <span className={`single-status ${archiveReady ? "ok" : ""}`}>{singleStatusLabel}</span>
           </div>
           <div className="single-readiness">
             <span className={uploadedImage ? "done" : ""}>图片</span>
-            <span className={artifactForm.museumName.trim() ? "done" : ""}>馆藏</span>
-            <span className={artifactForm.name.trim() ? "done" : ""}>名称</span>
-            <span className={artifactForm.captureMuseumName.trim() && !artifactForm.captureMuseumName.trim().startsWith("@") ? "done" : ""}>拍摄馆</span>
-            <span className={artifactForm.exhibitionName.trim() && !artifactForm.exhibitionName.trim().startsWith("@") ? "done" : ""}>展览</span>
+            <span className={uploadedImage && artifactForm.museumName.trim() ? "done" : ""}>馆藏</span>
+            <span className={uploadedImage && artifactForm.museumName.trim() && artifactForm.name.trim() ? "done" : ""}>名称</span>
+            <span className={uploadedImage && artifactForm.museumName.trim() && artifactForm.name.trim() && artifactForm.captureMuseumName.trim() && !artifactForm.captureMuseumName.trim().startsWith("@") ? "done" : ""}>拍摄馆</span>
+            <span className={archiveReady ? "done" : ""}>展览</span>
           </div>
           {primaryCandidate ? (
             <div className="single-current-candidate">
@@ -1355,45 +1376,37 @@ function App() {
           <div className="single-archive-scroll">
             <section className="form-section">
               <div className="form-section-head">
-                <span className="form-section-kicker">BASIC</span>
                 <h3>文物</h3>
               </div>
               <div className="form-section-body">
                 <label className="field">
                   <span>馆藏单位</span>
-                  <input
+                  <AutoComplete
                     value={artifactForm.museumName}
+                    options={artifactMuseumSuggestions.map((museum) => ({
+                      key: museum.id,
+                      value: museum.name,
+                      label: museum.name,
+                    }))}
+                    filterOption={false}
+                    open={showArtifactMuseumSuggestions && artifactMuseumSuggestions.length > 0}
                     onFocus={() => setShowArtifactMuseumSuggestions(true)}
-                    onBlur={() => window.setTimeout(() => setShowArtifactMuseumSuggestions(false), 120)}
-                    onChange={(event) => {
-                      setArtifactForm((current) => ({ ...current, museumName: event.target.value }))
+                    onOpenChange={setShowArtifactMuseumSuggestions}
+                    onChange={(value) => {
+                      setArtifactForm((current) => ({ ...current, museumName: value }))
                       setShowArtifactMuseumSuggestions(true)
+                    }}
+                    onSelect={(value) => {
+                      setArtifactForm((current) => ({ ...current, museumName: value }))
+                      setArtifactMuseumSuggestions([])
+                      setShowArtifactMuseumSuggestions(false)
                     }}
                     placeholder="例如：南京博物院"
                   />
-                  {showArtifactMuseumSuggestions && artifactMuseumSuggestions.length > 0 ? (
-                    <div className="suggestion-list">
-                      {artifactMuseumSuggestions.map((museum) => (
-                        <button
-                          key={`artifact-museum-${museum.id}`}
-                          type="button"
-                          className="suggestion-item"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => {
-                            setArtifactForm((current) => ({ ...current, museumName: museum.name }))
-                            setArtifactMuseumSuggestions([])
-                            setShowArtifactMuseumSuggestions(false)
-                          }}
-                        >
-                          {museum.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
                 </label>
                 <label className="field">
                   <span>文物名称</span>
-                  <input
+                  <Input
                     required
                     value={artifactForm.name}
                     onChange={(event) => setArtifactForm((current) => ({ ...current, name: event.target.value }))}
@@ -1402,117 +1415,102 @@ function App() {
                 </label>
                 <label className="field">
                   <span>时代</span>
-                  <input
+                  <AutoComplete
                     value={artifactForm.era}
+                    options={eraSuggestions.map((era) => ({
+                      key: era.id,
+                      value: era.name,
+                      label: era.name,
+                    }))}
+                    filterOption={false}
+                    open={showEraSuggestions && eraSuggestions.length > 0}
                     onFocus={() => setShowEraSuggestions(true)}
-                    onBlur={() => window.setTimeout(() => setShowEraSuggestions(false), 120)}
-                    onChange={(event) => {
-                      setArtifactForm((current) => ({ ...current, era: event.target.value }))
+                    onOpenChange={setShowEraSuggestions}
+                    onChange={(value) => {
+                      setArtifactForm((current) => ({ ...current, era: value }))
                       setShowEraSuggestions(true)
+                    }}
+                    onSelect={(value) => {
+                      setArtifactForm((current) => ({ ...current, era: value }))
+                      setEraSuggestions([])
+                      setShowEraSuggestions(false)
                     }}
                     placeholder="例如：元代"
                   />
-                  {showEraSuggestions && eraSuggestions.length > 0 ? (
-                    <div className="suggestion-list">
-                      {eraSuggestions.map((era) => (
-                        <button
-                          key={`artifact-era-${era.id}`}
-                          type="button"
-                          className="suggestion-item"
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => {
-                            setArtifactForm((current) => ({ ...current, era: era.name }))
-                            setEraSuggestions([])
-                            setShowEraSuggestions(false)
-                          }}
-                        >
-                          {era.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
                 </label>
               </div>
             </section>
 
             <section className="form-section">
               <div className="form-section-head">
-                <span className="form-section-kicker">PLACE</span>
                 <h3>拍摄地点</h3>
               </div>
               <div className="form-section-body">
                 <label className="field">
                   <span>拍摄时博物馆</span>
-                  <input
+                  <AutoComplete
                     value={artifactForm.captureMuseumName}
-                    onChange={(event) => {
-                      const value = event.target.value
+                    options={museumSuggestions.map((museum) => ({
+                      key: museum.id,
+                      value: museum.name,
+                      label: museum.name,
+                    }))}
+                    filterOption={false}
+                    onChange={(value) => {
                       setArtifactForm((current) => ({ ...current, captureMuseumName: value }))
                       if (selectedCaptureMuseum?.name !== value) setSelectedCaptureMuseum(null)
                     }}
+                    onSelect={(value) => {
+                      const museum = museumSuggestions.find((option) => option.name === value)
+                      if (!museum) return
+                      setSelectedCaptureMuseum(museum)
+                      setMuseumSuggestions([])
+                      setArtifactForm((current) => ({
+                        ...current,
+                        captureMuseumName: museum.name,
+                        exhibitionName: current.exhibitionName.trim().startsWith("@") || !current.exhibitionName.trim()
+                          ? "常设"
+                          : current.exhibitionName,
+                      }))
+                    }}
                     placeholder="输入 @ 后联想检索，例如：@南博"
                   />
-                  {museumSuggestions.length > 0 ? (
-                    <div className="suggestion-list">
-                      {museumSuggestions.map((museum) => (
-                        <button
-                          key={museum.id}
-                          type="button"
-                          className="suggestion-item"
-                          onClick={() => {
-                            setSelectedCaptureMuseum(museum)
-                            setMuseumSuggestions([])
-                            setArtifactForm((current) => ({
-                              ...current,
-                              captureMuseumName: museum.name,
-                              exhibitionName: current.exhibitionName.trim().startsWith("@") || !current.exhibitionName.trim()
-                                ? "常设"
-                                : current.exhibitionName,
-                            }))
-                          }}
-                        >
-                          {museum.name}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
                 </label>
                 <label className="field">
                   <span>展览</span>
-                  <input
+                  <AutoComplete
                     value={artifactForm.exhibitionName}
-                    onChange={(event) => setArtifactForm((current) => ({ ...current, exhibitionName: event.target.value }))}
-                    placeholder={selectedCaptureMuseum ? "默认常设，输入 @ 检索该馆展览" : "默认常设，可直接填写"}
-                  />
-                  {exhibitionSuggestions.length > 0 ? (
-                    <div className="suggestion-list">
-                      {exhibitionSuggestions.map((exhibition) => (
-                        <button
-                          key={exhibition.id}
-                          type="button"
-                          className="suggestion-item"
-                          onClick={() => {
-                            setExhibitionSuggestions([])
-                            setArtifactForm((current) => ({ ...current, exhibitionName: exhibition.name }))
-                          }}
-                        >
+                    options={exhibitionSuggestions.map((exhibition) => ({
+                      key: exhibition.id,
+                      value: exhibition.name,
+                      label: (
+                        <span className="autocomplete-option">
                           <span>{exhibition.name}</span>
                           {exhibition.start_at || exhibition.end_at ? (
-                            <em>{exhibition.start_at?.slice(0, 10) ?? "未知"} - {exhibition.end_at?.slice(0, 10) ?? "至今"}</em>
+                            <span className="autocomplete-option-meta">
+                              {exhibition.start_at?.slice(0, 10) ?? "未知"} - {exhibition.end_at?.slice(0, 10) ?? "至今"}
+                            </span>
                           ) : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                        </span>
+                      ),
+                    }))}
+                    filterOption={false}
+                    onChange={(value) => setArtifactForm((current) => ({ ...current, exhibitionName: value }))}
+                    onSelect={(value) => {
+                      setExhibitionSuggestions([])
+                      setArtifactForm((current) => ({ ...current, exhibitionName: value }))
+                    }}
+                    placeholder={selectedCaptureMuseum ? "默认常设，输入 @ 检索该馆展览" : "默认常设，可直接填写"}
+                  />
                 </label>
                 <div className="field-row">
                   <label className="field">
                     <span>纬度</span>
-                    <input value={artifactForm.latitude} onChange={(event) => setArtifactForm((current) => ({ ...current, latitude: event.target.value }))} />
+                    <Input value={artifactForm.latitude} onChange={(event) => setArtifactForm((current) => ({ ...current, latitude: event.target.value }))} />
                   </label>
                   <label className="field">
                     <span>经度</span>
-                    <input value={artifactForm.longitude} onChange={(event) => setArtifactForm((current) => ({ ...current, longitude: event.target.value }))} />
+                    <Input value={artifactForm.longitude} onChange={(event) => setArtifactForm((current) => ({ ...current, longitude: event.target.value }))} />
                   </label>
                 </div>
               </div>
@@ -1520,13 +1518,12 @@ function App() {
 
             <section className="form-section">
               <div className="form-section-head">
-                <span className="form-section-kicker">TEXT</span>
                 <h3>描述与标签</h3>
               </div>
               <div className="form-section-body">
                 <label className="field">
                   <span>描述</span>
-                  <textarea
+                  <TextArea
                     rows={5}
                     value={artifactForm.description}
                     onChange={(event) => setArtifactForm((current) => ({ ...current, description: event.target.value }))}
@@ -1540,11 +1537,14 @@ function App() {
                       {artifactForm.tags.length > 0 ? artifactForm.tags.map((tag) => (
                         <span key={tag} className="tag-chip">
                           {tag}
-                          <button type="button" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>×</button>
+                          <Button htmlType="button" type="text" shape="circle" size="small" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>
+                            <X size={11} strokeWidth={2} aria-hidden="true" />
+                          </Button>
                         </span>
                       )) : <span className="tag-editor-placeholder">暂无标签</span>}
                     </div>
-                    <input
+                    <Input
+                      className="tag-editor-input"
                       value={tagInput}
                       onChange={(event) => setTagInput(event.target.value)}
                       onKeyDown={(event) => {
@@ -1565,22 +1565,30 @@ function App() {
             </section>
 
             <details className="single-advanced">
-              <summary>相机参数</summary>
+              <summary>
+                <span><Camera size={14} aria-hidden="true" />相机参数</span>
+                <span className="single-advanced-affordance">可选<ChevronRight size={14} aria-hidden="true" /></span>
+              </summary>
               <div className="single-advanced-grid">
-                <label className="field"><span>机型</span><input value={artifactForm.cameraModel} onChange={(event) => setArtifactForm((current) => ({ ...current, cameraModel: event.target.value }))} /></label>
-                <label className="field"><span>镜头</span><input value={artifactForm.lensModel} onChange={(event) => setArtifactForm((current) => ({ ...current, lensModel: event.target.value }))} /></label>
-                <label className="field"><span>拍摄时间</span><input value={artifactForm.capturedAt} onChange={(event) => setArtifactForm((current) => ({ ...current, capturedAt: event.target.value }))} /></label>
-                <label className="field"><span>上传时间</span><input value={artifactForm.uploadedAt} readOnly /></label>
-                <label className="field"><span>快门</span><input value={artifactForm.shutterSpeed} onChange={(event) => setArtifactForm((current) => ({ ...current, shutterSpeed: event.target.value }))} /></label>
-                <label className="field"><span>光圈</span><input value={artifactForm.aperture} onChange={(event) => setArtifactForm((current) => ({ ...current, aperture: event.target.value }))} /></label>
-                <label className="field"><span>感光度</span><input value={artifactForm.iso} onChange={(event) => setArtifactForm((current) => ({ ...current, iso: event.target.value }))} /></label>
+                <label className="field"><span>机型</span><Input value={artifactForm.cameraModel} onChange={(event) => setArtifactForm((current) => ({ ...current, cameraModel: event.target.value }))} /></label>
+                <label className="field"><span>镜头</span><Input value={artifactForm.lensModel} onChange={(event) => setArtifactForm((current) => ({ ...current, lensModel: event.target.value }))} /></label>
+                <label className="field"><span>拍摄时间</span><Input value={artifactForm.capturedAt} onChange={(event) => setArtifactForm((current) => ({ ...current, capturedAt: event.target.value }))} /></label>
+                <label className="field"><span>上传时间</span><Input value={artifactForm.uploadedAt} readOnly /></label>
+                <label className="field"><span>快门</span><Input value={artifactForm.shutterSpeed} onChange={(event) => setArtifactForm((current) => ({ ...current, shutterSpeed: event.target.value }))} /></label>
+                <label className="field"><span>光圈</span><Input value={artifactForm.aperture} onChange={(event) => setArtifactForm((current) => ({ ...current, aperture: event.target.value }))} /></label>
+                <label className="field"><span>感光度</span><Input value={artifactForm.iso} onChange={(event) => setArtifactForm((current) => ({ ...current, iso: event.target.value }))} /></label>
                 <label className="field">
                   <span>修图方式</span>
-                  <select value={artifactForm.editMethod} onChange={(event) => setArtifactForm((current) => ({ ...current, editMethod: event.target.value }))}>
-                    <option value="">未填写</option>
-                    <option value="简单调整">简单调整</option>
-                    <option value="堆栈合成">堆栈合成</option>
-                  </select>
+                  <Select
+                    allowClear
+                    placeholder="未填写"
+                    value={artifactForm.editMethod || undefined}
+                    options={[
+                      { value: "简单调整", label: "简单调整" },
+                      { value: "堆栈合成", label: "堆栈合成" },
+                    ]}
+                    onChange={(value) => setArtifactForm((current) => ({ ...current, editMethod: value ?? "" }))}
+                  />
                 </label>
               </div>
             </details>
@@ -1596,13 +1604,14 @@ function App() {
                 <p className="muted">已完成 {readyCount}/{requiredFields.length} 项必填信息</p>
               )}
             </div>
-            <button type="submit" className="primary" disabled={artifactSubmitting || !uploadedImage}>
+            <Button htmlType="submit" disabled={artifactSubmitting || !uploadedImage}>
+              <CloudUpload size={14} aria-hidden="true" />
               {artifactSubmitting
                 ? "提交中..."
                 : matchedArtifact && sameArtifactDecision !== "no"
                   ? "更新并上传"
                   : "提交云端"}
-            </button>
+            </Button>
           </div>
         </form>
       </section>
@@ -1612,16 +1621,16 @@ function App() {
             <strong>{submitNotice.type === "error" ? "提交失败" : "提交成功"}</strong>
             <p>{submitNotice.text}</p>
           </div>
-          <button type="button" className="submit-toast-close" onClick={() => setSubmitNotice(null)}>
+          <Button htmlType="button" className="submit-toast-close" onClick={() => setSubmitNotice(null)}>
             ×
-          </button>
+          </Button>
         </div>
       ) : null}
       {showWebBridgeLoginModal
         ? createPortal(
             <div className="gallery-modal" onClick={() => setShowWebBridgeLoginModal(false)}>
               <div className="gallery-modal-body bridge-login-modal" onClick={(event) => event.stopPropagation()}>
-                <div className="section-heading">
+                <div className="gallery-detail-head">
                   <div>
                     <h2>通义扫码登录</h2>
                     <p className="muted">
@@ -1648,30 +1657,29 @@ function App() {
                     <pre className="bridge-login-command">{webBridgeStatus.login_command}</pre>
                   ) : null}
                 </div>
-                <div className="backend-match-actions">
-                  <button
-                    type="button"
-                    className="primary"
+                <div className="gallery-form-footer bridge-login-actions">
+                  <Button
+                    htmlType="button"
                     disabled={launchingWebBridgeLogin}
                     onClick={() => void ensureWebBridgeLoginReady(true)}
                   >
                     {launchingWebBridgeLogin ? "正在尝试启动..." : "重新尝试打开登录窗口"}
-                  </button>
+                  </Button>
                   {webBridgeStatus?.login_command ? (
-                    <button type="button" className="ghost" onClick={() => void copyWebBridgeLoginCommand()}>
+                    <Button htmlType="button" type="default" onClick={() => void copyWebBridgeLoginCommand()}>
                       复制登录命令
-                    </button>
+                    </Button>
                   ) : null}
-                  <button
-                    type="button"
-                    className="ghost"
+                  <Button
+                    htmlType="button"
+                    type="default"
                     onClick={() => {
                       void loadWebBridgeStatus()
                       setShowWebBridgeLoginModal(false)
                     }}
                   >
                     我已登录，稍后重试
-                  </button>
+                  </Button>
                 </div>
               </div>
             </div>,

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Button, Input } from "antd"
+import "./styles/museum.css"
 
 const AMAP_SCRIPT_ID = "museum-console-amap-script"
 const AMAP_SECURITY_CODE = "3ba01835420271d5405dccba5e089b46"
@@ -717,7 +719,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
             <div className="museum-folder-list">
               {folders.map((folder) => (
-                <button
+                <button data-ui="interactive-surface"
                   type="button"
                   key={folder.key}
                   className={`museum-folder-card ${activeFolder?.key === folder.key ? "active" : ""}`}
@@ -791,16 +793,16 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
         <div className="museum-console-tools">
           <div className="museum-mode-switch" aria-label="博物馆展示模式">
-            <button type="button" className={mode === "cards" ? "active" : ""} onClick={() => setMode("cards")}>
+            <Button htmlType="button" className={mode === "cards" ? "active" : ""} onClick={() => setMode("cards")}>
               卡片模式
-            </button>
-            <button type="button" className={mode === "map" ? "active" : ""} onClick={() => setMode("map")}>
+            </Button>
+            <Button htmlType="button" className={mode === "map" ? "active" : ""} onClick={() => setMode("map")}>
               地图模式
-            </button>
+            </Button>
           </div>
 
           <label className="gallery-search museum-search">
-            <input
+            <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="搜索博物馆名称、地点或简介"
@@ -834,7 +836,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           {filteredMuseums.map((museum) => {
               const previewStack = getMuseumPreviewStack(apiBaseUrl, artifactStore[museum.id] ?? [])
               return (
-                <button
+                <button data-ui="interactive-surface"
                   type="button"
                   key={museum.id}
                   className={`museum-summary-card ${activeMuseum?.id === museum.id ? "active" : ""}`}
@@ -918,7 +920,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       {detailModalOpen && activeMuseum && mode === "cards" ? (
         <div className="museum-detail-modal" role="dialog" aria-modal="true" aria-labelledby="museum-detail-title">
-          <button
+          <button data-ui="interactive-surface"
             type="button"
             className="museum-detail-modal-backdrop"
             aria-label="关闭博物馆详情弹窗"
@@ -927,9 +929,9 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           <div className="museum-detail-modal-body">
             <div className="museum-detail-modal-bar">
               <span className="museum-detail-modal-kicker">博物馆详情</span>
-              <button type="button" className="museum-detail-modal-close" onClick={() => setDetailModalOpen(false)}>
+              <Button htmlType="button" className="museum-detail-modal-close" onClick={() => setDetailModalOpen(false)}>
                 关闭
-              </button>
+              </Button>
             </div>
             <div className="museum-detail-modal-content">{renderMuseumStage()}</div>
           </div>
