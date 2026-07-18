@@ -176,7 +176,7 @@ WEB_BRIDGE_REMOTE_URL=http://host.docker.internal:8011
 2. 本地：后端按图片内容 hash 去重，把新增图片统一写入 `pending_artifacts` 暂存表。
 3. 本地：点「开始识别」，后端按顺序把每张图喂给通义网页桥（一次一个会话，约 30–60s/张），实时回填名称/年代/馆藏/标签/描述。
 4. 本地：逐条核对、修改表单，点「提交云端」。本地把图片字节 + 元数据 POST 到云端 `/api/ingest/artifacts`；云端把图片传 OSS、元数据写云库。
-5. 如果某张图之前已经成功入过云端，云端会按图片 hash 识别为重复图片并直接跳过，不会因为重复上传中断流程。
+5. 如果某张图之前已经成功入过云端，云端会按不受 EXIF 影响的内容指纹识别同图，并用本次校正覆盖原图片与元数据。
 6. 检索：直接查云端 `GET /api/artifacts` / `/api/artifact-images`。
 
 ### 本地侧配置（`.env`）
@@ -197,7 +197,7 @@ INGEST_TOKEN=<与云端一致的共享令牌>
 - 本地上传：从浏览器直接选择本地文件夹，后端接收图片后按 hash 去重，写入 `pending_artifacts`。
 - Google Photos 同步：授权后读取你的 Google 相册，下载所选原图后按 hash 去重，写入 `pending_artifacts`。
 
-两条入口在“进入待处理池”之后完全共用后续链路：识别、人工确认、提交云端、重复上传跳过。
+两条入口在“进入待处理池”之后完全共用后续链路：识别、人工确认、提交云端、同图校正覆盖。
 
 ### 从 Google Photos 导入
 
@@ -232,7 +232,7 @@ GOOGLE_PHOTOS_REDIRECT_URI=http://localhost:8000/api/google-photos/callback
 - 后端通过 Google Photos Library API 读取相册和媒体项。
 - 导入时会下载原图字节，按文件 hash 去重，写入 `pending_artifacts.image_blob`。
 - 后续识别时，Google Photos 导入项不再依赖浏览器本地文件，而是直接走后端暂存记录。
-- 如果后面再次导入同一张图，`pending_artifacts` 会先按 hash 跳过；即使后续再次提交到云端，云端也会再次按 hash 做幂等跳过。
+- 如果后面再次导入同一张图，`pending_artifacts` 会先按原始文件 hash 跳过；后续再次提交到云端时，则按内容指纹覆盖已有图片和拍摄信息。
 
 ### 云端侧配置（阿里云服务器 `.env`）
 
@@ -288,7 +288,7 @@ docker compose -f docker-compose.cloud.yml up -d --build
 ### 注意
 
 - `pending_artifacts` 是**本地暂存表**，不要部署到云端使用；它支持断点续跑（重扫同目录按 hash 去重）。
-- 云端 `artifact_images.image_hash` 也会做一层幂等保护；同一张图再次提交时会被识别为重复图片并跳过，不会报错中断。
+- 云端同时保留字节 hash 和内容指纹；同一张图即使修改过 GPS/EXIF，也会覆盖已有图片，不会新增重复记录。
 - 批量识别串行且慢（网页桥一次一个会话），属预期；可分批跑。
 - 原图通过后端 `GET /api/batch/pending/{id}/image` 提供给前端预览（直接读本地源文件，不复制）。
 

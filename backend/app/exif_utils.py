@@ -5,7 +5,7 @@ from datetime import datetime
 from fractions import Fraction
 from io import BytesIO
 
-from PIL import Image
+from PIL import Image, ImageOps
 from PIL.TiffImagePlugin import IFDRational
 
 TAG_IMAGE_DESCRIPTION = 270
@@ -45,6 +45,37 @@ class ImageExifData:
 
     def as_dict(self) -> dict[str, object | None]:
         return asdict(self)
+
+
+def image_content_fingerprint(image_bytes: bytes) -> str | None:
+    """Return a perceptual fingerprint that stays stable across EXIF rewrites."""
+    if not image_bytes:
+        return None
+    try:
+        with Image.open(BytesIO(image_bytes)) as image:
+            normalized = ImageOps.exif_transpose(image).convert("L").resize(
+                (17, 16), Image.Resampling.LANCZOS
+            )
+            pixels = list(normalized.getdata())
+            bits = 0
+            for row in range(16):
+                offset = row * 17
+                for column in range(16):
+                    bits = (bits << 1) | int(
+                        pixels[offset + column] > pixels[offset + column + 1]
+                    )
+            return f"{bits:064x}"
+    except Exception:
+        return None
+
+
+def fingerprint_distance(left: str | None, right: str | None) -> int | None:
+    if not left or not right or len(left) != len(right):
+        return None
+    try:
+        return (int(left, 16) ^ int(right, 16)).bit_count()
+    except ValueError:
+        return None
 
 
 def _clean_text(value: object) -> str | None:

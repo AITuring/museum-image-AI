@@ -2316,3 +2316,195 @@
     grid-column: auto;
   }
 }
+
+/* The read-only detail view is one continuous museum record, not a stack of forms. */
+.gallery-modal-info.is-reading {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.gallery-modal-info.is-reading .gallery-detail-head {
+  position: relative;
+  top: auto;
+  min-height: 58px;
+  align-items: center;
+  padding: 12px 16px;
+  background: rgb(255 255 255 / 0.96);
+}
+
+.gallery-modal-info.is-reading .gallery-detail-title {
+  font-size: 1.2rem;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.gallery-modal-info.is-reading .gallery-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.gallery-modal-info.is-reading .gallery-toolbar-button,
+.gallery-modal-info.is-reading .gallery-close {
+  min-height: 32px;
+  height: 32px;
+}
+
+.gallery-modal-info.is-reading .gallery-toolbar-button {
+  padding-inline: 12px;
+}
+
+.gallery-modal-info.is-reading .gallery-close {
+  display: inline-flex;
+  width: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-detail-lines {
+  display: block;
+  min-height: 0;
+  padding: 0 16px 18px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.gallery-modal-info.is-reading .gallery-save-notice {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ui-success) 8%, white);
+}
+
+.gallery-modal-info.is-reading .gallery-info-card.ant-card {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.gallery-modal-info.is-reading .gallery-info-card + .gallery-info-card {
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.gallery-modal-info.is-reading .gallery-info-grid {
+  gap: 0 16px;
+  padding: 12px 0 10px;
+}
+
+.gallery-modal-info.is-reading .gallery-info-item {
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-info-item-wide {
+  padding-top: 10px;
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.gallery-modal-info.is-reading .gallery-info-label {
+  gap: 6px;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.gallery-modal-info.is-reading .gallery-info-value {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.gallery-modal-info.is-reading .gallery-badge-row {
+  gap: 5px;
+}
+
+.gallery-modal-info.is-reading .gallery-badge-row .ant-tag {
+  min-height: 22px;
+  margin: 0;
+  padding: 1px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 20px;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-card .ant-card-body {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0 !important;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-card .ui-card-header,
+.gallery-modal-info.is-reading .gallery-description-card .ui-card-header {
+  min-height: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-card-title {
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-card .ui-card-content {
+  padding: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-grid {
+  gap: 6px;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-item {
+  gap: 2px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: var(--ui-surface-muted);
+}
+
+.gallery-modal-info.is-reading .gallery-camera-item .gallery-info-value {
+  font-size: 13px;
+}
+
+.gallery-modal-info.is-reading .gallery-description-card .ant-card-body {
+  padding: 12px 0 18px !important;
+}
+
+.gallery-modal-info.is-reading .gallery-description-card .ui-card-header {
+  padding-bottom: 8px;
+}
+
+.gallery-modal-info.is-reading .gallery-description-card .ui-card-content {
+  padding: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-description-copy {
+  font-size: 13px;
+  line-height: 1.72;
+  text-wrap: pretty;
+}
+
+@media (max-width: 680px) {
+  .gallery-modal-info.is-reading .gallery-detail-head {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .gallery-modal-info.is-reading .gallery-camera-card .ant-card-body {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-modal-info.is-reading .gallery-camera-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

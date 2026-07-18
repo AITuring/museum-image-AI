@@ -11,6 +11,7 @@ import {
   Search,
   Sparkles,
   Tag as TagIcon,
+  X,
 } from "lucide-react"
 import GalleryImagePreview from "./GalleryImagePreview"
 
@@ -940,7 +941,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                         )}
                       </div>
 
-                      <div className="gallery-modal-info">
+                      <div className={`gallery-modal-info ${editing ? "is-editing" : "is-reading"}`}>
                         <div className="gallery-detail-head">
                           <div className="gallery-detail-heading">
                             <h3 className="gallery-detail-title">{active.name}</h3>
@@ -975,7 +976,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   disabled={editing}
                                   aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
                                 >
-                                  ×
+                                  <X size={16} aria-hidden="true" />
                                 </Button>
                               </>
                             ) : (
@@ -991,7 +992,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   disabled={editing}
                                   aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
                                 >
-                                  ×
+                                  <X size={16} aria-hidden="true" />
                                 </Button>
                               </>
                             )}

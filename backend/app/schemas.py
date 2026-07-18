@@ -155,6 +155,7 @@ class ArtifactRead(BaseModel):
         validation_alias=AliasChoices("exhibition_records", "exhibitions"),
     )
     duplicate_image_skipped: bool = False
+    duplicate_image_replaced: bool = False
     duplicate_image_detail: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -442,4 +443,5 @@ class PendingArtifactSubmitRequest(BaseModel):
 class PendingArtifactSubmitResult(BaseModel):
     item: PendingArtifactRead
     duplicate_image_skipped: bool = False
+    duplicate_image_replaced: bool = False
     duplicate_image_detail: str | None = None

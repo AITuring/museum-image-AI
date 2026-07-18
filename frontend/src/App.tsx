@@ -186,6 +186,7 @@ type ArtifactSubmitResult = {
   id: number
   name: string
   duplicate_image_skipped?: boolean
+  duplicate_image_replaced?: boolean
   duplicate_image_detail?: string | null
 }
 
@@ -995,7 +996,9 @@ function App() {
       resetCurrentImage()
       setSubmitNotice({
         type: "success",
-        text: result.duplicate_image_skipped
+        text: result.duplicate_image_replaced
+          ? (result.duplicate_image_detail ?? `「${result.name}」的已有图片已被本次校正覆盖`)
+          : result.duplicate_image_skipped
           ? (result.duplicate_image_detail ?? `「${result.name}」已有相同图片，已跳过重复上传`)
           : "已提交云端，图片已上传 OSS",
       })

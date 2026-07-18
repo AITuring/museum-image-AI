@@ -22,7 +22,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.db import Base, SessionLocal, engine, get_db
-from app.exif_utils import extract_exif_metadata, update_image_exif_metadata
+from app.exif_utils import (
+    extract_exif_metadata,
+    fingerprint_distance,
+    image_content_fingerprint,
+    update_image_exif_metadata,
+)
 from app.google_photos import (
     build_google_photos_auth_url,
     build_google_photos_status,
@@ -50,7 +55,7 @@ from app.models import (
 )
 from app.reference_data import WENWU_ERA_OPTIONS, WENWU_MUSEUM_OPTIONS
 from app.reference_data import WENWU_MUSEUM_COORDINATES
-from app.oss import upload_image
+from app.oss import delete_image, upload_image
 from app.schemas import (
     ArtifactCreate,
     ArtifactDescriptionCandidateRead,
@@ -313,6 +318,7 @@ def run_startup_migrations(connection) -> None:
     image_column_definitions = {
         "image_hash": "VARCHAR(64)",
         "source_hash": "VARCHAR(64)",
+        "content_hash": "VARCHAR(64)",
         "camera_model": "VARCHAR(255)",
         "lens_model": "VARCHAR(255)",
         "capture_museum_id": "INTEGER",
@@ -343,12 +349,18 @@ def run_startup_migrations(connection) -> None:
             "ON artifact_images (source_hash)"
         )
     )
+    connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_artifact_images_content_hash "
+            "ON artifact_images (content_hash)"
+        )
+    )
     legacy_image_rows = connection.execute(
         text(
             """
-            SELECT id, url
+            SELECT id, url, content_hash
             FROM artifact_images
-            WHERE image_hash IS NULL
+            WHERE (image_hash IS NULL OR content_hash IS NULL)
               AND url IS NOT NULL
             ORDER BY id ASC
             """
@@ -357,21 +369,41 @@ def run_startup_migrations(connection) -> None:
     with httpx.Client(timeout=20, follow_redirects=True) as client:
         for row in legacy_image_rows:
             url = str(row["url"]).strip()
-            if not url.startswith(("http://", "https://")):
-                continue
             try:
-                response = client.get(url)
-                response.raise_for_status()
+                if url.startswith("/files/uploads/"):
+                    relative_path = url.removeprefix("/files/").lstrip("/")
+                    image_contents = (DATA_DIR / relative_path).read_bytes()
+                elif url.startswith(("http://", "https://")):
+                    response = client.get(url)
+                    response.raise_for_status()
+                    image_contents = response.content
+                else:
+                    continue
+                values = {
+                    "id": row["id"],
+                    "image_hash": hash_bytes(image_contents),
+                    "content_hash": image_content_fingerprint(image_contents),
+                }
                 connection.execute(
                     text(
                         """
                         UPDATE artifact_images
-                        SET image_hash = :image_hash
+                        SET image_hash = CASE
+                                WHEN image_hash IS NULL
+                                 AND NOT EXISTS (
+                                    SELECT 1
+                                    FROM artifact_images AS other
+                                    WHERE other.image_hash = :image_hash
+                                      AND other.id <> :id
+                                 )
+                                THEN :image_hash
+                                ELSE image_hash
+                            END,
+                            content_hash = COALESCE(content_hash, :content_hash)
                         WHERE id = :id
-                          AND image_hash IS NULL
                         """
                     ),
-                    {"id": row["id"], "image_hash": hash_bytes(response.content)},
+                    values,
                 )
             except Exception as exc:  # noqa: BLE001 - keep startup resilient on legacy rows
                 logger.warning("backfill image hash for artifact image %s failed: %s", row["id"], exc)
@@ -518,6 +550,7 @@ async def lifespan(_: FastAPI):
         Base.metadata.create_all(bind=connection)
         run_startup_migrations(connection)
         sync_reference_options(connection)
+    cleanup_existing_content_duplicates()
     yield
 
 
@@ -1026,6 +1059,70 @@ def find_artifact_image_by_source_hash_local(db: Session, source_hash: str | Non
     if not source_hash:
         return None
     return db.scalar(artifact_image_query().where(ArtifactImage.source_hash == source_hash))
+
+
+def find_artifact_images_by_content(
+    db: Session,
+    content_hash: str | None,
+    *,
+    max_distance: int = 8,
+) -> list[ArtifactImage]:
+    if not content_hash:
+        return []
+    candidates = list(
+        db.scalars(
+            artifact_image_query()
+            .where(ArtifactImage.content_hash.is_not(None))
+            .order_by(ArtifactImage.id.asc())
+        ).unique()
+    )
+    matches: list[ArtifactImage] = []
+    for image in candidates:
+        distance = fingerprint_distance(content_hash, image.content_hash)
+        if distance is not None and distance <= max_distance:
+            matches.append(image)
+    return matches
+
+
+def cleanup_existing_content_duplicates() -> int:
+    """Keep the latest copy when the same photo already exists on one artifact."""
+    removed_urls: list[str] = []
+    removed_count = 0
+    with SessionLocal() as db:
+        images = list(
+            db.scalars(
+                select(ArtifactImage)
+                .where(ArtifactImage.content_hash.is_not(None))
+                .order_by(ArtifactImage.artifact_id.asc(), ArtifactImage.id.desc())
+            )
+        )
+        keepers: dict[int, list[ArtifactImage]] = {}
+        for image in images:
+            artifact_keepers = keepers.setdefault(image.artifact_id, [])
+            duplicate = any(
+                (distance := fingerprint_distance(image.content_hash, keeper.content_hash)) is not None
+                and distance <= 8
+                for keeper in artifact_keepers
+            )
+            if not duplicate:
+                artifact_keepers.append(image)
+                continue
+            removed_urls.append(image.url)
+            db.delete(image)
+            removed_count += 1
+        if removed_count:
+            db.commit()
+
+    for old_url in set(removed_urls):
+        if not old_url.startswith(("http://", "https://")):
+            continue
+        try:
+            delete_image(old_url)
+        except Exception as exc:  # noqa: BLE001 - DB cleanup must remain committed
+            logger.warning("delete historical duplicate OSS image failed for %s: %s", old_url, exc)
+    if removed_count:
+        logger.info("cleaned %d historical duplicate artifact images", removed_count)
+    return removed_count
 
 
 def build_duplicate_image_detail(image: ArtifactImage | ArtifactImageRead) -> str:
@@ -2105,6 +2202,19 @@ async def prepare_artifact_exif_file(
     return Response(content=image_bytes, media_type=content_type)
 
 
+@app.post(f"{settings.api_prefix}/artifacts/extract-exif-file")
+async def extract_artifact_exif_file(file: UploadFile = File(...)) -> dict[str, object | None]:
+    """Read capture metadata before an image enters the review form."""
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="图片内容为空。")
+    metadata = extract_exif_metadata(image_bytes)
+    return {
+        **metadata.as_dict(),
+        "captured_at": metadata.captured_at.isoformat() if metadata.captured_at else None,
+    }
+
+
 @app.post(
     f"{settings.api_prefix}/artifacts/exif-submit",
     response_model=ArtifactRead,
@@ -2177,6 +2287,12 @@ async def submit_artifact_with_exif_file(
     exhibition_name: str | None = Form("常设"),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
+    camera_model: str | None = Form(None),
+    lens_model: str | None = Form(None),
+    captured_at: datetime | None = Form(None),
+    shutter_speed: str | None = Form(None),
+    aperture: str | None = Form(None),
+    iso: int | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
 ) -> ArtifactRead:
@@ -2260,17 +2376,17 @@ async def submit_artifact_with_exif_file(
             existing_artifact_id=existing_artifact_id,
             skip_existing_match=skip_existing_match,
             tags=normalized_tags,
-            camera_model=None,
-            lens_model=None,
+            camera_model=camera_model,
+            lens_model=lens_model,
             capture_museum_name=display_location_name,
             exhibition_name=exhibition_name,
             capture_location=display_location_name,
             latitude=latitude,
             longitude=longitude,
-            captured_at=None,
-            shutter_speed=None,
-            aperture=None,
-            iso=None,
+            captured_at=captured_at,
+            shutter_speed=shutter_speed,
+            aperture=aperture,
+            iso=iso,
             edit_method=None,
             source_hash=source_hash,
         )
@@ -2320,7 +2436,7 @@ async def ingest_artifact(
     source_hash: str | None = Form(None),
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
-) -> Artifact:
+) -> Artifact | ArtifactRead:
     """Store the image in OSS and the metadata in the cloud DB. Bearer-token protected."""
     require_ingest_token(authorization)
 
@@ -2328,9 +2444,13 @@ async def ingest_artifact(
     if not contents:
         raise HTTPException(status_code=400, detail="图片内容为空。")
     image_hash = hash_bytes(contents)
-    duplicate_image = find_artifact_image_by_source_hash_local(db, source_hash) or find_artifact_image_by_hash_local(db, image_hash)
-    if duplicate_image is not None:
-        return build_duplicate_artifact_read(duplicate_image)
+    content_hash = image_content_fingerprint(contents)
+    duplicate_images = find_artifact_images_by_content(db, content_hash)
+    byte_duplicate = find_artifact_image_by_source_hash_local(db, source_hash) or find_artifact_image_by_hash_local(db, image_hash)
+    if byte_duplicate is not None and all(image.id != byte_duplicate.id for image in duplicate_images):
+        duplicate_images.append(byte_duplicate)
+        duplicate_images.sort(key=lambda item: item.id)
+    duplicate_image = duplicate_images[0] if duplicate_images else None
 
     image_metadata = build_image_metadata(
         image_bytes=contents,
@@ -2356,12 +2476,12 @@ async def ingest_artifact(
     )
     excavation_value = normalize_place_of_excavation(Place_of_Excavation)
 
-    artifact: Artifact | None = None
-    if existing_artifact_id is not None:
+    artifact: Artifact | None = duplicate_image.artifact if duplicate_image is not None else None
+    if artifact is None and existing_artifact_id is not None:
         artifact = db.scalar(artifact_detail_query().where(Artifact.id == existing_artifact_id))
         if artifact is None:
             raise HTTPException(status_code=404, detail="要更新的文物不存在。")
-    elif not skip_existing_match:
+    elif artifact is None and not skip_existing_match:
         existing_match = find_existing_artifact_match(
             db,
             name=name,
@@ -2409,19 +2529,58 @@ async def ingest_artifact(
         if existing_link is None:
             db.add(ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition.id))
 
-    artifact.images.append(
-        ArtifactImage(
-            url=image_url,
-            image_hash=image_hash,
-            source_hash=source_hash or image_hash,
-            capture_museum_id=capture_museum.id if capture_museum is not None else None,
-            exhibition_id=exhibition.id if exhibition is not None else None,
-            capture_location=optional_text(capture_location),
-            **image_metadata,
+    replaced_urls: list[str] = []
+    if duplicate_image is not None:
+        replaced_urls = [item.url for item in duplicate_images if item.url and item.url != image_url]
+        for extra_image in duplicate_images[1:]:
+            extra_image.image_hash = None
+            extra_image.source_hash = None
+            db.delete(extra_image)
+        db.flush()
+
+        duplicate_image.url = image_url
+        duplicate_image.image_hash = image_hash
+        duplicate_image.source_hash = source_hash or image_hash
+        duplicate_image.content_hash = content_hash
+        duplicate_image.capture_museum_id = capture_museum.id if capture_museum is not None else None
+        duplicate_image.exhibition_id = exhibition.id if exhibition is not None else None
+        duplicate_image.capture_location = optional_text(capture_location)
+        for field, value in image_metadata.items():
+            setattr(duplicate_image, field, value)
+    else:
+        artifact.images.append(
+            ArtifactImage(
+                url=image_url,
+                image_hash=image_hash,
+                source_hash=source_hash or image_hash,
+                content_hash=content_hash,
+                capture_museum_id=capture_museum.id if capture_museum is not None else None,
+                exhibition_id=exhibition.id if exhibition is not None else None,
+                capture_location=optional_text(capture_location),
+                **image_metadata,
+            )
         )
-    )
     db.commit()
-    return db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
+    db.expire_all()
+    refreshed = db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
+    if duplicate_image is None:
+        return refreshed
+
+    for old_url in set(replaced_urls):
+        try:
+            delete_image(old_url)
+        except Exception as exc:  # noqa: BLE001 - DB replacement must remain committed
+            logger.warning("delete replaced OSS image failed for %s: %s", old_url, exc)
+    removed_count = max(0, len(duplicate_images) - 1)
+    detail = "已用本次校正覆盖已有图片"
+    if removed_count:
+        detail += f"，并清理 {removed_count} 条历史重复图片记录"
+    return ArtifactRead.model_validate(refreshed).model_copy(
+        update={
+            "duplicate_image_replaced": True,
+            "duplicate_image_detail": f"{detail}。",
+        }
+    )
 
 
 @app.post(
@@ -2838,6 +2997,7 @@ async def submit_pending(
     return PendingArtifactSubmitResult(
         item=PendingArtifactRead.model_validate(row),
         duplicate_image_skipped=bool(created.get("duplicate_image_skipped")),
+        duplicate_image_replaced=bool(created.get("duplicate_image_replaced")),
         duplicate_image_detail=created.get("duplicate_image_detail"),
     )
 

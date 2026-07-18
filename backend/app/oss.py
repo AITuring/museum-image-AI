@@ -5,6 +5,7 @@ URL is persisted in the database.
 """
 
 import logging
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 from app.config import settings
@@ -64,3 +65,23 @@ def upload_image(data: bytes, filename: str, content_type: str | None = None) ->
     url = _public_url(object_key)
     logger.info("OSS uploaded %s (%d bytes) -> %s", object_key, len(data), url)
     return url
+
+
+def delete_image(url: str) -> None:
+    """Best-effort deletion for an object previously returned by upload_image."""
+    if not url or not url.startswith(("http://", "https://")) or not oss_configured():
+        return
+    public_base = settings.oss_public_base_url.rstrip("/")
+    if public_base and url.startswith(f"{public_base}/"):
+        object_key = url[len(public_base) + 1 :]
+    else:
+        object_key = unquote(urlparse(url).path.lstrip("/"))
+    if not object_key:
+        return
+
+    import oss2
+
+    auth = oss2.Auth(settings.oss_access_key_id, settings.oss_access_key_secret)
+    bucket = oss2.Bucket(auth, settings.oss_endpoint, settings.oss_bucket)
+    bucket.delete_object(object_key)
+    logger.info("OSS deleted replaced object %s", object_key)

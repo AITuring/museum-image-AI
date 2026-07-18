@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
 import { AutoComplete, Button, Card, Input, Tag, Tooltip } from "antd"
-import { CloudUpload, ImagePlus, Loader2, Trash2, X } from "lucide-react"
+import { Check, ChevronDown, CloudUpload, ImagePlus, Loader2, Trash2, X } from "lucide-react"
 
 const Textarea = Input.TextArea
 
@@ -49,6 +49,7 @@ type SubmitNotice = {
 
 type ArtifactSubmitResult = {
   duplicate_image_skipped?: boolean
+  duplicate_image_replaced?: boolean
   duplicate_image_detail?: string | null
 }
 
@@ -65,8 +66,25 @@ type FormState = {
   exhibitionName: string
   latitude: string
   longitude: string
+  cameraModel: string
+  lensModel: string
+  capturedAt: string
+  shutterSpeed: string
+  aperture: string
+  iso: string
   description: string
   tags: string[]
+}
+
+type ImageExifMetadata = {
+  camera_model: string | null
+  lens_model: string | null
+  captured_at: string | null
+  shutter_speed: string | null
+  aperture: string | null
+  iso: number | null
+  latitude: number | null
+  longitude: number | null
 }
 
 type ExifWorkbenchItem = {
@@ -111,6 +129,12 @@ const EMPTY_FORM: FormState = {
   exhibitionName: "常设",
   latitude: "",
   longitude: "",
+  cameraModel: "",
+  lensModel: "",
+  capturedAt: "",
+  shutterSpeed: "",
+  aperture: "",
+  iso: "",
   description: "",
   tags: [],
 }
@@ -203,6 +227,12 @@ function hasMeaningfulFormValue(form: FormState) {
       form.exhibitionName.trim() ||
       form.latitude.trim() ||
       form.longitude.trim() ||
+      form.cameraModel.trim() ||
+      form.lensModel.trim() ||
+      form.capturedAt.trim() ||
+      form.shutterSpeed.trim() ||
+      form.aperture.trim() ||
+      form.iso.trim() ||
       form.description.trim() ||
       form.tags.length > 0,
   )
@@ -271,12 +301,19 @@ function changedParts(item: ExifWorkbenchItem) {
   const current = item.form
   if (initial.latitude !== current.latitude || initial.longitude !== current.longitude) changed.push("GPS")
   if (initial.displayLocationName !== current.displayLocationName || initial.exhibitionName !== current.exhibitionName) changed.push("展出")
+  if (initial.cameraModel !== current.cameraModel || initial.lensModel !== current.lensModel || initial.capturedAt !== current.capturedAt || initial.shutterSpeed !== current.shutterSpeed || initial.aperture !== current.aperture || initial.iso !== current.iso) changed.push("拍摄")
   if (initial.name !== current.name || initial.era !== current.era || initial.museumName !== current.museumName || initial.placeOfExcavation !== current.placeOfExcavation) changed.push("信息")
   if (initial.description !== current.description || initial.tags.join("\u0000") !== current.tags.join("\u0000")) changed.push("内容")
   return changed
 }
 
 type AMapEvent = { lnglat?: { getLng: () => number; getLat: () => number } }
+type AMapGeocodeLocation = {
+  getLng?: () => number
+  getLat?: () => number
+  lng?: number
+  lat?: number
+}
 type AMapInstance = {
   on: (event: string, handler: (event: AMapEvent) => void) => void
   clearMap: () => void
@@ -288,6 +325,10 @@ type AMapSdk = {
   Marker: new (options: Record<string, unknown>) => { on: (event: string, handler: (event: AMapEvent) => void) => void }
   Geocoder: new (options: Record<string, unknown>) => {
     getAddress: (position: [number, number], callback: (status: string, result: { regeocode?: { formattedAddress?: string } }) => void) => void
+    getLocation: (
+      address: string,
+      callback: (status: string, result: { geocodes?: Array<{ location?: AMapGeocodeLocation }> }) => void,
+    ) => void
   }
 }
 
@@ -312,6 +353,22 @@ function loadAmap(): Promise<AMapSdk> {
     version: "2.0",
     plugins: ["AMap.Geocoder", "AMap.PlaceSearch"],
   }) as Promise<AMapSdk>
+}
+
+async function geocodeLocationName(name: string): Promise<{ latitude: number; longitude: number } | null> {
+  const AMap = await loadAmap()
+  return new Promise((resolve) => {
+    new AMap.Geocoder({ city: "全国" }).getLocation(name, (status, result) => {
+      const location = status === "complete" ? result.geocodes?.[0]?.location : undefined
+      const longitude = location?.getLng?.() ?? location?.lng
+      const latitude = location?.getLat?.() ?? location?.lat
+      resolve(
+        Number.isFinite(latitude) && Number.isFinite(longitude)
+          ? { latitude: Number(latitude), longitude: Number(longitude) }
+          : null,
+      )
+    })
+  })
 }
 
 function GpsMapPicker({ latitude, longitude, onPick }: {
@@ -391,6 +448,7 @@ function GpsMapPicker({ latitude, longitude, onPick }: {
 function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const itemsRef = useRef<ExifWorkbenchItem[]>([])
+  const locatingDisplayLocationRef = useRef(false)
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tagInput, setTagInput] = useState("")
@@ -516,6 +574,62 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }))
   }
 
+  async function locateDisplayLocation(locationName: string, preferredMuseum?: MuseumOption) {
+    if (!selectedItem || locatingDisplayLocationRef.current) return
+    const normalizedName = locationName.trim()
+    if (!normalizedName) {
+      setSubmitNotice({ type: "error", text: "请先输入展出地点名称" })
+      return
+    }
+
+    const itemId = selectedItem.id
+    locatingDisplayLocationRef.current = true
+    setSubmitNotice(null)
+    try {
+      let museum = preferredMuseum
+        ?? locationSuggestions.find((option) => option.name === normalizedName)
+        ?? null
+      if (!museum) {
+        try {
+          museum = await resolveMuseum(apiBaseUrl, normalizedName)
+        } catch {
+          museum = null
+        }
+      }
+
+      let coordinates = museum?.latitude !== null
+        && museum?.latitude !== undefined
+        && museum.longitude !== null
+        && museum.longitude !== undefined
+        ? { latitude: museum.latitude, longitude: museum.longitude }
+        : null
+      if (!coordinates) {
+        coordinates = await geocodeLocationName(normalizedName)
+      }
+      if (!coordinates) {
+        throw new Error("未找到可用坐标")
+      }
+
+      updateItem(itemId, (item) => ({
+        ...item,
+        form: {
+          ...item.form,
+          displayLocationName: museum?.name || normalizedName,
+          latitude: coordinates.latitude.toFixed(6),
+          longitude: coordinates.longitude.toFixed(6),
+        },
+        submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+        submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+      }))
+      setShowLocationSuggestions(false)
+      setSubmitNotice({ type: "success", text: `已定位“${museum?.name || normalizedName}”并补充 GPS` })
+    } catch {
+      setSubmitNotice({ type: "error", text: `未能定位“${normalizedName}”，请从候选地点中选择或在地图上取点` })
+    } finally {
+      locatingDisplayLocationRef.current = false
+    }
+  }
+
   function renameSelected(baseName: string) {
     if (!selectedItem) return
     updateItem(selectedItem.id, (item) => ({
@@ -627,6 +741,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   ): Promise<ExifWorkbenchItem> {
     let parsedName: ParsedArtifactName | null = null
     let form = buildBaseForm()
+
+    try {
+      const exifForm = new FormData()
+      exifForm.append("file", file)
+      const metadata = await fetchJson<ImageExifMetadata>(`${apiBaseUrl}/api/artifacts/extract-exif-file`, {
+        method: "POST",
+        body: exifForm,
+      })
+      form = {
+        ...form,
+        cameraModel: metadata.camera_model ?? "",
+        lensModel: metadata.lens_model ?? "",
+        capturedAt: metadata.captured_at?.slice(0, 19) ?? "",
+        shutterSpeed: metadata.shutter_speed ?? "",
+        aperture: metadata.aperture ?? "",
+        iso: metadata.iso?.toString() ?? "",
+        latitude: metadata.latitude?.toString() ?? "",
+        longitude: metadata.longitude?.toString() ?? "",
+      }
+    } catch {
+      // Images without readable EXIF remain fully editable.
+    }
 
     try {
       parsedName = await fetchJson<ParsedArtifactName>(
@@ -912,6 +1048,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         data.append("exhibition_name", target.form.exhibitionName.trim() || "常设")
         if (latitude !== null) data.append("latitude", String(latitude))
         if (longitude !== null) data.append("longitude", String(longitude))
+        data.append("camera_model", target.form.cameraModel.trim())
+        data.append("lens_model", target.form.lensModel.trim())
+        if (target.form.capturedAt.trim()) data.append("captured_at", target.form.capturedAt.trim())
+        data.append("shutter_speed", target.form.shutterSpeed.trim())
+        data.append("aperture", target.form.aperture.trim())
+        if (target.form.iso.trim()) data.append("iso", target.form.iso.trim())
       }
 
       let uploadFile = new File([target.localFile], target.fileName, {
@@ -961,7 +1103,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         originalFileName: item.fileName,
         originalForm: cloneFormState(item.form),
         submitState: "submitted",
-        submitMessage: result.duplicate_image_skipped
+        submitMessage: result.duplicate_image_replaced
+          ? (result.duplicate_image_detail || "已用本次校正覆盖云端已有图片。")
+          : result.duplicate_image_skipped
           ? (result.duplicate_image_detail || "云端已存在相同原图，本次未重复上传。")
           : localWriteSucceeded
           ? "已覆盖本地原图，并同步上传 OSS 与云端数据库"
@@ -1085,19 +1229,36 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 </Tooltip>
               </div>
             </div>
-            <div className="exif-sidebar-stats">
-              <Tag>总计 {stats.itemCount}</Tag>
-              <Tag color="success">已入库 {stats.submittedCount}</Tag>
-              <Tag>已补描述 {stats.describedCount}</Tag>
-              <Tag>已带坐标 {stats.gpsCount}</Tag>
+            <div className="exif-sidebar-stats" aria-label="当前批次统计">
+              <div className="exif-sidebar-stat">
+                <span>总计</span>
+                <strong>{stats.itemCount}</strong>
+              </div>
+              <div className="exif-sidebar-stat success">
+                <span>已入库</span>
+                <strong>{stats.submittedCount}</strong>
+              </div>
+              <div className="exif-sidebar-stat">
+                <span>已补描述</span>
+                <strong>{stats.describedCount}</strong>
+              </div>
+              <div className="exif-sidebar-stat">
+                <span>已带坐标</span>
+                <strong>{stats.gpsCount}</strong>
+              </div>
             </div>
             <div className="exif-sidebar-tools">
-              <details className="batch-rename-panel" open>
+              <details className="batch-rename-panel">
                 <summary>
-                  <span>批量修改目标文件名</span>
-                  <Tag>影响 {batchRenameCount}/{items.length}</Tag>
+                  <span className="exif-tool-summary-copy">
+                    <strong>批量修改目标文件名</strong>
+                    <small>清理命名并统一前后缀</small>
+                  </span>
+                  <span className="exif-tool-summary-meta">
+                    <Tag>影响 {batchRenameCount}/{items.length}</Tag>
+                    <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
                 </summary>
-                <p className="exif-tool-caption">先清理冗余命名，再批量加前后缀，统一文件名格式。</p>
                 <div className="exif-tool-grid">
                   <label className="exif-tool-field">
                     <span>删除文本</span>
@@ -1117,12 +1278,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 </div>
                 <p className="muted">名称变动后会自动重解析时代、馆藏与出土信息，适合先统一处理文件名。</p>
               </details>
-              <details className="batch-location-panel" open>
+              <details className="batch-location-panel">
                 <summary>
-                  <span>批量修改展出地点与 GPS</span>
-                  <Tag>{selectedItem ? "可套用当前图片" : "等待选择图片"}</Tag>
+                  <span className="exif-tool-summary-copy">
+                    <strong>批量修改展出地点与 GPS</strong>
+                    <small>统一展厅、展览和定位坐标</small>
+                  </span>
+                  <span className="exif-tool-summary-meta">
+                    <Tag>{selectedItem ? "可套用当前图片" : "等待选择"}</Tag>
+                    <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                  </span>
                 </summary>
-                <p className="exif-tool-caption">地点名、展览名和坐标建议一起维护，避免后续检索不一致。</p>
                 <div className="batch-location-actions">
                   <Button htmlType="button" type="default" className="exif-tool-copy" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>
                     采用当前图片地点
@@ -1167,8 +1333,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <div key={item.id} className="exif-queue-item-shell">
                   <Button
                     htmlType="button"
-                    type={selectedId === item.id ? "primary" : "default"}
-                    className="exif-queue-item"
+                    type="default"
+                    className={`exif-queue-item ${selectedId === item.id ? "is-selected" : ""}`}
+                    aria-pressed={selectedId === item.id}
                     onClick={() => {
                       setSelectedId(item.id)
                       setTagInput("")
@@ -1226,7 +1393,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               className="panel form-wide exif-editor-form"
               onSubmit={(event) => {
                 event.preventDefault()
-                void submitOne(selectedItem.id)
               }}
             >
               <div className="section-heading exif-editor-heading">
@@ -1435,6 +1601,43 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                   </Card>
 
+                  <Card className="form-section exif-form-card exif-capture-card" styles={{ body: { padding: 0 } }}>
+                    <div className="ui-card-header form-section-head">
+                      <div>拍摄信息</div>
+                      <div>自动读取图片 EXIF，可在入库前校正。</div>
+                    </div>
+                    <div className="ui-card-content form-section-body">
+                      <div className="field-row">
+                        <label className="field">
+                          <span>相机型号</span>
+                          <Input value={selectedItem.form.cameraModel} placeholder="未读取" onChange={(event) => updateSelectedForm({ cameraModel: event.target.value })} />
+                        </label>
+                        <label className="field">
+                          <span>镜头型号</span>
+                          <Input value={selectedItem.form.lensModel} placeholder="未读取" onChange={(event) => updateSelectedForm({ lensModel: event.target.value })} />
+                        </label>
+                      </div>
+                      <div className="exif-capture-grid">
+                        <label className="field exif-captured-at-field">
+                          <span>拍摄时间</span>
+                          <Input type="datetime-local" value={selectedItem.form.capturedAt} onChange={(event) => updateSelectedForm({ capturedAt: event.target.value })} />
+                        </label>
+                        <label className="field">
+                          <span>快门</span>
+                          <Input value={selectedItem.form.shutterSpeed} placeholder="例如：1/80s" onChange={(event) => updateSelectedForm({ shutterSpeed: event.target.value })} />
+                        </label>
+                        <label className="field">
+                          <span>光圈</span>
+                          <Input value={selectedItem.form.aperture} placeholder="例如：f/8" onChange={(event) => updateSelectedForm({ aperture: event.target.value })} />
+                        </label>
+                        <label className="field">
+                          <span>ISO</span>
+                          <Input inputMode="numeric" value={selectedItem.form.iso} placeholder="例如：400" onChange={(event) => updateSelectedForm({ iso: event.target.value.replace(/\D/g, "") })} />
+                        </label>
+                      </div>
+                    </div>
+                  </Card>
+
                   <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
                     <div className="ui-card-header form-section-head">
                       <div>展出地点</div>
@@ -1462,19 +1665,24 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                           placeholder="例如：山东省博物馆"
                           onFocus={() => setShowLocationSuggestions(true)}
                           onOpenChange={setShowLocationSuggestions}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter" || event.nativeEvent.isComposing) return
+                            event.preventDefault()
+                            event.stopPropagation()
+                            void locateDisplayLocation(selectedItem.form.displayLocationName)
+                          }}
                           onChange={(value) => {
                             updateSelectedForm({ displayLocationName: value })
                             setShowLocationSuggestions(true)
                           }}
                           onSelect={(value) => {
                             const museum = locationSuggestions.find((option) => option.name === value)
-                            if (!museum) return
-                            updateSelectedForm({
-                              displayLocationName: museum.name,
-                              latitude: museum.latitude?.toString() ?? "",
-                              longitude: museum.longitude?.toString() ?? "",
-                            })
                             setShowLocationSuggestions(false)
+                            if (!museum) {
+                              void locateDisplayLocation(value)
+                              return
+                            }
+                            void locateDisplayLocation(value, museum)
                           }}
                         />
                       </label>
@@ -1555,8 +1763,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                                     <Tag key={tag}>{tag}</Tag>
                                   )) : <span>暂无标签</span>}
                                 </div>
-                                <Button htmlType="button" type="default" onClick={() => applyCandidate(candidate)}>
-                                  使用这版
+                                <Button className="exif-candidate-apply" htmlType="button" type="primary" icon={<Check size={14} aria-hidden="true" />} onClick={() => applyCandidate(candidate)}>
+                                  采用此版本
                                 </Button>
                               </>
                             ) : <p className="error-text">{candidate.error || "模型调用失败"}</p>}
@@ -1635,15 +1843,32 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>{submitNotice.text}</p>
                   ) : <p className="muted">确认当前图片信息无误后，再执行保存入库。</p>}
                 </div>
-                <Button htmlType="submit" type="primary" disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}>
+                <Button
+                  htmlType="button"
+                  type="primary"
+                  onClick={() => void submitOne(selectedItem.id)}
+                  disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}
+                >
                   {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : "保存并入库"}
                 </Button>
               </div>
             </form>
           ) : (
-            <div className="panel empty-state">
+            <div className="panel empty-state exif-main-empty">
+              <span className="exif-empty-symbol" aria-hidden="true">
+                <ImagePlus size={22} strokeWidth={1.6} />
+              </span>
               <h2>从一张文物照片开始</h2>
-              <p className="muted">点击右上角“添加图片”，系统会从文件名提取基础信息；只需校对后保存入库。</p>
+              <p className="muted">选择图片后，系统会从文件名提取基础信息；只需校对后保存入库。</p>
+              <Button
+                htmlType="button"
+                type="primary"
+                icon={<ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />}
+                onClick={() => void handleOpenWritableFiles()}
+                disabled={uploading}
+              >
+                {uploading ? "正在读取…" : "添加图片"}
+              </Button>
             </div>
           )}
         </section>

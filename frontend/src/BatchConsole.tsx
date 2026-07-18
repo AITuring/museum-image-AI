@@ -178,6 +178,7 @@ type BatchScanResponse = {
 type PendingArtifactSubmitResult = {
   item: RawPendingArtifact
   duplicate_image_skipped: boolean
+  duplicate_image_replaced: boolean
   duplicate_image_detail: string | null
 }
 
@@ -1110,7 +1111,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           status: "submitted",
           error: null,
         })
-        const submitText = result.duplicate_image_skipped
+        const submitText = result.duplicate_image_replaced
+          ? `「${submittedItem.name ?? submittedItem.file_name}」已覆盖云端已有图片`
+          : result.duplicate_image_skipped
           ? `「${submittedItem.name ?? submittedItem.file_name}」云端已存在相同图片，已跳过重复上传`
           : `「${submittedItem.name ?? submittedItem.file_name}」已提交云端`
         setMessage(submitText)
