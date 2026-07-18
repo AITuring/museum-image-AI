@@ -1574,7 +1574,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                         {matchedArtifact.match_reason} 匹配度 {Math.round(matchedArtifact.match_score * 100)}%
                       </p>
                     </div>
-                    <Tag>{matchedArtifact.artifact.images.length} 张历史图片</Tag>
+                    <span className="backend-match-count">{matchedArtifact.artifact.images.length} 张历史图片</span>
                   </div>
                   <div className="backend-match-meta">
                     <span>名称：{matchedArtifact.artifact.name}</span>

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
 import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Table, Tag, Tooltip } from "antd"
 import {
+  ArrowRight,
   Camera,
   Check,
   ChevronDown,
@@ -131,6 +132,7 @@ type ImageExifMetadata = {
   iso: number | null
   latitude: number | null
   longitude: number | null
+  preview_data_url: string | null
 }
 
 type ExifWorkbenchItem = {
@@ -179,6 +181,132 @@ type FilePickerWindow = Window & {
 }
 
 const IMAGE_FILE_PATTERN = /\.(?:jpe?g|png|webp|tiff?)$/i
+const CLIENT_PREVIEW_FILE_LIMIT = 24 * 1024 * 1024
+const TIFF_BROWSER_FALLBACK_MAX_PIXELS = 24_000_000
+
+function yieldToMainThread() {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+}
+
+function formatCapturedAt(value: string | null | undefined) {
+  const normalized = (value ?? "").trim().replace("T", " ").replace(/Z$/, "")
+  if (!normalized) return ""
+  const match = normalized.match(/^(\d{4}-\d{2}-\d{2})[ ](\d{2}:\d{2})(?::(\d{2}))?/)
+  return match ? `${match[1]} ${match[2]}:${match[3] ?? "00"}` : normalized.slice(0, 19)
+}
+
+function isTiffFile(file: File) {
+  return /\.(?:tif|tiff)$/i.test(file.name) || ["image/tif", "image/tiff", "application/tiff", "application/x-tiff"].includes(file.type.toLowerCase())
+}
+
+function tiffDimension(value: unknown) {
+  if (typeof value === "number") return value
+  if (Array.isArray(value) && typeof value[0] === "number") return value[0]
+  return 0
+}
+
+async function createTiffPreviewUrl(file: File) {
+  if (file.size > CLIENT_PREVIEW_FILE_LIMIT) throw new Error("TIFF 文件过大，使用轻量占位预览")
+  const UTIF = await import("utif")
+  const buffer = await file.arrayBuffer()
+  const ifds = UTIF.decode(buffer)
+  const mainIfd = ifds
+    .filter((ifd) => tiffDimension(ifd.width ?? ifd.t256) > 0 && tiffDimension(ifd.height ?? ifd.t257) > 0)
+    .reduce((best, current) => {
+      if (!best) return current
+      const bestPixels = tiffDimension(best.width ?? best.t256) * tiffDimension(best.height ?? best.t257)
+      const currentPixels = tiffDimension(current.width ?? current.t256) * tiffDimension(current.height ?? current.t257)
+      return currentPixels > bestPixels ? current : best
+    }, undefined as (typeof ifds)[number] | undefined)
+  if (!mainIfd) throw new Error("TIFF 中没有可预览的图像页")
+  UTIF.decodeImage(buffer, mainIfd, ifds)
+  const sourceWidth = tiffDimension(mainIfd.width ?? mainIfd.t256)
+  const sourceHeight = tiffDimension(mainIfd.height ?? mainIfd.t257)
+  if (sourceWidth * sourceHeight > TIFF_BROWSER_FALLBACK_MAX_PIXELS) {
+    throw new Error("TIFF 解码尺寸过大，使用轻量占位预览")
+  }
+  const rgba = UTIF.toRGBA8(mainIfd)
+  const scale = Math.min(1, 640 / Math.max(sourceWidth, sourceHeight))
+  const sourceCanvas = document.createElement("canvas")
+  sourceCanvas.width = sourceWidth
+  sourceCanvas.height = sourceHeight
+  const sourceContext = sourceCanvas.getContext("2d")
+  if (!sourceContext) throw new Error("浏览器无法生成 TIFF 预览")
+  sourceContext.putImageData(new ImageData(new Uint8ClampedArray(rgba), sourceWidth, sourceHeight), 0, 0)
+  const previewCanvas = document.createElement("canvas")
+  previewCanvas.width = Math.max(1, Math.round(sourceWidth * scale))
+  previewCanvas.height = Math.max(1, Math.round(sourceHeight * scale))
+  const previewContext = previewCanvas.getContext("2d")
+  if (!previewContext) throw new Error("浏览器无法缩放 TIFF 预览")
+  previewContext.drawImage(sourceCanvas, 0, 0, previewCanvas.width, previewCanvas.height)
+  const previewBlob = await new Promise<Blob | null>((resolve) => previewCanvas.toBlob(resolve, "image/jpeg", 0.82))
+  if (!previewBlob) throw new Error("TIFF 预览生成失败")
+  return URL.createObjectURL(previewBlob)
+}
+
+function formatFileSize(size: number) {
+  if (size >= 1024 ** 3) return `${(size / 1024 ** 3).toFixed(1)} GB`
+  if (size >= 1024 ** 2) return `${(size / 1024 ** 2).toFixed(1)} MB`
+  return `${Math.max(1, Math.round(size / 1024))} KB`
+}
+
+async function canvasToPreviewUrl(canvas: HTMLCanvasElement) {
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8))
+  if (!blob) throw new Error("缩略图生成失败")
+  return URL.createObjectURL(blob)
+}
+
+async function createRasterPreviewUrl(file: File) {
+  if (file.size > CLIENT_PREVIEW_FILE_LIMIT || !("createImageBitmap" in window)) {
+    throw new Error("图片过大，使用轻量占位预览")
+  }
+  const bitmap = await createImageBitmap(file, { resizeWidth: 640, resizeQuality: "high" })
+  try {
+    const scale = Math.min(1, 640 / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement("canvas")
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const context = canvas.getContext("2d")
+    if (!context) throw new Error("浏览器无法生成缩略图")
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    return await canvasToPreviewUrl(canvas)
+  } finally {
+    bitmap.close()
+  }
+}
+
+async function createFilePlaceholderUrl(file: File) {
+  const canvas = document.createElement("canvas")
+  canvas.width = 640
+  canvas.height = 400
+  const context = canvas.getContext("2d")
+  if (!context) throw new Error("浏览器无法生成文件占位图")
+  context.fillStyle = "#f5f5f4"
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = "#d6d3d1"
+  context.fillRect(48, 48, 104, 128)
+  context.fillStyle = "#44403c"
+  context.font = "600 34px system-ui, sans-serif"
+  context.fillText((file.name.split(".").pop() || "IMG").toUpperCase(), 48, 232)
+  context.font = "500 24px system-ui, sans-serif"
+  context.fillText(file.name.length > 34 ? `${file.name.slice(0, 31)}...` : file.name, 48, 286)
+  context.fillStyle = "#78716c"
+  context.font = "22px system-ui, sans-serif"
+  context.fillText(formatFileSize(file.size), 48, 326)
+  return canvasToPreviewUrl(canvas)
+}
+
+async function createFallbackPreviewUrl(file: File) {
+  try {
+    return isTiffFile(file) ? await createTiffPreviewUrl(file) : await createRasterPreviewUrl(file)
+  } catch {
+    return createFilePlaceholderUrl(file)
+  }
+}
+
+function revokePreviewUrl(url: string) {
+  if (url.startsWith("blob:")) URL.revokeObjectURL(url)
+}
 
 const EMPTY_FORM: FormState = {
   museumName: "",
@@ -343,8 +471,8 @@ function buildMetadataSyncDiffRows(
             { label: "光圈", target: target.aperture, source: source.aperture },
             { label: "ISO", target: target.iso, source: source.iso },
           ]
-        : scope === "time"
-          ? [{ label: "拍摄时间", target: target.capturedAt, source: source.capturedAt }]
+      : scope === "time"
+          ? [{ label: "拍摄时间", target: formatCapturedAt(target.capturedAt), source: formatCapturedAt(source.capturedAt) }]
           : [
               { label: "描述", target: target.description, source: source.description },
               { label: "标签", target: target.tags, source: source.tags },
@@ -711,7 +839,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   }, [items, metadataSyncSourceId])
 
   useEffect(() => () => {
-    itemsRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl))
+    itemsRef.current.forEach((item) => revokePreviewUrl(item.previewUrl))
   }, [])
 
   useEffect(() => {
@@ -1000,6 +1128,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   ): Promise<ExifWorkbenchItem> {
     let parsedName: ParsedArtifactName | null = null
     let form = buildBaseForm()
+    let previewUrl = ""
 
     try {
       const exifForm = new FormData()
@@ -1012,16 +1141,19 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         ...form,
         cameraModel: metadata.camera_model ?? "",
         lensModel: metadata.lens_model ?? "",
-        capturedAt: metadata.captured_at?.slice(0, 19) ?? "",
+        capturedAt: formatCapturedAt(metadata.captured_at),
         shutterSpeed: metadata.shutter_speed ?? "",
         aperture: metadata.aperture ?? "",
         iso: metadata.iso?.toString() ?? "",
         latitude: metadata.latitude?.toString() ?? "",
         longitude: metadata.longitude?.toString() ?? "",
       }
+      previewUrl = metadata.preview_data_url ?? ""
     } catch {
       // Images without readable EXIF remain fully editable.
     }
+
+    if (!previewUrl) previewUrl = await createFallbackPreviewUrl(file)
 
     try {
       parsedName = await fetchJson<ParsedArtifactName>(
@@ -1056,7 +1188,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       id: buildItemId(file, index),
       fileName: file.name,
       originalFileName: file.name,
-      previewUrl: URL.createObjectURL(file),
+      previewUrl,
       localFile: file,
       fileHandle,
       parsedName,
@@ -1098,12 +1230,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       const builtItems: ExifWorkbenchItem[] = []
       for (let index = 0; index < addedEntries.length; index += 1) {
         const entry = addedEntries[index]
-        builtItems.push(await createWorkbenchItem(entry.file, items.length + index, entry.handle))
+        setSubmitNotice({ type: "success", text: `正在解析文件夹照片 ${index + 1}/${addedEntries.length}：${entry.file.name}` })
+        const builtItem = await createWorkbenchItem(entry.file, items.length + index, entry.handle)
+        builtItems.push(builtItem)
+        setItems((current) => [...current, builtItem])
+        setSelectedId((current) => current ?? builtItem.id)
+        await yieldToMainThread()
       }
 
       setDirectoryHandle(nextDirectoryHandle)
-      setItems((current) => [...current, ...builtItems])
-      setSelectedId((current) => current ?? builtItems[0]?.id ?? null)
       setSubmitNotice({
         type: "success",
         text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片，并获得批量原地回写权限`,
@@ -1202,11 +1337,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setUploading(true)
     setSubmitNotice(null)
     try {
-      const builtItems = await Promise.all(
-        nextFiles.map((file, index) => createWorkbenchItem(file, index)),
-      )
-      setItems((current) => [...current, ...builtItems])
-      setSelectedId((current) => current ?? builtItems[0]?.id ?? null)
+      const builtItems: ExifWorkbenchItem[] = []
+      const baseIndex = items.length
+      for (let index = 0; index < nextFiles.length; index += 1) {
+        const file = nextFiles[index]
+        setSubmitNotice({ type: "success", text: `正在解析 ${index + 1}/${nextFiles.length}：${file.name}` })
+        const builtItem = await createWorkbenchItem(file, baseIndex + index)
+        builtItems.push(builtItem)
+        setItems((current) => [...current, builtItem])
+        setSelectedId((current) => current ?? builtItem.id)
+        await yieldToMainThread()
+      }
       setSharedForm((current) => {
         if (hasMeaningfulFormValue(current)) {
           return current
@@ -1233,7 +1374,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (!target) {
       return
     }
-    URL.revokeObjectURL(target.previewUrl)
+    revokePreviewUrl(target.previewUrl)
     const remaining = items.filter((item) => item.id !== itemId)
     setItems(remaining)
     setSelectedId((current) => (current === itemId ? remaining[0]?.id ?? null : current))
@@ -1241,7 +1382,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   async function clearAll() {
     const currentItems = [...items]
-    currentItems.forEach((item) => URL.revokeObjectURL(item.previewUrl))
+    currentItems.forEach((item) => revokePreviewUrl(item.previewUrl))
     setItems([])
     setSelectedId(null)
     setDirectoryHandle(null)
@@ -1552,7 +1693,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           id={EXIF_FILE_INPUT_ID}
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/*,.tif,.tiff"
           multiple
           className="exif-file-input"
           onChange={(event) => void handleUpload(Array.from(event.target.files ?? []))}
@@ -1662,7 +1803,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <small>清理命名并统一前后缀</small>
                   </span>
                   <span className="exif-tool-summary-meta">
-                    <Tag>影响 {batchRenameCount}/{items.length}</Tag>
+                    <span className="exif-tool-summary-count">影响 {batchRenameCount}/{items.length}</span>
                     <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </summary>
@@ -1692,7 +1833,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <small>地点、展览、相机、镜头与拍摄参数</small>
                   </span>
                   <span className="exif-tool-summary-meta">
-                    <Tag>{items.length > 1 ? `${items.length - 1} 张可同步` : "至少需要 2 张"}</Tag>
+                    <span className="exif-tool-summary-count">{items.length > 1 ? `${items.length - 1} 张可同步` : "至少需要 2 张"}</span>
                     <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </summary>
@@ -1758,7 +1899,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 </div>
                 <div className="metadata-sync-status">
                   <span>{metadataSyncSource ? `来源：${metadataSyncSource.fileName}` : "尚未选择来源"}</span>
-                  <Tag>{metadataSyncTargets.length} 张目标 · {metadataSyncChangedCount} 项差异</Tag>
+                  <strong>{metadataSyncTargets.length} 张目标 · {metadataSyncChangedCount} 项差异</strong>
                 </div>
                 <div className="exif-tool-actions">
                   <Button
@@ -1779,7 +1920,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <small>地图选点后统一展览与 GPS</small>
                   </span>
                   <span className="exif-tool-summary-meta">
-                    <Tag>{selectedItem ? "可套用当前图片" : "等待选择"}</Tag>
+                    <span className="exif-tool-summary-count">{selectedItem ? "可套用当前图片" : "等待选择"}</span>
                     <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </summary>
@@ -1835,7 +1976,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       setTagInput("")
                     }}
                   >
-                    <img src={item.previewUrl} alt={item.fileName} className="exif-queue-thumb" />
+                    <img
+                      src={item.previewUrl}
+                      alt={item.fileName}
+                      className="exif-queue-thumb"
+                      loading="lazy"
+                      decoding="async"
+                    />
                     <div className="exif-queue-copy">
                       <strong title={item.fileName}>{item.fileName}</strong>
                       <span>{item.form.name || item.parsedName?.artifact_name || "待确认名称"}</span>
@@ -2013,7 +2160,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
                 <Card className="exif-preview-card" styles={{ body: { padding: 0 } }}>
                   <div className="ui-card-content exif-selected-head">
-                    <img src={selectedItem.previewUrl} alt={selectedItem.fileName} className="exif-selected-preview" />
+                    <img
+                      src={selectedItem.previewUrl}
+                      alt={selectedItem.fileName}
+                      className="exif-selected-preview"
+                      decoding="async"
+                    />
                     <div className="exif-file-block">
                       <div className="result-head">
                         <h3>文件名</h3>
@@ -2119,7 +2271,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <div className="exif-capture-grid">
                         <label className="field exif-captured-at-field">
                           <span>拍摄时间</span>
-                          <Input type="datetime-local" value={selectedItem.form.capturedAt} onChange={(event) => updateSelectedForm({ capturedAt: event.target.value })} />
+                          <Input
+                            value={selectedItem.form.capturedAt}
+                            placeholder="yyyy-MM-dd HH:mm:ss"
+                            onChange={(event) => updateSelectedForm({ capturedAt: event.target.value })}
+                            onBlur={(event) => updateSelectedForm({ capturedAt: formatCapturedAt(event.target.value) })}
+                          />
                         </label>
                         <label className="field">
                           <span>快门</span>
@@ -2384,15 +2541,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               <span>目标范围</span>
               <strong>{metadataSyncTargetMode === "current" ? "当前图片" : `全部其他图片（${metadataSyncTargets.length} 张）`}</strong>
             </div>
-            <div>
+            <div className="is-emphasis">
               <span>预计变更</span>
               <strong>{metadataSyncChangedCount} 项</strong>
             </div>
-          </div>
-          <div className="metadata-sync-preview-scopes">
-            {METADATA_SYNC_SCOPES.filter((scope) => metadataSyncSelection[scope.key]).map((scope) => (
-              <Tag key={scope.key} color="blue">{scope.title}</Tag>
-            ))}
           </div>
           {metadataSyncDiffs.every((entry) => entry.rows.length === 0) ? (
             <div className="metadata-sync-no-change">来源照片与目标照片在所选范围内没有差异。</div>
@@ -2401,10 +2553,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).slice(0, 4).map(({ target, rows }) => (
                 <section key={target.id} className="metadata-sync-preview-target">
                   <header>
-                    <img src={target.previewUrl} alt="" />
+                    <img src={target.previewUrl} alt="" loading="lazy" decoding="async" />
                     <div>
                       <strong>{target.fileName}</strong>
-                      <span>{rows.length} 项将变更</span>
+                      <span className="metadata-sync-target-change-count">{rows.length} 项将变更</span>
                     </div>
                   </header>
                   <Table<MetadataSyncDiffRow>
@@ -2423,18 +2575,21 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         render: (value: string) => <strong className="metadata-sync-table-field">{value}</strong>,
                       },
                       {
-                        title: "同步前",
+                        title: <span className="metadata-sync-column-title">同步前</span>,
                         dataIndex: "targetValue",
                         key: "targetValue",
-                        render: (value: string) => <span className={value === "未填写" ? "is-empty" : ""} title={value}>{value}</span>,
+                        render: (value: string) => (
+                          <span className={`metadata-sync-table-before ${value === "未填写" ? "is-empty" : ""}`} title={value}>{value}</span>
+                        ),
                       },
                       {
-                        title: "同步后",
+                        title: <span className="metadata-sync-column-title is-after">同步后</span>,
                         dataIndex: "sourceValue",
                         key: "sourceValue",
                         render: (value: string, row) => (
                           <span className={`metadata-sync-table-after ${value === "未填写" ? "is-empty" : ""}`} title={value}>
-                            <span>{value}</span>
+                            <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
+                            <strong>{value}</strong>
                             {row.willClearTarget ? <Tag color="warning">将清空</Tag> : null}
                           </span>
                         ),

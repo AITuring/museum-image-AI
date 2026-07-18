@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from fractions import Fraction
 from io import BytesIO
+from typing import BinaryIO
 
 from PIL import Image, ImageOps
 from PIL.TiffImagePlugin import IFDRational
@@ -298,56 +299,92 @@ def update_image_exif_metadata(
         return image_bytes
 
 
-def extract_exif_metadata(image_bytes: bytes) -> ImageExifData:
-    if not image_bytes:
+def _extract_exif_metadata_from_image(image: Image.Image) -> ImageExifData:
+    exif = image.getexif()
+    if not exif:
         return ImageExifData()
 
     try:
+        exif_ifd = exif.get_ifd(TAG_EXIF_IFD)
+    except Exception:
+        exif_ifd = {}
+
+    try:
+        gps_ifd = exif.get_ifd(TAG_GPS_IFD)
+    except Exception:
+        gps_ifd = {}
+
+    iso_value = exif_ifd.get(EXIF_ISO) if isinstance(exif_ifd, dict) else None
+    if iso_value is None:
+        iso_value = exif.get(EXIF_ISO)
+
+    return ImageExifData(
+        camera_model=_clean_text(exif.get(TAG_MODEL)),
+        lens_model=_clean_text(
+            exif_ifd.get(EXIF_LENS_MODEL) if isinstance(exif_ifd, dict) else None
+        ),
+        latitude=_gps_to_decimal(
+            gps_ifd.get(GPS_LATITUDE) if isinstance(gps_ifd, dict) else None,
+            gps_ifd.get(GPS_LATITUDE_REF) if isinstance(gps_ifd, dict) else None,
+        ),
+        longitude=_gps_to_decimal(
+            gps_ifd.get(GPS_LONGITUDE) if isinstance(gps_ifd, dict) else None,
+            gps_ifd.get(GPS_LONGITUDE_REF) if isinstance(gps_ifd, dict) else None,
+        ),
+        captured_at=_parse_exif_datetime(
+            (exif_ifd.get(EXIF_DATETIME_ORIGINAL) if isinstance(exif_ifd, dict) else None)
+            or (exif_ifd.get(EXIF_DATETIME_DIGITIZED) if isinstance(exif_ifd, dict) else None)
+            or exif.get(EXIF_DATETIME_ORIGINAL)
+            or exif.get(EXIF_DATETIME_DIGITIZED)
+        ),
+        shutter_speed=_format_shutter_speed(
+            exif_ifd.get(EXIF_EXPOSURE_TIME) if isinstance(exif_ifd, dict) else None
+        ),
+        aperture=_format_aperture(
+            exif_ifd.get(EXIF_FNUMBER) if isinstance(exif_ifd, dict) else None
+        ),
+        iso=int(iso_value) if iso_value is not None else None,
+    )
+
+
+def extract_exif_metadata(image_bytes: bytes) -> ImageExifData:
+    if not image_bytes:
+        return ImageExifData()
+    try:
         with Image.open(BytesIO(image_bytes)) as image:
-            exif = image.getexif()
-            if not exif:
-                return ImageExifData()
-
-            try:
-                exif_ifd = exif.get_ifd(TAG_EXIF_IFD)
-            except Exception:
-                exif_ifd = {}
-
-            try:
-                gps_ifd = exif.get_ifd(TAG_GPS_IFD)
-            except Exception:
-                gps_ifd = {}
-
-            iso_value = exif_ifd.get(EXIF_ISO) if isinstance(exif_ifd, dict) else None
-            if iso_value is None:
-                iso_value = exif.get(EXIF_ISO)
-
-            return ImageExifData(
-                camera_model=_clean_text(exif.get(TAG_MODEL)),
-                lens_model=_clean_text(
-                    exif_ifd.get(EXIF_LENS_MODEL) if isinstance(exif_ifd, dict) else None
-                ),
-                latitude=_gps_to_decimal(
-                    gps_ifd.get(GPS_LATITUDE) if isinstance(gps_ifd, dict) else None,
-                    gps_ifd.get(GPS_LATITUDE_REF) if isinstance(gps_ifd, dict) else None,
-                ),
-                longitude=_gps_to_decimal(
-                    gps_ifd.get(GPS_LONGITUDE) if isinstance(gps_ifd, dict) else None,
-                    gps_ifd.get(GPS_LONGITUDE_REF) if isinstance(gps_ifd, dict) else None,
-                ),
-                captured_at=_parse_exif_datetime(
-                    (exif_ifd.get(EXIF_DATETIME_ORIGINAL) if isinstance(exif_ifd, dict) else None)
-                    or (exif_ifd.get(EXIF_DATETIME_DIGITIZED) if isinstance(exif_ifd, dict) else None)
-                    or exif.get(EXIF_DATETIME_ORIGINAL)
-                    or exif.get(EXIF_DATETIME_DIGITIZED)
-                ),
-                shutter_speed=_format_shutter_speed(
-                    exif_ifd.get(EXIF_EXPOSURE_TIME) if isinstance(exif_ifd, dict) else None
-                ),
-                aperture=_format_aperture(
-                    exif_ifd.get(EXIF_FNUMBER) if isinstance(exif_ifd, dict) else None
-                ),
-                iso=int(iso_value) if iso_value is not None else None,
-            )
+            return _extract_exif_metadata_from_image(image)
     except Exception:
         return ImageExifData()
+
+
+def extract_exif_and_preview_from_file(
+    image_file: BinaryIO,
+    *,
+    preview_max_edge: int = 640,
+) -> tuple[ImageExifData, bytes | None]:
+    """Read EXIF and a compact JPEG preview without copying the original file."""
+    try:
+        image_file.seek(0)
+        with Image.open(image_file) as image:
+            metadata = _extract_exif_metadata_from_image(image)
+            preview = ImageOps.exif_transpose(image)
+            preview.thumbnail((preview_max_edge, preview_max_edge), Image.Resampling.LANCZOS)
+            if preview.mode not in {"RGB", "L"}:
+                background = Image.new("RGB", preview.size, "white")
+                if "A" in preview.getbands():
+                    background.paste(preview, mask=preview.getchannel("A"))
+                else:
+                    background.paste(preview.convert("RGB"))
+                preview = background
+            elif preview.mode == "L":
+                preview = preview.convert("RGB")
+            output = BytesIO()
+            preview.save(output, format="JPEG", quality=82, optimize=True)
+            return metadata, output.getvalue()
+    except Exception:
+        return ImageExifData(), None
+    finally:
+        try:
+            image_file.seek(0)
+        except Exception:
+            pass

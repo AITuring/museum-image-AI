@@ -928,6 +928,16 @@ label.field,
   font-size: 11px;
 }
 
+.backend-match-count {
+  flex: 0 0 auto;
+  color: var(--app-soft);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
 .stepper {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1342,6 +1352,14 @@ label.field,
   color: var(--app-soft);
 }
 
+.exif-tool-summary-count {
+  color: var(--app-soft);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .exif-tool-summary-meta svg {
   transition: transform 160ms ease;
 }
@@ -1395,6 +1413,14 @@ label.field,
   justify-content: space-between;
   gap: 8px;
   margin-top: 10px;
+}
+
+.metadata-sync-status > strong {
+  flex: 0 0 auto;
+  color: var(--app-fg);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .metadata-sync-target-row > span,
@@ -1516,6 +1542,17 @@ label.field,
   gap: 3px;
 }
 
+.metadata-sync-preview-summary > .is-emphasis {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--app-primary) 9%, var(--app-card));
+}
+
+.metadata-sync-preview-summary > .is-emphasis strong {
+  color: var(--app-primary);
+  font-size: 15px;
+}
+
 .metadata-sync-preview-summary span,
 .metadata-sync-preview-target header span {
   color: var(--app-soft);
@@ -1528,12 +1565,6 @@ label.field,
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.metadata-sync-preview-scopes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
 }
 
 .metadata-sync-preview-targets {
@@ -1578,6 +1609,11 @@ label.field,
   white-space: nowrap;
 }
 
+.metadata-sync-preview-target header .metadata-sync-target-change-count {
+  color: var(--app-primary);
+  font-weight: 600;
+}
+
 .metadata-sync-diff-table .ant-table {
   border-radius: 0;
   background: var(--app-card);
@@ -1597,6 +1633,11 @@ label.field,
   font-weight: 500;
 }
 
+.metadata-sync-diff-table .ant-table-thead > tr > th:nth-child(3) {
+  background: color-mix(in oklch, var(--app-primary) 9%, var(--app-card));
+  color: var(--app-primary);
+}
+
 .metadata-sync-diff-table .ant-table-tbody > tr > td {
   height: 38px;
   padding: 7px 10px;
@@ -1605,6 +1646,14 @@ label.field,
   color: var(--app-fg);
   font-size: 11px;
   line-height: 1.45;
+}
+
+.metadata-sync-diff-table .ant-table-tbody > tr > td:nth-child(2) {
+  background: color-mix(in oklch, var(--app-muted) 68%, var(--app-card));
+}
+
+.metadata-sync-diff-table .ant-table-tbody > tr > td:nth-child(3) {
+  background: color-mix(in oklch, var(--app-primary) 5%, var(--app-card));
 }
 
 .metadata-sync-diff-table .ant-table-tbody > tr:last-child > td {
@@ -1623,21 +1672,39 @@ label.field,
   font-weight: 500;
 }
 
+.metadata-sync-column-title {
+  font-weight: 600;
+}
+
+.metadata-sync-table-before {
+  color: var(--app-soft);
+}
+
 .metadata-sync-table-after {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   min-width: 0;
   gap: 8px;
   color: var(--app-primary);
   font-weight: 500;
 }
 
-.metadata-sync-table-after > span {
+.metadata-sync-table-after > svg {
+  flex: 0 0 auto;
+  opacity: 0.72;
+}
+
+.metadata-sync-table-after > strong {
   min-width: 0;
   overflow: hidden;
+  color: color-mix(in oklch, var(--app-primary) 84%, var(--app-fg));
+  font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.metadata-sync-table-after > .ant-tag {
+  margin-left: auto;
 }
 
 .metadata-sync-diff-table .is-empty {
@@ -1755,12 +1822,6 @@ label.field,
   min-height: 32px;
   padding-inline: 10px;
   font-size: 12px;
-}
-
-.exif-sidebar-tools summary .ant-tag {
-  min-height: 18px;
-  padding-inline: 6px;
-  font-size: 9px;
 }
 
 .exif-queue-list {

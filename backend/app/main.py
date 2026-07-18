@@ -11,18 +11,22 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import BinaryIO
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.db import Base, SessionLocal, engine, get_db
 from app.exif_utils import (
+    ImageExifData,
+    extract_exif_and_preview_from_file,
     extract_exif_metadata,
     fingerprint_distance,
     image_content_fingerprint,
@@ -1037,6 +1041,22 @@ def hash_bytes(contents: bytes) -> str:
     return digest.hexdigest()
 
 
+def persist_upload_and_build_preview(
+    source: BinaryIO,
+    target_path: Path,
+) -> tuple[str, ImageExifData, bytes | None]:
+    """Persist an upload without duplicating the full image in process memory."""
+    digest = hashlib.sha256()
+    source.seek(0)
+    with target_path.open("wb") as target:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+            target.write(chunk)
+    source.seek(0)
+    metadata, preview_bytes = extract_exif_and_preview_from_file(source)
+    return digest.hexdigest(), metadata, preview_bytes
+
+
 def verify_written_gps(image_bytes: bytes, latitude: float | None, longitude: float | None) -> None:
     """Fail loudly instead of uploading an image whose requested GPS was not written."""
     if latitude is None or longitude is None:
@@ -1842,28 +1862,42 @@ async def upload_images(
     uploaded_images: list[UploadedImageRead] = []
 
     for file in files:
-        contents = await file.read()
-        if not contents:
-            raise HTTPException(status_code=400, detail="图片内容为空。")
-        image_hash = hash_bytes(contents)
-        duplicate_image = await find_duplicate_artifact_image(db, image_hash)
-        if duplicate_image is not None:
-            raise HTTPException(status_code=409, detail=build_duplicate_image_detail(duplicate_image))
-
         suffix = Path(file.filename or "").suffix.lower()
         generated_name = f"{uuid4().hex}{suffix}"
         target_path = UPLOADS_DIR / generated_name
-        target_path.write_bytes(contents)
-        image_metadata = build_image_metadata(image_bytes=contents)
+        image_hash, exif, preview_bytes = await run_in_threadpool(
+            persist_upload_and_build_preview,
+            file.file,
+            target_path,
+        )
+        if target_path.stat().st_size == 0:
+            target_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail="图片内容为空。")
+        duplicate_image = await find_duplicate_artifact_image(db, image_hash)
+        if duplicate_image is not None:
+            target_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=409, detail=build_duplicate_image_detail(duplicate_image))
 
         uploaded_images.append(
             UploadedImageRead(
                 filename=file.filename or generated_name,
                 url=build_uploaded_file_url(generated_name),
+                preview_data_url=(
+                    f"data:image/jpeg;base64,{base64.b64encode(preview_bytes).decode('ascii')}"
+                    if preview_bytes else None
+                ),
                 uploaded_at=datetime.now(timezone.utc),
                 capture_museum_name=None,
                 exhibition_name=None,
-                **image_metadata,
+                camera_model=exif.camera_model,
+                lens_model=exif.lens_model,
+                latitude=exif.latitude,
+                longitude=exif.longitude,
+                captured_at=exif.captured_at,
+                shutter_speed=exif.shutter_speed,
+                aperture=exif.aperture,
+                iso=exif.iso,
+                edit_method=None,
             )
         )
 
@@ -2204,14 +2238,17 @@ async def prepare_artifact_exif_file(
 
 @app.post(f"{settings.api_prefix}/artifacts/extract-exif-file")
 async def extract_artifact_exif_file(file: UploadFile = File(...)) -> dict[str, object | None]:
-    """Read capture metadata before an image enters the review form."""
-    image_bytes = await file.read()
-    if not image_bytes:
+    """Read capture metadata and a compact preview from the spooled upload."""
+    if not file.filename:
         raise HTTPException(status_code=400, detail="图片内容为空。")
-    metadata = extract_exif_metadata(image_bytes)
+    metadata, preview_bytes = await run_in_threadpool(extract_exif_and_preview_from_file, file.file)
     return {
         **metadata.as_dict(),
         "captured_at": metadata.captured_at.isoformat() if metadata.captured_at else None,
+        "preview_data_url": (
+            f"data:image/jpeg;base64,{base64.b64encode(preview_bytes).decode('ascii')}"
+            if preview_bytes else None
+        ),
     }
 
 

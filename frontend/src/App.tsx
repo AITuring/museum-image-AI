@@ -38,6 +38,7 @@ type WebBridgeLoginStart = {
 type UploadedImage = {
   filename: string
   url: string
+  preview_data_url: string | null
   uploaded_at: string
   camera_model: string | null
   lens_model: string | null
@@ -50,6 +51,27 @@ type UploadedImage = {
   aperture: string | null
   iso: number | null
   edit_method: string | null
+}
+
+async function createUploadPlaceholder(file: File) {
+  const canvas = document.createElement("canvas")
+  canvas.width = 640
+  canvas.height = 400
+  const context = canvas.getContext("2d")
+  if (!context) return null
+  context.fillStyle = "#f5f5f4"
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = "#44403c"
+  context.font = "600 30px system-ui, sans-serif"
+  context.fillText(file.name.length > 32 ? `${file.name.slice(0, 29)}...` : file.name, 42, 188)
+  context.fillStyle = "#78716c"
+  context.font = "22px system-ui, sans-serif"
+  const size = file.size >= 1024 ** 2
+    ? `${(file.size / 1024 ** 2).toFixed(1)} MB`
+    : `${Math.max(1, Math.round(file.size / 1024))} KB`
+  context.fillText(`正在生成缩略图 · ${size}`, 42, 232)
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.75))
+  return blob ? URL.createObjectURL(blob) : null
 }
 
 type ArtifactFormState = {
@@ -266,10 +288,6 @@ const STAGE_LABEL: Record<Stage, string> = {
   error: "调用失败",
 }
 
-function toAbsoluteUrl(url: string) {
-  return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
-}
-
 // function normalizeName(value: string) {
 //   return value.trim().toLowerCase()
 // }
@@ -354,6 +372,7 @@ function App() {
   const [loadingHealth, setLoadingHealth] = useState(true)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const previewFileRef = useRef<File | null>(null)
   const [uploadedImage, setUploadedImage] = useState<UploadedImage | null>(null)
   const [dragging, setDragging] = useState(false)
   const [artifactForm, setArtifactForm] = useState<ArtifactFormState>({ ...EMPTY_ARTIFACT_FORM })
@@ -879,13 +898,27 @@ function App() {
   }, [apiBaseUrl, artifactForm.era, artifactForm.museumName, artifactForm.name])
 
   function selectFile(file: File | null) {
+    previewFileRef.current = file
     setSelectedFile(file)
     setPreviewUrl((current) => {
-      if (current) {
+      if (current?.startsWith("blob:")) {
         URL.revokeObjectURL(current)
       }
-      return file ? URL.createObjectURL(file) : null
+      return null
     })
+    if (file) {
+      void createUploadPlaceholder(file).then((placeholderUrl) => {
+        if (!placeholderUrl) return
+        if (previewFileRef.current !== file) {
+          URL.revokeObjectURL(placeholderUrl)
+          return
+        }
+        setPreviewUrl((current) => {
+          if (current?.startsWith("blob:")) URL.revokeObjectURL(current)
+          return placeholderUrl
+        })
+      })
+    }
   }
 
   async function handleUploadFiles(file = selectedFile) {
@@ -909,6 +942,12 @@ function App() {
 
       const image = data[0]
       setUploadedImage(image)
+      if (image.preview_data_url && previewFileRef.current === file) {
+        setPreviewUrl((current) => {
+          if (current?.startsWith("blob:")) URL.revokeObjectURL(current)
+          return image.preview_data_url
+        })
+      }
       setArtifactForm(buildArtifactFormFromImage(image))
       setSelectedCaptureMuseum(null)
       setMuseumSuggestions([])
@@ -1020,7 +1059,7 @@ function App() {
   )
 
   const hasResult = orderedStreams.some((stream) => stream.candidate)
-  const displayPreview = previewUrl ?? (uploadedImage ? toAbsoluteUrl(uploadedImage.url) : null)
+  const displayPreview = previewUrl
   const streamError = orderedStreams.length === 0 && !streaming && uploadedImage ? artifactError : null
   const selectedStream = selectedCandidateKey ? providerStreams[selectedCandidateKey] : null
   const selectedCandidate = selectedStream?.candidate ?? null
@@ -1132,7 +1171,7 @@ function App() {
                 }}
               />
               {displayPreview ? (
-                <img src={displayPreview} alt={uploadedImage?.filename ?? "预览"} />
+                <img src={displayPreview} alt={uploadedImage?.filename ?? "预览"} decoding="async" />
               ) : (
                 <span>
                   <ImagePlus size={20} aria-hidden="true" />
@@ -1207,7 +1246,7 @@ function App() {
                   <h3>疑似同一件</h3>
                   <p className="muted">{matchedArtifact.match_reason} · {Math.round(matchedArtifact.match_score * 100)}%</p>
                 </div>
-                <Tag>{matchedArtifact.artifact.images.length} 图</Tag>
+                <span className="backend-match-count">{matchedArtifact.artifact.images.length} 张历史图片</span>
               </div>
               <div className="backend-match-meta">
                 <span>{matchedArtifact.artifact.name}</span>

@@ -174,6 +174,7 @@ class ArtifactImageAttach(ArtifactImageCreate):
 class UploadedImageRead(BaseModel):
     filename: str
     url: str
+    preview_data_url: str | None = None
     uploaded_at: datetime
     camera_model: str | None = None
     lens_model: str | None = None
