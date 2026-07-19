@@ -453,10 +453,22 @@ function App() {
   }
 
   async function loadHealth() {
+    setLoadingHealth(true)
     try {
-      setLoadingHealth(true)
-      const data = await fetchJson<HealthResponse>(`${apiBaseUrl}/api/health`)
-      setHealth(data)
+      // Vercel's rewrite can occasionally be cold while the cloud backend is
+      // healthy. Avoid presenting a transient proxy timeout as an offline API.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const data = await fetchJson<HealthResponse>(`${apiBaseUrl}/api/health?check=${Date.now()}`, {
+            cache: "no-store",
+          })
+          setHealth(data)
+          return
+        } catch (error) {
+          if (attempt === 1) throw error
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 500))
+        }
+      }
     } catch {
       setHealth(null)
     } finally {

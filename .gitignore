@@ -2,6 +2,9 @@
 .env
 *.log
 
+# Generated local diagnostics and one-off image probes must never enter Git.
+/image.png
+
 frontend/node_modules
 frontend/dist
 
