@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
-import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Table, Tag, Tooltip } from "antd"
+import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Tag, Tooltip } from "antd"
 import {
   ArrowRight,
   Camera,
@@ -13,6 +13,7 @@ import {
   Landmark,
   Loader2,
   MapPin,
+  RefreshCw,
   Sparkles,
   Trash2,
   X,
@@ -154,6 +155,18 @@ type ExifWorkbenchItem = {
   uploadStage: string | null
 }
 
+type PersistedExifDraftItem = Omit<ExifWorkbenchItem, "previewUrl" | "fileHandle"> & {
+  previewUrl?: never
+  fileHandle?: never
+}
+
+type PersistedExifDraft = {
+  version: 1
+  items: PersistedExifDraftItem[]
+  selectedId: string | null
+  sharedForm: FormState
+}
+
 type WritableFileStream = { write(data: Blob): Promise<void>; close(): Promise<void> }
 type WritableFileHandle = {
   kind?: "file"
@@ -183,6 +196,9 @@ type FilePickerWindow = Window & {
 const IMAGE_FILE_PATTERN = /\.(?:jpe?g|png|webp|tiff?)$/i
 const CLIENT_PREVIEW_FILE_LIMIT = 24 * 1024 * 1024
 const TIFF_BROWSER_FALLBACK_MAX_PIXELS = 24_000_000
+const EXIF_DRAFT_DB_NAME = "museum-exif-drafts"
+const EXIF_DRAFT_STORE_NAME = "workbench"
+const EXIF_DRAFT_RECORD_KEY = "active"
 
 function yieldToMainThread() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 0))
@@ -441,6 +457,93 @@ function cloneFormState(form: FormState): FormState {
     ...form,
     tags: [...form.tags],
   }
+}
+
+function openExifDraftDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = window.indexedDB.open(EXIF_DRAFT_DB_NAME, 1)
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(EXIF_DRAFT_STORE_NAME)) {
+        request.result.createObjectStore(EXIF_DRAFT_STORE_NAME)
+      }
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error ?? new Error("无法打开本地草稿存储"))
+  })
+}
+
+async function readExifDraft() {
+  const database = await openExifDraftDatabase()
+  try {
+    return await new Promise<PersistedExifDraft | null>((resolve, reject) => {
+      const request = database.transaction(EXIF_DRAFT_STORE_NAME, "readonly")
+        .objectStore(EXIF_DRAFT_STORE_NAME)
+        .get(EXIF_DRAFT_RECORD_KEY)
+      request.onsuccess = () => resolve((request.result as PersistedExifDraft | undefined) ?? null)
+      request.onerror = () => reject(request.error ?? new Error("读取本地草稿失败"))
+    })
+  } finally {
+    database.close()
+  }
+}
+
+async function writeExifDraft(draft: PersistedExifDraft) {
+  const database = await openExifDraftDatabase()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const request = database.transaction(EXIF_DRAFT_STORE_NAME, "readwrite")
+        .objectStore(EXIF_DRAFT_STORE_NAME)
+        .put(draft, EXIF_DRAFT_RECORD_KEY)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error ?? new Error("保存本地草稿失败"))
+    })
+  } finally {
+    database.close()
+  }
+}
+
+async function clearExifDraft() {
+  const database = await openExifDraftDatabase()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const request = database.transaction(EXIF_DRAFT_STORE_NAME, "readwrite")
+        .objectStore(EXIF_DRAFT_STORE_NAME)
+        .delete(EXIF_DRAFT_RECORD_KEY)
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error ?? new Error("清理本地草稿失败"))
+    })
+  } finally {
+    database.close()
+  }
+}
+
+function serializeExifDraftItem(item: ExifWorkbenchItem): PersistedExifDraftItem {
+  const { previewUrl: _previewUrl, fileHandle: _fileHandle, ...persistedItem } = item
+  return {
+    ...persistedItem,
+    form: cloneFormState(item.form),
+    originalForm: cloneFormState(item.originalForm),
+    candidates: ensureCandidates(item.candidates),
+    unavailableProviders: ensureStringList(item.unavailableProviders),
+    // A directory permission cannot be silently restored after reload. The
+    // photo and its edits are retained; the operator can re-authorize later.
+    submitState: item.submitState === "submitting" ? "error" : item.submitState,
+    submitMessage: item.submitState === "submitting" ? "页面刷新前提交未完成，请确认后重试" : item.submitMessage,
+    uploadProgress: item.submitState === "submitting" ? 0 : item.uploadProgress,
+    uploadStage: item.submitState === "submitting" ? "等待重试" : item.uploadStage,
+  }
+}
+
+async function restoreExifDraftItems(draft: PersistedExifDraftItem[]) {
+  return Promise.all(draft.map(async (item) => ({
+    ...item,
+    form: cloneFormState(item.form),
+    originalForm: cloneFormState(item.originalForm),
+    candidates: ensureCandidates(item.candidates),
+    unavailableProviders: ensureStringList(item.unavailableProviders),
+    fileHandle: null,
+    previewUrl: await createFallbackPreviewUrl(item.localFile),
+  })))
 }
 
 function metadataSyncValue(value: string | string[]) {
@@ -754,6 +857,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const itemsRef = useRef<ExifWorkbenchItem[]>([])
   const locatingDisplayLocationRef = useRef(false)
+  const draftWriteTimerRef = useRef<number | null>(null)
+  const draftStorageFailureRef = useRef(false)
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null)
@@ -781,6 +886,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [parsingFileName, setParsingFileName] = useState(false)
   const [submittingAll, setSubmittingAll] = useState(false)
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
+  const [draftStorageReady, setDraftStorageReady] = useState(false)
 
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedId) ?? null,
@@ -832,6 +938,59 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   )
 
   useEffect(() => { itemsRef.current = items }, [items])
+
+  useEffect(() => {
+    let disposed = false
+    void (async () => {
+      try {
+        // Ask the browser to retain large, unsubmitted image drafts when it
+        // supports persistent storage. A refusal still falls back to IndexedDB.
+        await navigator.storage?.persist?.()
+        const draft = await readExifDraft()
+        if (disposed || !draft || draft.version !== 1 || draft.items.length === 0) return
+        const restoredItems = await restoreExifDraftItems(draft.items)
+        if (disposed) {
+          restoredItems.forEach((item) => revokePreviewUrl(item.previewUrl))
+          return
+        }
+        setItems(restoredItems)
+        setSelectedId(restoredItems.some((item) => item.id === draft.selectedId) ? draft.selectedId : restoredItems[0]?.id ?? null)
+        setSharedForm(cloneFormState(draft.sharedForm))
+        setSubmitNotice({ type: "success", text: `已恢复 ${restoredItems.length} 张未提交图片的本地草稿；如需回写原文件，请重新授权照片文件夹。` })
+      } catch {
+        if (!disposed) setSubmitNotice({ type: "error", text: "本地草稿无法恢复；请重新添加图片。" })
+      } finally {
+        if (!disposed) setDraftStorageReady(true)
+      }
+    })()
+    return () => { disposed = true }
+  }, [])
+
+  useEffect(() => {
+    if (!draftStorageReady) return
+    if (draftWriteTimerRef.current !== null) window.clearTimeout(draftWriteTimerRef.current)
+    const pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
+    draftWriteTimerRef.current = window.setTimeout(() => {
+      const persist = pendingItems.length > 0
+        ? writeExifDraft({
+            version: 1,
+            items: pendingItems.map(serializeExifDraftItem),
+            selectedId: pendingItems.some((item) => item.id === selectedId) ? selectedId : pendingItems[0]?.id ?? null,
+            sharedForm: cloneFormState(sharedForm),
+          })
+        : clearExifDraft()
+      void persist.then(() => {
+        draftStorageFailureRef.current = false
+      }).catch(() => {
+        if (draftStorageFailureRef.current) return
+        draftStorageFailureRef.current = true
+        setSubmitNotice({ type: "error", text: "本地草稿存储空间不足，未提交内容仍保留在当前页面；请先完成部分入库或清理浏览器站点数据。" })
+      })
+    }, 650)
+    return () => {
+      if (draftWriteTimerRef.current !== null) window.clearTimeout(draftWriteTimerRef.current)
+    }
+  }, [draftStorageReady, items, selectedId, sharedForm])
 
   useEffect(() => {
     if (metadataSyncSourceId && items.some((item) => item.id === metadataSyncSourceId)) return
@@ -1057,6 +1216,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setMetadataSyncPreviewOpen(true)
   }
 
+  function syncSelectedMetadataToOthers() {
+    if (!selectedItem || items.length < 2) {
+      setSubmitNotice({ type: "error", text: "至少需要两张图片，才能同步当前照片的信息" })
+      return
+    }
+    setMetadataSyncSourceId(selectedItem.id)
+    setMetadataSyncTargetMode("others")
+    selectMetadataSyncPreset("all")
+    setMetadataSyncPreviewOpen(true)
+  }
+
   function applyMetadataSync() {
     if (!metadataSyncSource || metadataSyncTargets.length === 0) return
     const targetIds = new Set(metadataSyncTargets.map((item) => item.id))
@@ -1241,7 +1411,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       setDirectoryHandle(nextDirectoryHandle)
       setSubmitNotice({
         type: "success",
-        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片，并获得批量原地回写权限`,
+        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片，并获得批量原地回写权限；未提交内容会自动保存在本机浏览器。`,
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return
@@ -1355,7 +1525,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         const seedForm = builtItems.find((item) => hasMeaningfulFormValue(item.form))?.form
         return seedForm ? cloneFormState(seedForm) : current
       })
-      setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片到当前页面，尚未上传 OSS` })
+      setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片到当前页面，尚未上传 OSS；未提交内容会自动保存在本机浏览器。` })
     } catch (error) {
       setSubmitNotice({
         type: "error",
@@ -1509,14 +1679,14 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setSubmitNotice({ type: "success", text: `已采用 ${candidate.provider} 的运行结果` })
   }
 
-  async function submitOne(itemId: string) {
+  async function submitOne(itemId: string): Promise<boolean> {
     const target = items.find((item) => item.id === itemId)
     if (!target) {
-      return
+      return false
     }
     if (target.submitState === "submitted" && changedParts(target).length === 0) {
       setSubmitNotice({ type: "success", text: "该图片已入库且没有新的修改，无需重复提交。" })
-      return
+      return true
     }
     if (!target.form.name.trim() || !target.form.museumName.trim()) {
       updateItem(itemId, (item) => ({
@@ -1524,7 +1694,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         submitState: "error",
         submitMessage: "请先确认名称和馆藏信息",
       }))
-      return
+      return false
     }
 
     updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null, uploadProgress: 8, uploadStage: "正在准备 EXIF 信息" }))
@@ -1628,6 +1798,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         uploadProgress: 100,
         uploadStage: "已完成",
       }))
+      return true
     } catch (error) {
       updateItem(itemId, (item) => ({
         ...item,
@@ -1635,6 +1806,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         submitMessage: error instanceof Error ? error.message : "提交失败",
         uploadStage: "提交失败",
       }))
+      return false
     }
   }
 
@@ -1644,11 +1816,20 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
     setSubmittingAll(true)
     setSubmitNotice(null)
-    for (const item of items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)) {
-      await submitOne(item.id)
+    const pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
+    let succeeded = 0
+    let failed = 0
+    for (const item of pendingItems) {
+      if (await submitOne(item.id)) {
+        succeeded += 1
+      } else {
+        failed += 1
+      }
     }
     setSubmittingAll(false)
-    setSubmitNotice({ type: "success", text: "已完成批量提交，请检查每张图片状态" })
+    setSubmitNotice(failed > 0
+      ? { type: "error", text: `批量提交完成：${succeeded} 张成功，${failed} 张失败。可在队列中点击“重试”后再次提交。` }
+      : { type: "success", text: `已完成批量提交：${succeeded} 张图片已入库。` })
   }
 
   function addTags(rawValue: string) {
@@ -1795,7 +1976,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <strong>{stats.gpsCount}</strong>
               </div>
             </div>
-            <div className="exif-sidebar-tools">
+            <div className="exif-sidebar-scroll">
+              <div className="exif-sidebar-tools">
               <details className="batch-rename-panel">
                 <summary>
                   <span className="exif-tool-summary-copy">
@@ -1962,8 +2144,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   <Button htmlType="button" type="primary" className="exif-tool-submit" onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</Button>
                 </div>
               </details>
-            </div>
-            <div className="exif-queue-list">
+              </div>
+              <div className="exif-queue-list">
               {items.length > 0 ? items.map((item) => (
                 <div key={item.id} className="exif-queue-item-shell">
                   <Button
@@ -2010,8 +2192,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                                 : "待处理"}
                       </Tag>
                       {changedParts(item).length > 0 ? (
-                        <span className="queue-change-list" aria-label="待提交的变更">
-                          {changedParts(item).map((part) => <b key={part}>{part}已改</b>)}
+                        <span className="queue-change-summary" aria-label={`待提交的变更：${changedParts(item).join("、")}`}>
+                          已修改：{changedParts(item).join("、")}
                         </span>
                       ) : null}
                       {item.submitState === "submitting" ? (
@@ -2022,6 +2204,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       ) : null}
                     </div>
                   </Button>
+                  {item.submitState === "error" ? (
+                    <Button
+                      htmlType="button"
+                      type="text"
+                      size="small"
+                      className="exif-retry"
+                      icon={<RefreshCw size={13} strokeWidth={2} aria-hidden="true" />}
+                      onClick={() => void submitOne(item.id)}
+                    >
+                      重试
+                    </Button>
+                  ) : null}
                   <Button
                     htmlType="button"
                     type="text"
@@ -2035,6 +2229,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </Button>
                 </div>
               )) : <p className="muted">还没有图片，先上传一批图片开始处理。</p>}
+              </div>
             </div>
           </div>
         </section>
@@ -2492,11 +2687,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 </div>
                 <Button
                   htmlType="button"
+                  onClick={syncSelectedMetadataToOthers}
+                  disabled={items.length < 2 || selectedItem.submitState === "submitting"}
+                >
+                  同步到其他照片
+                </Button>
+                <Button
+                  htmlType="button"
                   type="primary"
                   onClick={() => void submitOne(selectedItem.id)}
                   disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}
                 >
-                  {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : "保存并入库"}
+                  {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : selectedItem.submitState === "error" ? "重试入库" : "保存并入库"}
                 </Button>
               </div>
             </form>
@@ -2550,7 +2752,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             <div className="metadata-sync-no-change">来源照片与目标照片在所选范围内没有差异。</div>
           ) : (
             <div className="metadata-sync-preview-targets">
-              {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).slice(0, 4).map(({ target, rows }) => (
+              {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).map(({ target, rows }) => (
                 <section key={target.id} className="metadata-sync-preview-target">
                   <header>
                     <img src={target.previewUrl} alt="" loading="lazy" decoding="async" />
@@ -2559,50 +2761,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <span className="metadata-sync-target-change-count">{rows.length} 项将变更</span>
                     </div>
                   </header>
-                  <Table<MetadataSyncDiffRow>
-                    className="metadata-sync-diff-table"
-                    size="small"
-                    pagination={false}
-                    rowKey="label"
-                    dataSource={rows}
-                    tableLayout="fixed"
-                    columns={[
-                      {
-                        title: "字段",
-                        dataIndex: "label",
-                        key: "label",
-                        width: 120,
-                        render: (value: string) => <strong className="metadata-sync-table-field">{value}</strong>,
-                      },
-                      {
-                        title: <span className="metadata-sync-column-title">同步前</span>,
-                        dataIndex: "targetValue",
-                        key: "targetValue",
-                        render: (value: string) => (
-                          <span className={`metadata-sync-table-before ${value === "未填写" ? "is-empty" : ""}`} title={value}>{value}</span>
-                        ),
-                      },
-                      {
-                        title: <span className="metadata-sync-column-title is-after">同步后</span>,
-                        dataIndex: "sourceValue",
-                        key: "sourceValue",
-                        render: (value: string, row) => (
-                          <span className={`metadata-sync-table-after ${value === "未填写" ? "is-empty" : ""}`} title={value}>
-                            <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
-                            <strong>{value}</strong>
-                            {row.willClearTarget ? <Tag color="warning">将清空</Tag> : null}
-                          </span>
-                        ),
-                      },
-                    ]}
-                  />
+                  <div className="metadata-sync-diff-list" role="table" aria-label={`${target.fileName} 的同步差异`}>
+                    <div className="metadata-sync-diff-row is-head" role="row">
+                      <span role="columnheader">字段</span>
+                      <span role="columnheader">同步前</span>
+                      <span role="columnheader">同步后</span>
+                    </div>
+                    {rows.map((row) => (
+                      <div key={row.label} className="metadata-sync-diff-row" role="row">
+                        <strong className="metadata-sync-table-field" role="cell">{row.label}</strong>
+                        <span className={`metadata-sync-table-before ${row.targetValue === "未填写" ? "is-empty" : ""}`} title={row.targetValue} role="cell">
+                          {row.targetValue}
+                        </span>
+                        <span className={`metadata-sync-table-after ${row.sourceValue === "未填写" ? "is-empty" : ""}`} title={row.sourceValue} role="cell">
+                          <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
+                          <strong>{row.sourceValue}</strong>
+                          {row.willClearTarget ? <Tag color="warning">将清空</Tag> : null}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </section>
               ))}
-              {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).length > 4 ? (
-                <p className="muted metadata-sync-more-targets">
-                  另有 {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).length - 4} 张目标照片将在确认后同步。
-                </p>
-              ) : null}
             </div>
           )}
           {metadataSyncDiffs.some((entry) => entry.rows.some((row) => row.willClearTarget)) ? (

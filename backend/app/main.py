@@ -1322,19 +1322,46 @@ async def submit_artifact_to_cloud(
     if existing_artifact_id is not None:
         submit_data["existing_artifact_id"] = str(existing_artifact_id)
 
+    cloud_url = f"{base}{settings.api_prefix}/ingest/artifacts"
     try:
         async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                f"{base}{settings.api_prefix}/ingest/artifacts",
-                files={"image": (image_name, image_bytes, content_type)},
-                data=submit_data,
-                headers={"Authorization": f"Bearer {settings.ingest_token}"},
-            )
-            if not response.is_success:
-                raise HTTPException(
-                    status_code=response.status_code,
-                    detail=f"提交云端失败：{extract_http_error_detail(response)}",
-                )
+            for attempt in range(2):
+                try:
+                    response = await client.post(
+                        cloud_url,
+                        files={"image": (image_name, image_bytes, content_type)},
+                        data=submit_data,
+                        headers={"Authorization": f"Bearer {settings.ingest_token}"},
+                    )
+                except httpx.RequestError as exc:
+                    if attempt == 0:
+                        logger.warning("cloud ingest connection failed for %s; retrying once: %s", image_name, exc)
+                        await asyncio.sleep(0.8)
+                        continue
+                    raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
+
+                if response.status_code in {502, 503, 504} and attempt == 0:
+                    logger.warning(
+                        "cloud ingest returned HTTP %s for %s; retrying once. response=%s",
+                        response.status_code,
+                        image_name,
+                        response.text[:2000],
+                    )
+                    await asyncio.sleep(0.8)
+                    continue
+                if not response.is_success:
+                    detail = extract_http_error_detail(response)
+                    logger.error(
+                        "cloud ingest failed for %s with HTTP %s: %s",
+                        image_name,
+                        response.status_code,
+                        detail,
+                    )
+                    raise HTTPException(
+                        status_code=response.status_code,
+                        detail=f"提交云端失败：{detail}",
+                    )
+                break
     except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
         if isinstance(exc, HTTPException):
             raise exc
