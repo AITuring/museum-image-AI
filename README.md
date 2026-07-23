@@ -38,6 +38,7 @@ Backend health: <http://localhost:8000/api/health\>
 - PostgreSQL connection and basic tables
 - Museum, artifact, tag, and multi-image APIs
 - Frontend dashboard to confirm the stack is wired up
+- 独立全球展览目录：按年份/地域浏览，数据从 iMuseum 公开页面每日增量同步
 
 ## Data Model
 
@@ -45,6 +46,33 @@ Backend health: <http://localhost:8000/api/health\>
 - `artifacts`: 文物主表，包含 `id`、`name`、`era`、`museum_id`、`description`
 - `artifact_tags`: 文物标签表，一个文物可关联多个标签
 - `artifact_images`: 图片表，一个文物可关联多张图片，图片记录包含 `id`、`url`、`artifact_id`
+
+展览目录使用独立 PostgreSQL 数据库 `museum_exhibition_db`，对应独立数据卷，
+不与文物入库业务表混放。核心表为 `catalog_exhibitions` 与
+`exhibition_sync_runs`。
+
+## 全球展览目录同步
+
+云端后端会在每天北京时间 `03:20` 执行增量同步。同步器遵守
+`art.icity.ly/robots.txt` 暴露的官方 sitemap：刷新仍在进行、即将开始和常设展，
+并按批次回填尚未入库的历史详情。目录只保存展览元数据、来源链接、封面链接和来源页
+公开摘要，不下载或复制详情页全文。
+
+首次部署后可在后端容器中一次性完成全部历史回填：
+
+```bash
+docker compose exec backend python scripts/sync_exhibitions.py --mode full
+```
+
+日常增量或继续分批回填：
+
+```bash
+docker compose exec backend python scripts/sync_exhibitions.py --mode incremental
+```
+
+也可以调用 `POST /api/exhibition-catalog/sync?mode=incremental` 启动任务；写操作沿用
+`Authorization: Bearer <INGEST_TOKEN>` 鉴权。查询接口为
+`GET /api/exhibition-catalog`，支持 `year`、`region`、`city`、`status`、`q` 和分页参数。
 
 接口返回时支持两种视角：
 

@@ -6,6 +6,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     api_prefix: str = "/api"
     database_url: str = "postgresql+psycopg://museum:museum123@postgres:5432/museum_image_db"
+    exhibition_database_url: str = (
+        "postgresql+psycopg://museum:museum123@exhibitions-postgres:5432/museum_exhibition_db"
+    )
     cors_origins: str = "http://localhost:5173"
     dashscope_api_key: str = ""
     dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -104,6 +107,16 @@ class Settings(BaseSettings):
     # Public base URL for stored objects. Leave empty to derive from bucket+endpoint;
     # set to a custom domain / CDN if configured.
     oss_public_base_url: str = ""
+
+    # ── Global exhibition catalog (separate PostgreSQL database) ────────────────
+    exhibition_sync_enabled: bool = True
+    exhibition_sync_hour: int = 3
+    exhibition_sync_minute: int = 20
+    exhibition_sync_timezone: str = "Asia/Shanghai"
+    exhibition_sync_backfill_batch_size: int = 1000
+    exhibition_sync_concurrency: int = 4
+    exhibition_sync_request_timeout_seconds: int = 30
+    exhibition_sync_user_agent: str = "MuseumImageDB-ExhibitionCatalog/1.0"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

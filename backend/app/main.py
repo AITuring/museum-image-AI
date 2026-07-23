@@ -27,6 +27,26 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
 from app.db import Base, SessionLocal, engine, get_db
+from app.exhibition_db import (
+    ExhibitionSessionLocal,
+    get_exhibition_db,
+    initialize_exhibition_database,
+)
+from app.exhibition_models import CatalogExhibition, ExhibitionSyncRun
+from app.exhibition_schemas import (
+    ExhibitionCatalogItemRead,
+    ExhibitionCatalogDetailRead,
+    ExhibitionCatalogListRead,
+    ExhibitionFacetRead,
+    ExhibitionSyncAcceptedRead,
+    ExhibitionSyncRunRead,
+    ExhibitionYearFacetRead,
+)
+from app.exhibition_service import (
+    exhibition_catalog_count,
+    exhibition_sync_coordinator,
+    latest_sync_run,
+)
 from app.exif_utils import (
     ImageExifData,
     extract_exif_and_preview_from_file,
@@ -562,8 +582,25 @@ async def lifespan(_: FastAPI):
         Base.metadata.create_all(bind=connection)
         run_startup_migrations(connection)
         sync_reference_options(connection)
+    exhibition_catalog_ready = False
+    try:
+        initialize_exhibition_database()
+        exhibition_catalog_ready = True
+    except Exception:
+        logger.warning(
+            "exhibition catalog database is unavailable; catalog API will recover when it is online",
+            exc_info=True,
+        )
     cleanup_existing_content_duplicates()
-    yield
+    if settings.exhibition_sync_enabled and exhibition_catalog_ready:
+        exhibition_sync_coordinator.start_scheduler()
+        with ExhibitionSessionLocal() as exhibition_db:
+            if exhibition_catalog_count(exhibition_db) == 0:
+                exhibition_sync_coordinator.start(mode="incremental", trigger="bootstrap")
+    try:
+        yield
+    finally:
+        await exhibition_sync_coordinator.stop()
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -3209,6 +3246,192 @@ async def submit_pending(
         duplicate_image_replaced=bool(created.get("duplicate_image_replaced")),
         duplicate_image_detail=created.get("duplicate_image_detail"),
     )
+
+
+@app.get(
+    f"{settings.api_prefix}/exhibition-catalog",
+    response_model=ExhibitionCatalogListRead,
+)
+def list_exhibition_catalog(
+    q: str | None = Query(default=None),
+    year: int | None = Query(default=None, ge=1800, le=2200),
+    region: str | None = Query(default=None),
+    city: str | None = Query(default=None),
+    status: str | None = Query(default=None, pattern="^(ongoing|upcoming|ended|permanent)$"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=36, ge=1, le=100),
+    db: Session = Depends(get_exhibition_db),
+) -> ExhibitionCatalogListRead:
+    today = datetime.now().date()
+    filters = []
+    if q and q.strip():
+        like = f"%{q.strip()}%"
+        filters.append(
+            or_(
+                CatalogExhibition.title.ilike(like),
+                CatalogExhibition.venue.ilike(like),
+                CatalogExhibition.address.ilike(like),
+                CatalogExhibition.city.ilike(like),
+            )
+        )
+    if year is not None:
+        filters.append(
+            CatalogExhibition.start_year.is_not(None)
+            & (CatalogExhibition.start_year <= year)
+            & (
+                (CatalogExhibition.end_year >= year)
+                | CatalogExhibition.end_year.is_(None)
+            )
+        )
+    if region and region.strip():
+        filters.append(CatalogExhibition.region == region.strip())
+    if city and city.strip():
+        filters.append(CatalogExhibition.city == city.strip())
+    if status == "permanent":
+        filters.append(CatalogExhibition.is_permanent.is_(True))
+    elif status == "upcoming":
+        filters.extend(
+            [
+                CatalogExhibition.is_permanent.is_(False),
+                CatalogExhibition.start_date > today,
+            ]
+        )
+    elif status == "ended":
+        filters.extend(
+            [
+                CatalogExhibition.is_permanent.is_(False),
+                CatalogExhibition.end_date < today,
+            ]
+        )
+    elif status == "ongoing":
+        filters.extend(
+            [
+                CatalogExhibition.is_permanent.is_(False),
+                or_(
+                    CatalogExhibition.start_date.is_(None),
+                    CatalogExhibition.start_date <= today,
+                ),
+                or_(
+                    CatalogExhibition.end_date.is_(None),
+                    CatalogExhibition.end_date >= today,
+                ),
+            ]
+        )
+
+    filtered = select(CatalogExhibition)
+    count_query = select(func.count()).select_from(CatalogExhibition)
+    for condition in filters:
+        filtered = filtered.where(condition)
+        count_query = count_query.where(condition)
+    filtered = filtered.order_by(
+        CatalogExhibition.start_date.desc().nulls_last(),
+        CatalogExhibition.synced_at.desc(),
+        CatalogExhibition.id.desc(),
+    )
+    items = list(
+        db.scalars(
+            filtered.offset((page - 1) * page_size).limit(page_size)
+        )
+    )
+    total = int(db.scalar(count_query) or 0)
+
+    year_rows = db.execute(
+        select(CatalogExhibition.start_year, func.count())
+        .where(CatalogExhibition.start_year.is_not(None))
+        .group_by(CatalogExhibition.start_year)
+        .order_by(CatalogExhibition.start_year.desc())
+    )
+    region_rows = db.execute(
+        select(CatalogExhibition.region, func.count())
+        .group_by(CatalogExhibition.region)
+        .order_by(func.count().desc(), CatalogExhibition.region.asc())
+    )
+    city_query = select(CatalogExhibition.city, func.count()).group_by(
+        CatalogExhibition.city
+    )
+    if region and region.strip():
+        city_query = city_query.where(CatalogExhibition.region == region.strip())
+    city_rows = db.execute(
+        city_query.order_by(func.count().desc(), CatalogExhibition.city.asc())
+    )
+    last_synced_at = db.scalar(select(func.max(CatalogExhibition.synced_at)))
+    latest_run = latest_sync_run(db)
+    remaining = None
+    if latest_run and latest_run.discovered:
+        remaining = max(0, latest_run.discovered - exhibition_catalog_count(db))
+
+    return ExhibitionCatalogListRead(
+        items=[ExhibitionCatalogItemRead.model_validate(item) for item in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+        years=[
+            ExhibitionYearFacetRead(year=int(row[0]), count=int(row[1]))
+            for row in year_rows
+            if row[0] is not None
+        ],
+        regions=[
+            ExhibitionFacetRead(value=str(row[0]), count=int(row[1]))
+            for row in region_rows
+        ],
+        cities=[
+            ExhibitionFacetRead(value=str(row[0]), count=int(row[1]))
+            for row in city_rows
+        ],
+        last_synced_at=last_synced_at,
+        backfill_remaining=remaining,
+    )
+
+
+@app.get(
+    f"{settings.api_prefix}/exhibition-catalog/sync",
+    response_model=ExhibitionSyncRunRead | None,
+)
+def get_exhibition_sync_status(
+    db: Session = Depends(get_exhibition_db),
+) -> ExhibitionSyncRun | None:
+    return latest_sync_run(db)
+
+
+@app.post(
+    f"{settings.api_prefix}/exhibition-catalog/sync",
+    response_model=ExhibitionSyncAcceptedRead,
+    status_code=202,
+)
+def start_exhibition_sync(
+    mode: str = Query(default="incremental", pattern="^(incremental|full)$"),
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_exhibition_db),
+) -> ExhibitionSyncAcceptedRead:
+    require_ingest_token(authorization)
+    accepted = exhibition_sync_coordinator.start(
+        mode=mode,  # type: ignore[arg-type]
+        trigger="manual",
+    )
+    current_run = latest_sync_run(db)
+    return ExhibitionSyncAcceptedRead(
+        accepted=accepted,
+        detail="同步任务已启动。" if accepted else "已有同步任务正在运行。",
+        run=(
+            ExhibitionSyncRunRead.model_validate(current_run)
+            if current_run is not None
+            else None
+        ),
+    )
+
+
+@app.get(
+    f"{settings.api_prefix}/exhibition-catalog/{{exhibition_id}}",
+    response_model=ExhibitionCatalogDetailRead,
+)
+def get_exhibition_catalog_detail(
+    exhibition_id: int,
+    db: Session = Depends(get_exhibition_db),
+) -> ExhibitionCatalogDetailRead:
+    item = db.get(CatalogExhibition, exhibition_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Exhibition not found")
+    return ExhibitionCatalogDetailRead.model_validate(item)
 
 
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])

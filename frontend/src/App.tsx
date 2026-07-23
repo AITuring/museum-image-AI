@@ -8,6 +8,7 @@ const BatchConsole = lazy(() => import("./BatchConsole"))
 const ExifConsole = lazy(() => import("./ExifConsole"))
 const Gallery = lazy(() => import("./Gallery"))
 const MuseumBrowser = lazy(() => import("./MuseumBrowser"))
+const ExhibitionCatalog = lazy(() => import("./ExhibitionCatalog"))
 
 type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>
 
@@ -216,7 +217,7 @@ const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? 
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
 
-type View = "single" | "batch" | "exif" | "gallery" | "museums"
+type View = "single" | "batch" | "exif" | "gallery" | "museums" | "exhibitions"
 
 const VIEW_PATHS: Record<View, string> = {
   single: "/single",
@@ -224,6 +225,7 @@ const VIEW_PATHS: Record<View, string> = {
   exif: "/photo-exif",
   gallery: "/gallery",
   museums: "/museums",
+  exhibitions: "/exhibitions",
 }
 
 const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
@@ -232,10 +234,11 @@ const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
   { view: "batch", label: "相册同步", cloudVisible: false },
   { view: "gallery", label: "图库", cloudVisible: true },
   { view: "museums", label: "场馆", cloudVisible: true },
+  { view: "exhibitions", label: "展览", cloudVisible: true },
 ]
 
 function isViewAvailable(view: View) {
-  return !cloudOnly || view === "gallery" || view === "museums"
+  return !cloudOnly || view === "gallery" || view === "museums" || view === "exhibitions"
 }
 
 function getDefaultView(): View {
@@ -244,6 +247,9 @@ function getDefaultView(): View {
 
 function normalizeViewFromPath(pathname: string): View {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/"
+  if (/^\/exhibitions\/\d+$/.test(normalizedPath)) {
+    return "exhibitions"
+  }
   const matched = (Object.entries(VIEW_PATHS) as Array<[View, string]>).find(
     ([, path]) => path === normalizedPath,
   )?.[0]
@@ -416,6 +422,7 @@ function App() {
     if (window.location.pathname !== targetPath) {
       const method = options?.replace ? "replaceState" : "pushState"
       window.history[method]({}, "", targetPath)
+      window.dispatchEvent(new PopStateEvent("popstate"))
     }
   }, [])
 
@@ -729,7 +736,10 @@ function App() {
   useEffect(() => {
     const normalizedView = normalizeViewFromPath(window.location.pathname)
     const targetPath = getPathForView(normalizedView)
-    if (window.location.pathname !== targetPath) {
+    const isExhibitionDetailPath =
+      normalizedView === "exhibitions"
+      && /^\/exhibitions\/\d+\/?$/.test(window.location.pathname)
+    if (window.location.pathname !== targetPath && !isExhibitionDetailPath) {
       window.history.replaceState({}, "", targetPath)
     }
 
@@ -1135,6 +1145,8 @@ function App() {
         {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 
         {view === "museums" ? <MuseumBrowser apiBaseUrl={apiBaseUrl} /> : null}
+
+        {view === "exhibitions" ? <ExhibitionCatalog apiBaseUrl={apiBaseUrl} /> : null}
 
         {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 

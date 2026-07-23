@@ -1,0 +1,710 @@
+.exhibition-catalog {
+  min-height: calc(100vh - 47px);
+  padding: 30px 34px 64px;
+  background:
+    radial-gradient(circle at 8% 0%, rgb(132 102 58 / 0.055), transparent 28%),
+    var(--ui-canvas);
+}
+
+.exhibition-hero {
+  display: flex;
+  max-width: 1480px;
+  margin: 0 auto 22px;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.exhibition-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: #8a6e48;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.exhibition-hero h2 {
+  margin: 0;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: clamp(28px, 3vw, 42px);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+}
+
+.exhibition-hero p {
+  margin: 8px 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+}
+
+.exhibition-sync-meta {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+}
+
+.exhibition-sync-meta a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ui-text-secondary);
+  text-decoration: none;
+}
+
+.exhibition-toolbar {
+  position: sticky;
+  top: 47px;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(130px, 180px));
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 10px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.9);
+  box-shadow: 0 8px 28px rgb(20 18 14 / 0.045);
+  backdrop-filter: blur(14px);
+  gap: 8px;
+}
+
+.exhibition-search {
+  min-width: 0;
+}
+
+.exhibition-layout {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  max-width: 1480px;
+  margin: 24px auto 0;
+  gap: 28px;
+}
+
+.exhibition-year-rail {
+  align-self: start;
+  position: sticky;
+  top: 112px;
+}
+
+.exhibition-year-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+}
+
+.exhibition-year-heading button,
+.exhibition-year-list button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.exhibition-year-heading button {
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.exhibition-year-heading button.active {
+  color: var(--ui-text-primary);
+}
+
+.exhibition-year-list {
+  display: grid;
+  overflow: auto;
+  max-height: calc(100vh - 165px);
+  padding-right: 5px;
+  gap: 2px;
+}
+
+.exhibition-year-list button {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.exhibition-year-list button:hover {
+  background: rgb(255 255 255 / 0.65);
+}
+
+.exhibition-year-list button.active {
+  background: var(--ui-text-primary);
+  color: white;
+}
+
+.exhibition-year-list strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.exhibition-year-list span {
+  opacity: 0.6;
+  font-size: 10px;
+}
+
+.exhibition-results {
+  min-width: 0;
+}
+
+.exhibition-result-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-result-summary strong {
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 19px;
+  font-weight: 600;
+}
+
+.exhibition-result-summary span {
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+}
+
+.exhibition-region-group {
+  margin-top: 26px;
+}
+
+.exhibition-region-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 11px;
+}
+
+.exhibition-region-title h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+}
+
+.exhibition-region-title span {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+}
+
+.exhibition-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.exhibition-card {
+  overflow: hidden;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 9px;
+  background: var(--ui-surface-default);
+  box-shadow: 0 2px 9px rgb(20 18 14 / 0.025);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.exhibition-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 28px rgb(20 18 14 / 0.075);
+}
+
+.exhibition-cover {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  background: #e8e5df;
+}
+
+.exhibition-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 300ms ease;
+}
+
+.exhibition-card:hover .exhibition-cover img {
+  transform: scale(1.025);
+}
+
+.exhibition-cover-placeholder {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: #938a7f;
+  background: linear-gradient(145deg, #ebe8e2, #dad6cf);
+}
+
+.exhibition-status {
+  position: absolute;
+  top: 9px;
+  left: 9px;
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: rgb(24 24 24 / 0.78);
+  color: white;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(8px);
+}
+
+.exhibition-status.ongoing {
+  background: rgb(41 107 71 / 0.88);
+}
+
+.exhibition-status.upcoming {
+  background: rgb(130 88 35 / 0.88);
+}
+
+.exhibition-status.ended {
+  background: rgb(70 70 70 / 0.76);
+}
+
+.exhibition-card-body {
+  padding: 13px 14px 12px;
+}
+
+.exhibition-location {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: #816b4c;
+  font-size: 10px;
+}
+
+.exhibition-location span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-card h4 {
+  min-height: 43px;
+  margin: 8px 0 5px;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.38;
+}
+
+.exhibition-card h4 a {
+  display: -webkit-box;
+  overflow: hidden;
+  text-decoration: none;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.exhibition-date {
+  color: var(--ui-text-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+
+.exhibition-card-body > p {
+  display: -webkit-box;
+  overflow: hidden;
+  min-height: 36px;
+  margin: 10px 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.exhibition-card-foot {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--ui-line-subtle);
+  color: var(--ui-text-tertiary);
+  font-size: 9px;
+}
+
+.exhibition-card-foot > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-card-foot a {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding-left: 8px;
+}
+
+.exhibition-state {
+  display: flex;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.exhibition-state.error {
+  color: var(--ui-danger);
+}
+
+.exhibition-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0 0;
+}
+
+.exhibition-detail,
+.exhibition-detail-state {
+  min-height: calc(100vh - 47px);
+  background: var(--ui-canvas);
+}
+
+.exhibition-detail {
+  padding: 22px 34px 72px;
+}
+
+.exhibition-detail-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.exhibition-detail-state.error {
+  color: var(--ui-danger);
+}
+
+.exhibition-detail-back {
+  display: inline-flex;
+  max-width: 1480px;
+  margin: 0 auto 14px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  gap: 6px;
+}
+
+.exhibition-detail-back:hover {
+  color: var(--ui-text-primary);
+}
+
+.exhibition-detail-hero {
+  position: relative;
+  overflow: hidden;
+  max-width: 1480px;
+  height: min(58vh, 610px);
+  min-height: 390px;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #d8d4cd;
+}
+
+.exhibition-detail-hero > img,
+.exhibition-detail-cover-placeholder {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exhibition-detail-cover-placeholder {
+  display: grid;
+  place-items: center;
+  color: #8d857a;
+  background: linear-gradient(145deg, #e9e5de, #cbc5bb);
+}
+
+.exhibition-detail-hero-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 28%, rgb(9 8 7 / 0.78) 100%);
+}
+
+.exhibition-detail-heading {
+  position: absolute;
+  right: clamp(24px, 5vw, 72px);
+  bottom: clamp(24px, 5vw, 62px);
+  left: clamp(24px, 5vw, 72px);
+  max-width: 920px;
+  color: white;
+}
+
+.exhibition-detail-heading > div {
+  display: flex;
+  align-items: center;
+  margin-bottom: 13px;
+  gap: 10px;
+}
+
+.exhibition-detail-status {
+  padding: 5px 8px;
+  border: 1px solid rgb(255 255 255 / 0.28);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.15);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  backdrop-filter: blur(10px);
+}
+
+.exhibition-detail-status.ongoing {
+  background: rgb(37 112 71 / 0.78);
+}
+
+.exhibition-detail-region {
+  font-size: 11px;
+  opacity: 0.82;
+}
+
+.exhibition-detail-heading h2 {
+  max-width: 980px;
+  margin: 0;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: clamp(32px, 5vw, 66px);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+  text-shadow: 0 3px 20px rgb(0 0 0 / 0.2);
+}
+
+.exhibition-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  max-width: 1240px;
+  margin: 44px auto 0;
+  gap: clamp(36px, 7vw, 96px);
+}
+
+.exhibition-detail-main {
+  min-width: 0;
+}
+
+.exhibition-detail-intro h3,
+.exhibition-detail-section-title h3 {
+  margin: 4px 0 22px;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 25px;
+  font-weight: 600;
+}
+
+.exhibition-detail-intro p {
+  margin: 0 0 18px;
+  color: #353431;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 16px;
+  line-height: 1.95;
+}
+
+.exhibition-detail-gallery {
+  margin-top: 48px;
+  padding-top: 35px;
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-detail-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.exhibition-detail-image-grid img {
+  width: 100%;
+  max-height: 680px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #ebe8e2;
+}
+
+.exhibition-detail-image-grid img:nth-child(3n + 1) {
+  grid-column: 1 / -1;
+}
+
+.exhibition-detail-aside {
+  align-self: start;
+  position: sticky;
+  top: 78px;
+  padding: 20px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.84);
+  box-shadow: 0 8px 28px rgb(20 18 14 / 0.04);
+}
+
+.exhibition-detail-aside dl {
+  display: grid;
+  margin: 0;
+  gap: 0;
+}
+
+.exhibition-detail-aside dl > div {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-detail-aside dl > div:first-child {
+  padding-top: 0;
+}
+
+.exhibition-detail-aside dt {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  gap: 6px;
+}
+
+.exhibition-detail-aside dd {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.exhibition-source-button {
+  display: flex;
+  min-height: 36px;
+  margin-top: 17px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--ui-text-primary);
+  color: white;
+  font-size: 11px;
+  text-decoration: none;
+  gap: 7px;
+}
+
+.exhibition-source-button:hover {
+  background: #333;
+  color: white;
+}
+
+.exhibition-detail-sync {
+  display: block;
+  margin-top: 10px;
+  color: var(--ui-text-tertiary);
+  font-size: 9px;
+  text-align: center;
+}
+
+@media (max-width: 1080px) {
+  .exhibition-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .exhibition-detail-layout {
+    grid-template-columns: minmax(0, 1fr) 270px;
+    gap: 40px;
+  }
+}
+
+@media (max-width: 760px) {
+  .exhibition-catalog {
+    padding: 20px 14px 44px;
+  }
+
+  .exhibition-hero {
+    display: grid;
+  }
+
+  .exhibition-sync-meta {
+    justify-items: start;
+  }
+
+  .exhibition-toolbar {
+    position: static;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .exhibition-search {
+    grid-column: 1 / -1;
+  }
+
+  .exhibition-layout {
+    display: block;
+    margin-top: 18px;
+  }
+
+  .exhibition-year-rail {
+    position: static;
+    margin-bottom: 16px;
+  }
+
+  .exhibition-year-list {
+    display: flex;
+    max-height: none;
+    padding-bottom: 4px;
+  }
+
+  .exhibition-year-list button {
+    min-width: 72px;
+    gap: 8px;
+  }
+
+  .exhibition-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .exhibition-detail {
+    padding: 15px 14px 44px;
+  }
+
+  .exhibition-detail-hero {
+    min-height: 430px;
+    border-radius: 9px;
+  }
+
+  .exhibition-detail-heading h2 {
+    font-size: 34px;
+  }
+
+  .exhibition-detail-layout {
+    display: flex;
+    margin-top: 28px;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .exhibition-detail-aside {
+    position: static;
+    order: -1;
+    width: 100%;
+  }
+
+  .exhibition-detail-image-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .exhibition-detail-image-grid img:nth-child(3n + 1) {
+    grid-column: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exhibition-card,
+  .exhibition-cover img {
+    transition: none;
+  }
+}

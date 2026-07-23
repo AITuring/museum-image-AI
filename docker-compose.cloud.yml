@@ -23,6 +23,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  exhibitions-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: museum-cloud-exhibitions-postgres
+    environment:
+      POSTGRES_DB: ${EXHIBITION_POSTGRES_DB:-museum_exhibition_db}
+      POSTGRES_USER: ${POSTGRES_USER:-museum}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-museum123}
+    volumes:
+      - exhibition_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-museum} -d ${EXHIBITION_POSTGRES_DB:-museum_exhibition_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     container_name: museum-cloud-backend
@@ -31,6 +47,7 @@ services:
     environment:
       APP_ROLE: cloud
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://museum:museum123@postgres:5432/museum_image_db}
+      EXHIBITION_DATABASE_URL: ${EXHIBITION_DATABASE_URL:-postgresql+psycopg://museum:museum123@exhibitions-postgres:5432/museum_exhibition_db}
       APP_ENV: ${APP_ENV:-production}
     # Cloud role does not need Chrome/Xvfb — run uvicorn directly.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
@@ -43,8 +60,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      exhibitions-postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   postgres_data:
+  exhibition_postgres_data:
   backend_data:
