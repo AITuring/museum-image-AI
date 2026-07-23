@@ -5,12 +5,19 @@ import "./styles/gallery.css"
 import {
   Aperture,
   Building2,
+  CalendarRange,
   Camera,
+  CircleDot,
   Clock3,
+  FileText,
+  Gauge,
+  History,
+  Images,
   MapPin,
   Search,
-  Sparkles,
+  SlidersHorizontal,
   Tag as TagIcon,
+  Timer,
   X,
 } from "lucide-react"
 import GalleryImagePreview from "./GalleryImagePreview"
@@ -925,9 +932,15 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
               </div>
               <div className="gallery-meta">
                 <strong className="gallery-title">{artifact.name}</strong>
-                <span className="gallery-line">时代：{artifact.era || "待确认"}</span>
-                <span className="gallery-line">馆藏：{artifact.museum_name || "待识别"}</span>
-                <span className="gallery-line">图片：{artifact.images.length} 张</span>
+                <div className="gallery-card-meta-row">
+                  <span className="gallery-card-context">
+                    {artifact.era || "待确认"} · {artifact.museum_name || "待识别"}
+                  </span>
+                  <span className="gallery-card-image-count">
+                    <Images size={13} aria-hidden="true" />
+                    <span>{artifact.images.length} 张</span>
+                  </span>
+                </div>
               </div>
             </button>
           )
@@ -937,7 +950,10 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       {active
         ? createPortal(
             <div className="gallery-modal" onClick={() => !editing && setActive(null)}>
-              <div className="gallery-modal-body" onClick={(e) => e.stopPropagation()}>
+              <div
+                className={`gallery-modal-body ${editing ? "is-editing" : "is-reading"}`}
+                onClick={(e) => e.stopPropagation()}
+              >
                 {(() => {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
                   const editFormId = `gallery-edit-form-${active.id}`
@@ -1071,7 +1087,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               <div className="form-fields">
                                 <section className="form-section">
                                   <div className="form-section-head">
-                                    <span className="form-section-kicker">文物记录</span>
                                     <h3>基本信息</h3>
                                   </div>
                                   <div className="form-section-body">
@@ -1133,30 +1148,51 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     </div>
                                     <div className="field-row">
                                       <label className="field">
+                                        <span>拍摄馆</span>
+                                        <Input
+                                          value={editForm.captureMuseumName}
+                                          onChange={(event) =>
+                                            setEditForm((current) =>
+                                              current ? { ...current, captureMuseumName: event.target.value } : current,
+                                            )
+                                          }
+                                          placeholder="例如：南京博物院"
+                                        />
+                                      </label>
+                                      <label className="field">
+                                        <span>展览</span>
+                                        <Input
+                                          value={editForm.exhibitionName}
+                                          onChange={(event) =>
+                                            setEditForm((current) =>
+                                              current ? { ...current, exhibitionName: event.target.value } : current,
+                                            )
+                                          }
+                                          placeholder="例如：常设或展览名称"
+                                        />
+                                      </label>
+                                    </div>
+                                    <div className="field-row">
+                                      <label className="field gallery-tags-field">
                                         <span>标签</span>
                                         <div className="tag-editor">
                                           <div className="tag-editor-chips">
-                                            {editForm.tags.length > 0 ? (
-                                              editForm.tags.map((tag) => (
-                                                <span key={tag} className="tag-chip">
-                                                  {tag}
-                                                  <Button
-                                                    htmlType="button"
-                                                    type="text"
-                                                    shape="circle"
-                                                    size="small"
-                                                    onClick={() => removeTag(tag)}
-                                                    aria-label={`删除标签 ${tag}`}
-                                                  >
-                                                    ×
-                                                  </Button>
-                                                </span>
-                                              ))
-                                            ) : (
-                                              <span className="tag-editor-placeholder">暂无标签</span>
-                                            )}
+                                            {editForm.tags.map((tag) => (
+                                              <span key={tag} className="tag-chip">
+                                                <span>{tag}</span>
+                                                <button
+                                                  type="button"
+                                                  className="tag-chip-remove"
+                                                  onClick={() => removeTag(tag)}
+                                                  aria-label={`删除标签 ${tag}`}
+                                                >
+                                                  <X size={12} aria-hidden="true" />
+                                                </button>
+                                              </span>
+                                            ))}
                                           </div>
                                           <Input
+                                            className="tag-editor-input"
                                             value={tagInput}
                                             onChange={(event) => setTagInput(event.target.value)}
                                             onKeyDown={(event) => {
@@ -1196,7 +1232,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
                                 <section className="form-section">
                                   <div className="form-section-head">
-                                    <span className="form-section-kicker">当前图片</span>
                                     <h3>拍摄信息</h3>
                                   </div>
                                   <div className="form-section-body">
@@ -1228,32 +1263,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     </div>
                                     <div className="field-row">
                                       <label className="field">
-                                        <span>拍摄馆</span>
-                                        <Input
-                                          value={editForm.captureMuseumName}
-                                          onChange={(event) =>
-                                            setEditForm((current) =>
-                                              current ? { ...current, captureMuseumName: event.target.value } : current,
-                                            )
-                                          }
-                                          placeholder="例如：南京博物院"
-                                        />
-                                      </label>
-                                      <label className="field">
-                                        <span>展览</span>
-                                        <Input
-                                          value={editForm.exhibitionName}
-                                          onChange={(event) =>
-                                            setEditForm((current) =>
-                                              current ? { ...current, exhibitionName: event.target.value } : current,
-                                            )
-                                          }
-                                          placeholder="默认常设，可直接修改"
-                                        />
-                                      </label>
-                                    </div>
-                                    <div className="field-row">
-                                      <label className="field">
                                         <span>拍摄时间</span>
                                         <Input
                                           value={editForm.capturedAt}
@@ -1268,6 +1277,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       <label className="field">
                                         <span>修图方式</span>
                                         <Select
+                                          className="gallery-edit-select"
                                           allowClear
                                           placeholder="未填写"
                                           value={editForm.editMethod || undefined}
@@ -1296,7 +1306,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                           onChange={handleCoordinateChange}
                                           onLocationTextChange={handleLocationTextChange}
                                         />
-                                        <div className="field-row">
+                                        <div className="field-row gallery-coordinate-grid">
                                           <label className="field">
                                             <span>纬度</span>
                                             <Input
@@ -1322,7 +1332,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                             />
                                           </label>
                                         </div>
-                                        <div className="field-row">
+                                        <div className="gallery-exposure-grid">
                                           <label className="field">
                                             <span>快门</span>
                                             <Input
@@ -1347,8 +1357,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               placeholder="例如：f/2.8"
                                             />
                                           </label>
-                                        </div>
-                                        <div className="field-row">
                                           <label className="field">
                                             <span>ISO</span>
                                             <Input
@@ -1387,7 +1395,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               <div className="ui-card-content gallery-info-grid">
                                 <div className="gallery-info-item">
                                   <span className="gallery-info-label">
-                                    <Clock3 size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                    <History size={14} className="gallery-detail-label-icon" aria-hidden="true" />
                                     <span>时代</span>
                                   </span>
                                   <span className="gallery-info-value">{active.era || "待确认"}</span>
@@ -1431,7 +1439,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               {active.exhibitions.length > 0 ? (
                                 <div className="gallery-info-item gallery-info-item-wide">
                                   <span className="gallery-info-label">
-                                    <Sparkles size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                    <CalendarRange size={14} className="gallery-detail-label-icon" aria-hidden="true" />
                                     <span>历史展出</span>
                                   </span>
                                   <div className="gallery-badge-row">
@@ -1452,7 +1460,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               <Card className="gallery-info-card gallery-camera-card" styles={{ body: { padding: 0 } }}>
                                 <div className="ui-card-header">
                                   <div className="gallery-card-title">
-                                    <Camera size={15} aria-hidden="true" />
+                                    <SlidersHorizontal size={15} aria-hidden="true" />
                                     <span>相机参数</span>
                                   </div>
                                 </div>
@@ -1467,9 +1475,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     </div>
                                   ) : null}
                                   {currentImage?.lens_model ? (
-                                    <div className="gallery-camera-item">
+                                    <div className="gallery-camera-item gallery-camera-item-lens">
                                       <span className="gallery-info-label">
-                                        <Aperture size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                        <CircleDot size={14} className="gallery-detail-label-icon" aria-hidden="true" />
                                         <span>镜头</span>
                                       </span>
                                       <span className="gallery-info-value">{currentImage.lens_model}</span>
@@ -1478,7 +1486,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   {shutterSpeed ? (
                                     <div className="gallery-camera-item">
                                       <span className="gallery-info-label">
-                                        <Camera size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                        <Timer size={14} className="gallery-detail-label-icon" aria-hidden="true" />
                                         <span>快门</span>
                                       </span>
                                       <span className="gallery-info-value">{shutterSpeed}</span>
@@ -1496,7 +1504,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   {iso ? (
                                     <div className="gallery-camera-item">
                                       <span className="gallery-info-label">
-                                        <Sparkles size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                        <Gauge size={14} className="gallery-detail-label-icon" aria-hidden="true" />
                                         <span>ISO</span>
                                       </span>
                                       <span className="gallery-info-value">{iso}</span>
@@ -1509,7 +1517,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               <Card className="gallery-info-card gallery-description-card" styles={{ body: { padding: 0 } }}>
                                 <div className="ui-card-header">
                                   <div className="gallery-card-title">
-                                    <Sparkles size={15} aria-hidden="true" />
+                                    <FileText size={15} aria-hidden="true" />
                                     <span>描述</span>
                                   </div>
                                 </div>
