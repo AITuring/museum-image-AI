@@ -17,6 +17,7 @@ data/uploads/*
 !data/uploads/.gitkeep
 data/thumbnails/*
 !data/thumbnails/.gitkeep
+data/image_variants/
 
 # Sensitive: web-bridge login sessions and Chrome profiles (contain auth cookies)
 data/*_web_state.json

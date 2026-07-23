@@ -97,36 +97,13 @@ type EraOption = {
   sort_order: number
 }
 
-type MediaMetaItem = {
-  icon: "camera" | "lens" | "museum" | "exhibition" | "capturedAt" | "editMethod"
-  value: string
-}
-
 function toAbsoluteUrl(apiBaseUrl: string, url: string) {
   return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
 }
 
-function isOssImageUrl(url: string) {
-  return /^https:\/\/.+\.aliyuncs\.com\//.test(url)
-}
-
-function withOssImageProcess(url: string, process: string) {
-  if (!isOssImageUrl(url)) {
-    return url
-  }
-  const separator = url.includes("?") ? "&" : "?"
-  return `${url}${separator}x-oss-process=${encodeURIComponent(process)}`
-}
-
-function getDisplayImageUrl(apiBaseUrl: string, url: string, mode: "thumb" | "preview" | "original") {
-  const absoluteUrl = toAbsoluteUrl(apiBaseUrl, url)
-  if (mode === "original") {
-    return absoluteUrl
-  }
-  if (mode === "thumb") {
-    return withOssImageProcess(absoluteUrl, "image/resize,m_lfit,w_480/quality,q_75/format,webp")
-  }
-  return withOssImageProcess(absoluteUrl, "image/resize,m_lfit,w_1280/quality,q_82/format,webp")
+function getBackendImageVariantUrl(apiBaseUrl: string, url: string, size: number) {
+  const params = new URLSearchParams({ url, size: String(size) })
+  return `${apiBaseUrl}/api/image-variant?${params.toString()}`
 }
 
 function normalizeIdentityText(value: string | null | undefined) {
@@ -618,6 +595,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
+  const thumbnailStripRef = useRef<HTMLDivElement | null>(null)
 
   const fetchJson = useCallback(async <T,>(input: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(input, init)
@@ -725,6 +703,32 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       document.body.style.overflow = prevOverflow
     }
   }, [active, editing, imagePreviewOpen])
+
+  useEffect(() => {
+    if (!active || active.images.length < 2) return
+
+    const imageIndexes =
+      active.images.length <= 8
+        ? active.images.map((_, index) => index)
+        : [
+            (activeImageIndex - 1 + active.images.length) % active.images.length,
+            (activeImageIndex + 1) % active.images.length,
+          ]
+
+    imageIndexes
+      .filter((index) => index !== activeImageIndex)
+      .forEach((index) => {
+        const preloadImage = new window.Image()
+        preloadImage.src = getBackendImageVariantUrl(apiBaseUrl, active.images[index].url, 1280)
+      })
+  }, [active, activeImageIndex, apiBaseUrl])
+
+  useEffect(() => {
+    const activeThumbnail = thumbnailStripRef.current?.querySelector<HTMLElement>(
+      `[data-image-index="${activeImageIndex}"]`,
+    )
+    activeThumbnail?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [active?.id, activeImageIndex])
 
   function handleSearch(event: { preventDefault(): void }) {
     event.preventDefault()
@@ -910,8 +914,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div className="gallery-thumb">
                 {cover ? (
                   <FallbackImage
-                    src={getDisplayImageUrl(apiBaseUrl, cover.url, "thumb")}
-                    fallbackSrc={getDisplayImageUrl(apiBaseUrl, cover.url, "original")}
+                    src={getBackendImageVariantUrl(apiBaseUrl, cover.url, 480)}
+                    fallbackSrc={toAbsoluteUrl(apiBaseUrl, cover.url)}
                     alt={artifact.name}
                     loading="lazy"
                   />
@@ -938,42 +942,11 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
                   const editFormId = `gallery-edit-form-${active.id}`
                   const subjectTags = getSubjectTags(active.tags)
-                  const equipmentMeta: MediaMetaItem[] = [
-                    currentImage?.camera_model ? { icon: "camera", value: currentImage.camera_model } : null,
-                    currentImage?.lens_model ? { icon: "lens", value: currentImage.lens_model } : null,
-                  ].filter((item): item is MediaMetaItem => Boolean(item))
-                  const captureMuseumName = formatMetaValue(currentImage?.capture_museum_name)
-                  const exhibitionName = formatMetaValue(currentImage?.exhibition_name)
                   const capturedAt = formatMetaDate(currentImage?.captured_at)
                   const uploadedAt = formatMetaDate(currentImage?.uploaded_at)
                   const shutterSpeed = formatMetaValue(currentImage?.shutter_speed)
                   const aperture = formatMetaValue(currentImage?.aperture)
                   const iso = formatMetaValue(currentImage?.iso)
-                  const mediaMeta: MediaMetaItem[] = [
-                    ...equipmentMeta,
-                    captureMuseumName ? { icon: "museum", value: captureMuseumName } : null,
-                    exhibitionName ? { icon: "exhibition", value: exhibitionName } : null,
-                    capturedAt ? { icon: "capturedAt", value: capturedAt } : null,
-                    currentImage?.edit_method ? { icon: "editMethod", value: currentImage.edit_method } : null,
-                  ].filter((item): item is MediaMetaItem => Boolean(item))
-                  const stackedImages = active.images
-                    .map((image, index) => ({
-                      image,
-                      index,
-                      depth: (index - activeImageIndex + active.images.length) % active.images.length,
-                    }))
-                    .sort((a, b) => a.depth - b.depth)
-                  const stackedPreviewImages = stackedImages
-                    .filter(({ depth }) => depth < 4)
-                    .sort((a, b) => b.depth - a.depth)
-                  const mediaMetaIconMap = {
-                    camera: Camera,
-                    lens: Aperture,
-                    museum: Building2,
-                    exhibition: TagIcon,
-                    capturedAt: Clock3,
-                    editMethod: Sparkles,
-                  } as const
                   return (
                     <>
                       <div className={`gallery-modal-media ${currentImage ? "has-image" : ""}`}>
@@ -986,55 +959,43 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               aria-label={`查看第 ${activeImageIndex + 1} 张原比例大图`}
                             >
                               <FallbackImage
+                                key={currentImage.id}
                                 className="gallery-modal-main-img"
-                                src={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
+                                src={getBackendImageVariantUrl(apiBaseUrl, currentImage.url, 1280)}
+                                fallbackSrc={toAbsoluteUrl(apiBaseUrl, currentImage.url)}
                                 alt={active.name}
                               />
                             </button>
                             <div className="gallery-media-foot">
-                              {active.images.length > 1 || mediaMeta.length > 0 ? (
+                              {active.images.length > 1 ? (
                                 <>
-                                  {active.images.length > 1 ? (
-                                    <div className={`gallery-modal-thumbs ${editing ? "edit-lock" : ""}`}>
-                                      {stackedPreviewImages.map(({ image, index, depth }) => (
-                                        <button data-ui="interactive-surface"
-                                          type="button"
-                                          key={image.id}
-                                          className={`gallery-modal-thumb stack-depth-${Math.min(depth, 3)} ${index === activeImageIndex ? "active" : ""}`}
-                                          onClick={() => setActiveImageIndex(index)}
-                                          aria-label={`查看第 ${index + 1} 张`}
-                                          disabled={editing || saving}
-                                        >
-                                          <FallbackImage
-                                            src={getDisplayImageUrl(apiBaseUrl, image.url, "thumb")}
-                                            fallbackSrc={getDisplayImageUrl(apiBaseUrl, image.url, "original")}
-                                            alt={active.name}
-                                            loading="lazy"
-                                          />
-                                        </button>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <div />
-                                  )}
+                                  <div
+                                    ref={thumbnailStripRef}
+                                    className={`gallery-modal-thumbs ${editing ? "edit-lock" : ""}`}
+                                  >
+                                    {active.images.map((image, index) => (
+                                      <button data-ui="interactive-surface"
+                                        type="button"
+                                        key={image.id}
+                                        className={`gallery-modal-thumb ${index === activeImageIndex ? "active" : ""}`}
+                                        data-image-index={index}
+                                        onClick={() => setActiveImageIndex(index)}
+                                        aria-label={`查看第 ${index + 1} 张`}
+                                        disabled={editing || saving}
+                                      >
+                                        <FallbackImage
+                                          src={getBackendImageVariantUrl(apiBaseUrl, image.url, 160)}
+                                          alt={active.name}
+                                          loading={active.images.length > 20 ? "lazy" : "eager"}
+                                        />
+                                      </button>
+                                    ))}
+                                  </div>
                                   <div className="gallery-media-aside">
                                     {currentImage ? (
                                       <span className="gallery-media-page-indicator">
                                         {activeImageIndex + 1} / {active.images.length}
                                       </span>
-                                    ) : null}
-                                    {mediaMeta.length > 0 ? (
-                                      <div className="gallery-media-meta">
-                                        {mediaMeta.map((item) => (
-                                          <span key={`${item.icon}-${item.value}`}>
-                                            {(() => {
-                                              const Icon = mediaMetaIconMap[item.icon]
-                                              return <Icon className="gallery-media-meta-icon" size={12} aria-hidden="true" />
-                                            })()}
-                                            <span>{item.value}</span>
-                                          </span>
-                                        ))}
-                                      </div>
                                     ) : null}
                                   </div>
                                 </>
@@ -1438,6 +1399,15 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   </span>
                                   <span className="gallery-info-value">{active.museum_name || "待识别"}</span>
                                 </div>
+                                {capturedAt ? (
+                                  <div className="gallery-info-item gallery-info-item-wide">
+                                    <span className="gallery-info-label">
+                                      <Clock3 size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                      <span>拍摄时间</span>
+                                    </span>
+                                    <span className="gallery-info-value">{capturedAt}</span>
+                                  </div>
+                                ) : null}
                                 <div className="gallery-info-item gallery-info-item-wide">
                                   <span className="gallery-info-label">
                                     <MapPin size={14} className="gallery-detail-label-icon" aria-hidden="true" />
@@ -1478,7 +1448,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               ) : null}
                               </div>
                             </Card>
-                            {(shutterSpeed || aperture || iso) ? (
+                            {(currentImage?.camera_model || currentImage?.lens_model || shutterSpeed || aperture || iso) ? (
                               <Card className="gallery-info-card gallery-camera-card" styles={{ body: { padding: 0 } }}>
                                 <div className="ui-card-header">
                                   <div className="gallery-card-title">
@@ -1487,6 +1457,24 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   </div>
                                 </div>
                                 <div className="ui-card-content gallery-camera-grid">
+                                  {currentImage?.camera_model ? (
+                                    <div className="gallery-camera-item">
+                                      <span className="gallery-info-label">
+                                        <Camera size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                        <span>相机</span>
+                                      </span>
+                                      <span className="gallery-info-value">{currentImage.camera_model}</span>
+                                    </div>
+                                  ) : null}
+                                  {currentImage?.lens_model ? (
+                                    <div className="gallery-camera-item">
+                                      <span className="gallery-info-label">
+                                        <Aperture size={14} className="gallery-detail-label-icon" aria-hidden="true" />
+                                        <span>镜头</span>
+                                      </span>
+                                      <span className="gallery-info-value">{currentImage.lens_model}</span>
+                                    </div>
+                                  ) : null}
                                   {shutterSpeed ? (
                                     <div className="gallery-camera-item">
                                       <span className="gallery-info-label">
@@ -1537,7 +1525,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                       {imagePreviewOpen && currentImage ? (
                         <GalleryImagePreview
                           open={imagePreviewOpen}
-                          src={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
+                          src={toAbsoluteUrl(apiBaseUrl, currentImage.url)}
                           alt={active.name}
                           onClose={() => setImagePreviewOpen(false)}
                         />

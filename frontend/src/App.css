@@ -2656,14 +2656,25 @@ label.field,
   font-size: 12px;
 }
 
-.gallery-modal-thumbs,
+.gallery-modal-thumbs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
 .existing-artifact-gallery {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
 }
 
-.gallery-modal-thumb,
+.gallery-modal-thumb {
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0;
+}
+
 .existing-artifact-thumb {
   width: 52px;
   height: 52px;

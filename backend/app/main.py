@@ -8,16 +8,19 @@ import re
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from io import BytesIO
 from uuid import uuid4
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import BinaryIO
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageOps
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
@@ -158,6 +161,10 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = Path("/data") if Path("/data").exists() else BASE_DIR / "data"
 UPLOADS_DIR = DATA_DIR / "uploads"
 LEGACY_BATCH_IMPORTS_DIR = DATA_DIR / "batch_imports"
+IMAGE_VARIANT_CACHE_DIR = DATA_DIR / "image_variants"
+MAX_IMAGE_SOURCE_BYTES = 100 * 1024 * 1024
+IMAGE_VARIANT_MASTER_SIZE = 1280
+IMAGE_VARIANT_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def report_debug_event(
@@ -546,6 +553,7 @@ def sync_reference_options(connection) -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    IMAGE_VARIANT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with engine.begin() as connection:
         try:
             connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
@@ -604,6 +612,77 @@ def resolve_uploaded_file_path(image_url: str) -> Path:
     if not file_path.exists() or not file_path.is_file():
         raise HTTPException(status_code=400, detail="上传图片已不存在，请重新上传后再提交。")
     return file_path
+
+
+def is_allowed_remote_image_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+
+    hostname = parsed.hostname.lower()
+    if hostname == "aliyuncs.com" or hostname.endswith(".aliyuncs.com"):
+        return True
+
+    configured_hosts = {
+        urlparse(candidate).hostname
+        for candidate in (
+            settings.cloud_api_base_url,
+            settings.oss_endpoint,
+            settings.oss_public_base_url,
+        )
+        if candidate
+    }
+    return hostname in {host.lower() for host in configured_hosts if host}
+
+
+async def load_image_source_bytes(image_url: str) -> bytes:
+    normalized_url = image_url.strip()
+    if normalized_url.startswith("/files/uploads/"):
+        if not should_proxy_artifact_queries_to_cloud():
+            return resolve_uploaded_file_path(normalized_url).read_bytes()
+        normalized_url = f"{settings.cloud_api_base_url.rstrip('/')}{normalized_url}"
+
+    if not is_allowed_remote_image_url(normalized_url):
+        raise HTTPException(status_code=400, detail="不支持的图片来源。")
+
+    referer = settings.cors_origins_list[0].rstrip("/") + "/" if settings.cors_origins_list else ""
+    request_headers = {
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "User-Agent": "Mozilla/5.0 MuseumImageDB/1.0",
+    }
+    if referer:
+        request_headers["Referer"] = referer
+
+    try:
+        async with httpx.AsyncClient(timeout=45, follow_redirects=True) as client:
+            response = await client.get(normalized_url, headers=request_headers)
+            response.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"读取图片失败：{exc}") from exc
+
+    if len(response.content) > MAX_IMAGE_SOURCE_BYTES:
+        raise HTTPException(status_code=413, detail="原图过大，无法生成缩略图。")
+    return response.content
+
+
+def render_image_variant(source_bytes: bytes, target_path: Path, size: int) -> None:
+    with Image.open(BytesIO(source_bytes)) as source:
+        image = ImageOps.exif_transpose(source)
+        image.thumbnail((size, size), Image.Resampling.LANCZOS)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+
+        buffer = BytesIO()
+        image.save(
+            buffer,
+            format="WEBP",
+            quality=74 if size <= 480 else 82,
+            method=4,
+        )
+
+    temporary_path = target_path.with_suffix(f".{uuid4().hex}.tmp")
+    temporary_path.write_bytes(buffer.getvalue())
+    temporary_path.replace(target_path)
 
 
 def ensure_museum(db: Session, museum_name: str) -> Museum:
@@ -3496,6 +3575,50 @@ def list_artifact_images(
     if museum_id is not None:
         query = query.join(ArtifactImage.artifact).where(Artifact.museum_id == museum_id)
     return list(db.scalars(query))
+
+
+@app.get(f"{settings.api_prefix}/image-variant")
+async def get_image_variant(
+    url: str = Query(..., min_length=1, max_length=2048),
+    size: int = Query(default=160, ge=64, le=IMAGE_VARIANT_MASTER_SIZE),
+) -> FileResponse:
+    IMAGE_VARIANT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    source_key = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    cache_path = IMAGE_VARIANT_CACHE_DIR / f"v2-{source_key}-{size}.webp"
+    if not cache_path.exists():
+        image_lock = IMAGE_VARIANT_LOCKS.setdefault(source_key, asyncio.Lock())
+        async with image_lock:
+            if not cache_path.exists():
+                master_path = (
+                    IMAGE_VARIANT_CACHE_DIR
+                    / f"v2-{source_key}-{IMAGE_VARIANT_MASTER_SIZE}.webp"
+                )
+                try:
+                    if not master_path.exists():
+                        source_bytes = await load_image_source_bytes(url)
+                        await run_in_threadpool(
+                            render_image_variant,
+                            source_bytes,
+                            master_path,
+                            IMAGE_VARIANT_MASTER_SIZE,
+                        )
+                    if size != IMAGE_VARIANT_MASTER_SIZE:
+                        await run_in_threadpool(
+                            render_image_variant,
+                            master_path.read_bytes(),
+                            cache_path,
+                            size,
+                        )
+                except HTTPException:
+                    raise
+                except Exception as exc:
+                    raise HTTPException(status_code=422, detail=f"无法生成图片预览：{exc}") from exc
+
+    return FileResponse(
+        cache_path,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 @app.get(f"{settings.api_prefix}/artifact-images/by-hash", response_model=ArtifactImageRead | None)
