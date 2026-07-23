@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ImgHTMLAttributes } from "react"
 import { createPortal } from "react-dom"
 import { Button, Card, Input, Select, Tag } from "antd"
 import "./styles/gallery.css"
@@ -127,6 +127,101 @@ function getDisplayImageUrl(apiBaseUrl: string, url: string, mode: "thumb" | "pr
     return withOssImageProcess(absoluteUrl, "image/resize,m_lfit,w_480/quality,q_75/format,webp")
   }
   return withOssImageProcess(absoluteUrl, "image/resize,m_lfit,w_1280/quality,q_82/format,webp")
+}
+
+function normalizeIdentityText(value: string | null | undefined) {
+  const text = (value ?? "").trim().toLocaleLowerCase()
+  return text || null
+}
+
+function compactArtifactNameForMatch(value: string | null | undefined) {
+  const text = normalizeIdentityText(value)
+  if (!text) return null
+  const compact = text.replace(/[\s\-_·•,，.。:：;；/\\|()（）[\]【】<>《》"'“”‘’]+/g, "")
+  return compact || null
+}
+
+function galleryArtifactMergeKey(artifact: GalleryArtifact) {
+  const museumKey = normalizeIdentityText(artifact.museum_name)
+  const eraKey = normalizeIdentityText(artifact.era)
+  const nameKey = compactArtifactNameForMatch(artifact.name)
+  return museumKey && eraKey && nameKey ? `${museumKey}\u0000${eraKey}\u0000${nameKey}` : null
+}
+
+function mergeGalleryArtifacts(items: GalleryArtifact[]) {
+  const merged: GalleryArtifact[] = []
+  const keyedIndexes = new Map<string, number>()
+
+  for (const item of items) {
+    const key = galleryArtifactMergeKey(item)
+    if (!key) {
+      merged.push(item)
+      continue
+    }
+
+    const existingIndex = keyedIndexes.get(key)
+    if (existingIndex === undefined) {
+      keyedIndexes.set(key, merged.length)
+      merged.push(item)
+      continue
+    }
+
+    const existing = merged[existingIndex]
+    const imagesById = new Map(existing.images.map((image) => [image.id, image]))
+    item.images.forEach((image) => {
+      if (!imagesById.has(image.id)) imagesById.set(image.id, image)
+    })
+
+    const exhibitionsById = new Map(existing.exhibitions.map((exhibition) => [exhibition.id, exhibition]))
+    item.exhibitions.forEach((exhibition) => {
+      if (!exhibitionsById.has(exhibition.id)) exhibitionsById.set(exhibition.id, exhibition)
+    })
+
+    merged[existingIndex] = {
+      ...existing,
+      description: existing.description || item.description,
+      Place_of_Excavation: existing.Place_of_Excavation || item.Place_of_Excavation,
+      tags: normalizeTags([...existing.tags, ...item.tags]),
+      images: Array.from(imagesById.values()).sort((left, right) => {
+        const leftTime = left.uploaded_at ? Date.parse(left.uploaded_at) : 0
+        const rightTime = right.uploaded_at ? Date.parse(right.uploaded_at) : 0
+        return rightTime - leftTime || right.id - left.id
+      }),
+      exhibitions: Array.from(exhibitionsById.values()).sort((left, right) => {
+        const leftTime = left.start_at ? Date.parse(left.start_at) : 0
+        const rightTime = right.start_at ? Date.parse(right.start_at) : 0
+        return rightTime - leftTime || right.id - left.id
+      }),
+    }
+  }
+
+  return merged
+}
+
+function FallbackImage({
+  src,
+  fallbackSrc,
+  onError,
+  ...props
+}: ImgHTMLAttributes<HTMLImageElement> & { src: string; fallbackSrc?: string }) {
+  const [currentSrc, setCurrentSrc] = useState(src)
+
+  useEffect(() => {
+    setCurrentSrc(src)
+  }, [src])
+
+  return (
+    <img
+      {...props}
+      src={currentSrc}
+      onError={(event) => {
+        onError?.(event)
+        if (fallbackSrc && currentSrc !== fallbackSrc) {
+          setCurrentSrc(fallbackSrc)
+        }
+      }}
+    />
+  )
 }
 
 function normalizeArtifact(item: RawGalleryArtifact): GalleryArtifact {
@@ -551,7 +646,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         const res = await fetch(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const payload = (await res.json()) as RawGalleryArtifact[]
-        setItems(payload.map(normalizeArtifact))
+        setItems(mergeGalleryArtifacts(payload.map(normalizeArtifact)))
       } catch (err) {
         setError(err instanceof Error ? err.message : "加载失败")
       } finally {
@@ -757,9 +852,17 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         updated.images.findIndex((image) => image.id === editForm.imageId) >= 0
           ? updated.images.findIndex((image) => image.id === editForm.imageId)
           : 0
-      setItems((current) => current.map((item) => (item.id === updated.id ? updated : item)))
-      setActive(updated)
-      setActiveImageIndex(nextIndex)
+      let mergedUpdated = updated
+      setItems((current) => {
+        const mergedItems = mergeGalleryArtifacts([
+          ...current.map((item) => (item.id === updated.id ? updated : item)),
+          ...(current.some((item) => item.id === updated.id) ? [] : [updated]),
+        ])
+        mergedUpdated = mergedItems.find((item) => galleryArtifactMergeKey(item) === galleryArtifactMergeKey(updated)) ?? updated
+        return mergedItems
+      })
+      setActive(mergedUpdated)
+      setActiveImageIndex(Math.min(nextIndex, Math.max(mergedUpdated.images.length - 1, 0)))
       setEditing(false)
       setEditForm(null)
       setTagInput("")
@@ -806,8 +909,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
             >
               <div className="gallery-thumb">
                 {cover ? (
-                  <img
+                  <FallbackImage
                     src={getDisplayImageUrl(apiBaseUrl, cover.url, "thumb")}
+                    fallbackSrc={getDisplayImageUrl(apiBaseUrl, cover.url, "original")}
                     alt={artifact.name}
                     loading="lazy"
                   />
@@ -881,7 +985,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               onClick={() => setImagePreviewOpen(true)}
                               aria-label={`查看第 ${activeImageIndex + 1} 张原比例大图`}
                             >
-                              <img
+                              <FallbackImage
                                 className="gallery-modal-main-img"
                                 src={getDisplayImageUrl(apiBaseUrl, currentImage.url, "original")}
                                 alt={active.name}
@@ -901,8 +1005,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                           aria-label={`查看第 ${index + 1} 张`}
                                           disabled={editing || saving}
                                         >
-                                          <img
+                                          <FallbackImage
                                             src={getDisplayImageUrl(apiBaseUrl, image.url, "thumb")}
+                                            fallbackSrc={getDisplayImageUrl(apiBaseUrl, image.url, "original")}
                                             alt={active.name}
                                             loading="lazy"
                                           />

@@ -1630,6 +1630,72 @@ def build_artifact_match_read(match: ArtifactMatchCandidate) -> ArtifactMatchRea
     )
 
 
+def artifact_read_merge_key(artifact: ArtifactRead) -> tuple[str, str, str] | None:
+    museum_key = normalize_identity_text(artifact.museum_name)
+    era_key = normalize_identity_text(artifact.era)
+    name_key = compact_artifact_name_for_match(artifact.name)
+    if museum_key is None or era_key is None or name_key is None:
+        return None
+    return museum_key, era_key, name_key
+
+
+def datetime_sort_value(value: datetime | None) -> float:
+    if value is None:
+        return 0
+    try:
+        return value.timestamp()
+    except (OSError, ValueError):
+        return 0
+
+
+def merge_duplicate_artifact_reads(items: list[Artifact | ArtifactRead | dict]) -> list[ArtifactRead]:
+    merged: list[ArtifactRead] = []
+    keyed_indexes: dict[tuple[str, str, str], int] = {}
+
+    for raw_item in items:
+        item = ArtifactRead.model_validate(raw_item)
+        key = artifact_read_merge_key(item)
+        if key is None:
+            merged.append(item)
+            continue
+
+        existing_index = keyed_indexes.get(key)
+        if existing_index is None:
+            keyed_indexes[key] = len(merged)
+            merged.append(item)
+            continue
+
+        existing = merged[existing_index]
+        images_by_id = {image.id: image for image in existing.images}
+        for image in item.images:
+            images_by_id.setdefault(image.id, image)
+        images = sorted(
+            images_by_id.values(),
+            key=lambda image: (image.uploaded_at, image.id),
+            reverse=True,
+        )
+
+        exhibitions_by_id = {exhibition.id: exhibition for exhibition in existing.exhibitions}
+        for exhibition in item.exhibitions:
+            exhibitions_by_id.setdefault(exhibition.id, exhibition)
+
+        merged[existing_index] = existing.model_copy(
+            update={
+                "tags": merge_unique_tags(existing.tags, item.tags),
+                "images": images,
+                "exhibitions": sorted(
+                    exhibitions_by_id.values(),
+                    key=lambda exhibition: (datetime_sort_value(exhibition.start_at), exhibition.id),
+                    reverse=True,
+                ),
+                "description": existing.description or item.description,
+                "Place_of_Excavation": existing.Place_of_Excavation or item.Place_of_Excavation,
+            }
+        )
+
+    return merged
+
+
 def find_existing_artifact_match(
     db: Session,
     *,
@@ -3204,7 +3270,7 @@ def list_artifacts(
                 response.raise_for_status()
         except Exception as exc:  # noqa: BLE001 - surface cloud query failure to the operator
             raise HTTPException(status_code=502, detail=f"查询云端图库失败：{exc}") from exc
-        return [ArtifactRead.model_validate(item) for item in response.json()]
+        return merge_duplicate_artifact_reads(response.json())
 
     query = artifact_detail_query().order_by(Artifact.created_at.desc())
     if museum_id is not None:
@@ -3243,7 +3309,7 @@ def list_artifacts(
             )
             .distinct()
         )
-    return list(db.scalars(query))
+    return merge_duplicate_artifact_reads(list(db.scalars(query)))
 
 
 @app.patch(f"{settings.api_prefix}/artifacts/{{artifact_id}}", response_model=ArtifactRead)
