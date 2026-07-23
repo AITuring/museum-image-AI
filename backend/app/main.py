@@ -44,6 +44,7 @@ from app.exhibition_schemas import (
     HistoricalExhibitionDetailRead,
     ExhibitionSyncAcceptedRead,
     ExhibitionSyncRunRead,
+    ExhibitionSyncStatusRead,
     ExhibitionYearFacetRead,
 )
 from app.exhibition_service import (
@@ -3909,6 +3910,36 @@ def get_exhibition_sync_status(
     db: Session = Depends(get_exhibition_db),
 ) -> ExhibitionSyncRun | None:
     return latest_sync_run(db)
+
+
+@app.get(
+    f"{settings.api_prefix}/exhibition-catalog/sync/status",
+    response_model=ExhibitionSyncStatusRead,
+)
+def get_exhibition_sync_live_status(
+    db: Session = Depends(get_exhibition_db),
+) -> ExhibitionSyncStatusRead:
+    catalog_total = exhibition_catalog_count(db)
+    run = latest_sync_run(db)
+    processed = 0
+    backfill_remaining = None
+    if run is not None:
+        processed = min(
+            run.attempted,
+            run.created + run.updated + run.failed,
+        )
+        if run.discovered:
+            backfill_remaining = max(0, run.discovered - catalog_total)
+    return ExhibitionSyncStatusRead(
+        catalog_total=catalog_total,
+        backfill_remaining=backfill_remaining,
+        processed=processed,
+        run=(
+            ExhibitionSyncRunRead.model_validate(run)
+            if run is not None
+            else None
+        ),
+    )
 
 
 @app.post(

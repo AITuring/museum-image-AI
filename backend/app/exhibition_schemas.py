@@ -96,6 +96,13 @@ class ExhibitionSyncRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ExhibitionSyncStatusRead(BaseModel):
+    catalog_total: int
+    backfill_remaining: int | None = None
+    processed: int = 0
+    run: ExhibitionSyncRunRead | None = None
+
+
 class ExhibitionSyncAcceptedRead(BaseModel):
     accepted: bool
     detail: str

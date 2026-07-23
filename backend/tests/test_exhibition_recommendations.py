@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.exhibition_db import ExhibitionCatalogBase
-from app.exhibition_models import CatalogExhibition
-from app.main import recommend_exhibition_catalog
+from app.exhibition_models import CatalogExhibition, ExhibitionSyncRun
+from app.main import get_exhibition_sync_live_status, recommend_exhibition_catalog
 from app.models import Museum
 
 
@@ -126,6 +126,37 @@ class ExhibitionRecommendationTests(unittest.TestCase):
             item for item in recommendations if item.source_id == "long-running"
         )
         self.assertIn("拍摄日期在长期展期内", long_running.match_reasons)
+
+    def test_live_sync_status_reports_catalog_and_run_progress(self) -> None:
+        self.catalog_db.add(
+            exhibition(
+                "existing",
+                "已同步展览",
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 12, 31),
+            )
+        )
+        self.catalog_db.add(
+            ExhibitionSyncRun(
+                mode="full",
+                trigger="manual",
+                status="running",
+                discovered=100,
+                attempted=40,
+                created=10,
+                updated=20,
+                failed=2,
+            )
+        )
+        self.catalog_db.commit()
+
+        status = get_exhibition_sync_live_status(self.catalog_db)
+
+        self.assertEqual(status.catalog_total, 1)
+        self.assertEqual(status.processed, 32)
+        self.assertEqual(status.backfill_remaining, 99)
+        self.assertIsNotNone(status.run)
+        self.assertEqual(status.run.status, "running")
 
 
 if __name__ == "__main__":

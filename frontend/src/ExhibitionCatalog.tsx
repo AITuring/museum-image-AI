@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react"
 import { Button, Input, Select, Spin } from "antd"
 import {
   ArrowLeft,
@@ -86,6 +86,28 @@ type CatalogResponse = {
   backfill_remaining: number | null
 }
 
+type ExhibitionSyncRun = {
+  id: number
+  mode: string
+  trigger: string
+  status: "running" | "success" | "partial" | "failed"
+  discovered: number
+  attempted: number
+  created: number
+  updated: number
+  failed: number
+  error: string | null
+  started_at: string
+  completed_at: string | null
+}
+
+type ExhibitionSyncStatus = {
+  catalog_total: number
+  backfill_remaining: number | null
+  processed: number
+  run: ExhibitionSyncRun | null
+}
+
 const STATUS_OPTIONS = [
   { value: "", label: "全部状态" },
   { value: "ongoing", label: "正在展出" },
@@ -99,6 +121,13 @@ const STATUS_LABELS: Record<ExhibitionItem["status"], string> = {
   upcoming: "即将开始",
   ended: "已结束",
   permanent: "常设展",
+}
+
+const SYNC_STATUS_LABELS: Record<ExhibitionSyncRun["status"], string> = {
+  running: "正在同步",
+  success: "同步完成",
+  partial: "部分完成",
+  failed: "同步失败",
 }
 
 function formatDate(value: string | null) {
@@ -420,6 +449,9 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [syncStatus, setSyncStatus] = useState<ExhibitionSyncStatus | null>(null)
+  const [syncStatusError, setSyncStatusError] = useState(false)
+  const previousSyncRunState = useRef<string | null>(null)
 
   useEffect(() => {
     const handleLocationChange = () => setDetailReference(getDetailReferenceFromPath())
@@ -473,6 +505,51 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
     return () => window.clearTimeout(timeout)
   }, [detailReference, fetchPage])
 
+  useEffect(() => {
+    if (detailReference !== null) return
+    const controller = new AbortController()
+    let timer: number | undefined
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/exhibition-catalog/sync/status`,
+          { signal: controller.signal },
+        )
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const data = (await response.json()) as ExhibitionSyncStatus
+        setSyncStatus(data)
+        setSyncStatusError(false)
+        timer = window.setTimeout(poll, data.run?.status === "running" ? 1500 : 15000)
+      } catch {
+        if (!controller.signal.aborted) {
+          setSyncStatusError(true)
+          timer = window.setTimeout(poll, 15000)
+        }
+      }
+    }
+    void poll()
+    return () => {
+      controller.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [apiBaseUrl, detailReference])
+
+  useEffect(() => {
+    const currentState = syncStatus?.run
+      ? `${syncStatus.run.id}:${syncStatus.run.status}`
+      : null
+    const previousState = previousSyncRunState.current
+    previousSyncRunState.current = currentState
+    if (
+      detailReference === null
+      && previousState?.endsWith(":running")
+      && currentState
+      && !currentState.endsWith(":running")
+    ) {
+      void fetchPage(1)
+    }
+  }, [detailReference, fetchPage, syncStatus?.run])
+
   const groupedItems = useMemo(() => {
     const groups = new Map<string, ExhibitionItem[]>()
     items.forEach((item) => {
@@ -484,6 +561,13 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
   }, [items])
 
   const hasMore = payload ? items.length < payload.total : false
+  const currentRun = syncStatus?.run ?? null
+  const syncRunning = currentRun?.status === "running"
+  const syncProgress = currentRun?.attempted
+    ? Math.min(100, Math.round((syncStatus?.processed ?? 0) / currentRun.attempted * 100))
+    : 0
+  const catalogTotal = syncStatus?.catalog_total ?? payload?.total ?? 0
+  const backfillRemaining = syncStatus?.backfill_remaining ?? payload?.backfill_remaining ?? null
   const cityOptions = [
     { value: "", label: "全部城市" },
     ...(payload?.cities ?? []).map((item) => ({
@@ -518,16 +602,54 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
           <h2>全球展览</h2>
           <p>按年份与地域浏览展览记录，数据每日从公开展览目录同步。</p>
         </div>
-        <div className="exhibition-sync-meta">
-          <span>{formatSyncTime(payload?.last_synced_at ?? null)}</span>
-          {payload?.backfill_remaining ? (
-            <span>历史数据回填中 · 余 {payload.backfill_remaining.toLocaleString("zh-CN")} 条</span>
-          ) : (
-            <span>{payload?.total.toLocaleString("zh-CN") ?? 0} 条匹配记录</span>
-          )}
-          <a href="https://art.icity.ly/" target="_blank" rel="noreferrer">
-            数据来源 iMuseum <ExternalLink size={13} />
-          </a>
+        <div className={`exhibition-sync-card${syncRunning ? " running" : ""}`}>
+          <div className="exhibition-sync-card-head">
+            <span className="exhibition-sync-state">
+              <i aria-hidden="true" />
+              {currentRun ? SYNC_STATUS_LABELS[currentRun.status] : "同步状态"}
+            </span>
+            <span>{formatSyncTime(payload?.last_synced_at ?? null)}</span>
+          </div>
+          <div className="exhibition-sync-total">
+            <strong>{catalogTotal.toLocaleString("zh-CN")}</strong>
+            <span>条展览已同步</span>
+          </div>
+          {currentRun ? (
+            <>
+              <div className="exhibition-sync-progress-head">
+                <span>本轮已处理 {syncStatus?.processed.toLocaleString("zh-CN") ?? 0} / {currentRun.attempted.toLocaleString("zh-CN")}</span>
+                <span>{syncProgress}%</span>
+              </div>
+              <div
+                className="exhibition-sync-progress"
+                role="progressbar"
+                aria-label="展览同步进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={syncProgress}
+              >
+                <span style={{ width: `${syncProgress}%` }} />
+              </div>
+              <div className="exhibition-sync-counts">
+                <span>发现 {currentRun.discovered.toLocaleString("zh-CN")}</span>
+                <span>新增 {currentRun.created.toLocaleString("zh-CN")}</span>
+                <span>更新 {currentRun.updated.toLocaleString("zh-CN")}</span>
+                {currentRun.failed > 0 ? <span className="failed">失败 {currentRun.failed.toLocaleString("zh-CN")}</span> : null}
+              </div>
+            </>
+          ) : null}
+          <div className="exhibition-sync-card-foot">
+            <span>
+              {syncStatusError
+                ? "实时状态暂不可用"
+                : backfillRemaining
+                  ? `待补详情 ${backfillRemaining.toLocaleString("zh-CN")} 条`
+                  : "目录详情已追平"}
+            </span>
+            <a href="https://art.icity.ly/" target="_blank" rel="noreferrer">
+              数据来源 iMuseum <ExternalLink size={12} />
+            </a>
+          </div>
         </div>
       </header>
 

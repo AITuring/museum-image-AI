@@ -38,20 +38,116 @@
   font-size: 13px;
 }
 
-.exhibition-sync-meta {
-  display: grid;
-  justify-items: end;
-  gap: 5px;
+.exhibition-sync-card {
+  width: min(390px, 42vw);
+  padding: 13px 15px 12px;
+  border: 1px solid rgb(123 101 69 / 0.16);
+  border-radius: 11px;
+  background: rgb(255 255 255 / 0.78);
+  box-shadow: 0 10px 34px rgb(58 46 30 / 0.055);
   color: var(--ui-text-tertiary);
-  font-size: 11px;
+  font-size: 10px;
+  backdrop-filter: blur(12px);
 }
 
-.exhibition-sync-meta a {
+.exhibition-sync-card-head,
+.exhibition-sync-progress-head,
+.exhibition-sync-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.exhibition-sync-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ui-text-secondary);
+  font-weight: 650;
+}
+
+.exhibition-sync-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8c9a80;
+  box-shadow: 0 0 0 3px rgb(140 154 128 / 0.13);
+}
+
+.exhibition-sync-card.running .exhibition-sync-state i {
+  background: #b4823f;
+  box-shadow: 0 0 0 3px rgb(180 130 63 / 0.14);
+  animation: exhibition-sync-pulse 1.4s ease-in-out infinite;
+}
+
+.exhibition-sync-total {
+  display: flex;
+  align-items: baseline;
+  margin: 8px 0 7px;
+  gap: 7px;
+}
+
+.exhibition-sync-total strong {
+  color: var(--ui-text-primary);
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 25px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.exhibition-sync-progress-head {
+  margin-bottom: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.exhibition-sync-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgb(114 97 73 / 0.12);
+}
+
+.exhibition-sync-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #9b7544, #c29a62);
+  transition: width 320ms ease;
+}
+
+.exhibition-sync-counts {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 7px;
+  gap: 5px 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.exhibition-sync-counts .failed {
+  color: #a85a4f;
+}
+
+.exhibition-sync-card-foot {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-sync-card a {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   color: var(--ui-text-secondary);
   text-decoration: none;
+}
+
+@keyframes exhibition-sync-pulse {
+  50% {
+    opacity: 0.48;
+    transform: scale(0.78);
+  }
 }
 
 .exhibition-toolbar {
@@ -708,8 +804,8 @@
     display: grid;
   }
 
-  .exhibition-sync-meta {
-    justify-items: start;
+  .exhibition-sync-card {
+    width: 100%;
   }
 
   .exhibition-toolbar {
