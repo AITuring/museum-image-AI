@@ -2152,6 +2152,43 @@ label.field,
   line-height: 32px;
 }
 
+.exhibition-picker {
+  display: grid;
+  gap: 7px;
+}
+
+.exhibition-picker > .ant-select {
+  width: 100%;
+}
+
+.exhibition-option {
+  display: grid;
+  gap: 2px;
+  padding: 3px 0;
+  line-height: 1.35;
+}
+
+.exhibition-option strong {
+  overflow: hidden;
+  color: var(--app-fg);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-option span,
+.exhibition-option small {
+  overflow: hidden;
+  color: var(--app-soft);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-option small {
+  color: color-mix(in oklch, var(--ui-success) 72%, var(--app-soft));
+}
+
 .exif-selected-preview {
   width: 100%;
   aspect-ratio: 4 / 3;

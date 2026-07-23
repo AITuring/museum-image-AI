@@ -2378,6 +2378,23 @@
   gap: 6px;
 }
 
+.gallery-exhibition-link {
+  min-height: 22px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 20px;
+  text-decoration: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.gallery-exhibition-link:hover {
+  background: var(--ui-surface-accent-strong);
+  color: var(--ui-text-primary);
+}
+
 .gallery-card-title {
   display: inline-flex;
   align-items: center;

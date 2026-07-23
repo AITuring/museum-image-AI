@@ -3,11 +3,12 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import mimetypes
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 from io import BytesIO
 from uuid import uuid4
 from contextlib import asynccontextmanager
@@ -22,7 +23,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from PIL import Image, ImageOps
 from starlette.concurrency import run_in_threadpool
-from sqlalchemy import func, inspect, or_, select, text
+from sqlalchemy import and_, func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
@@ -34,10 +35,13 @@ from app.exhibition_db import (
 )
 from app.exhibition_models import CatalogExhibition, ExhibitionSyncRun
 from app.exhibition_schemas import (
+    ExhibitionArtifactSummaryRead,
     ExhibitionCatalogItemRead,
     ExhibitionCatalogDetailRead,
     ExhibitionCatalogListRead,
     ExhibitionFacetRead,
+    ExhibitionRecommendationRead,
+    HistoricalExhibitionDetailRead,
     ExhibitionSyncAcceptedRead,
     ExhibitionSyncRunRead,
     ExhibitionYearFacetRead,
@@ -270,6 +274,32 @@ def run_startup_migrations(connection) -> None:
 
     if "artifacts" not in table_names:
         return
+
+    if "exhibitions" in table_names:
+        exhibition_columns = {
+            column["name"] for column in inspect(connection).get_columns("exhibitions")
+        }
+        exhibition_column_definitions = {
+            "catalog_source_id": "VARCHAR(32)",
+            "catalog_exhibition_id": "INTEGER",
+        }
+        for column_name, column_type in exhibition_column_definitions.items():
+            if column_name not in exhibition_columns:
+                connection.execute(
+                    text(f"ALTER TABLE exhibitions ADD COLUMN {column_name} {column_type}")
+                )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_exhibitions_catalog_source_id "
+                "ON exhibitions (catalog_source_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_exhibitions_catalog_exhibition_id "
+                "ON exhibitions (catalog_exhibition_id)"
+            )
+        )
 
     artifact_columns = {column["name"] for column in inspector.get_columns("artifacts")}
     artifact_columns_lower = {column_name.lower() for column_name in artifact_columns}
@@ -740,25 +770,42 @@ def ensure_exhibition(
     exhibition_name: str | None,
     start_at: datetime | None = None,
     end_at: datetime | None = None,
+    catalog_source_id: str | None = None,
+    catalog_exhibition_id: int | None = None,
 ) -> Exhibition:
     name = optional_text(exhibition_name) or "常设"
-    exhibition = db.scalar(
-        select(Exhibition).where(
-            Exhibition.museum_id == museum.id,
-            Exhibition.name == name,
+    normalized_catalog_source_id = optional_text(catalog_source_id)
+    exhibition = None
+    if normalized_catalog_source_id:
+        exhibition = db.scalar(
+            select(Exhibition)
+            .where(Exhibition.catalog_source_id == normalized_catalog_source_id)
+            .order_by(Exhibition.id.asc())
         )
-    )
+    if exhibition is None:
+        exhibition = db.scalar(
+            select(Exhibition).where(
+                Exhibition.museum_id == museum.id,
+                Exhibition.name == name,
+            )
+        )
     if exhibition is not None:
         if exhibition.start_at is None and start_at is not None:
             exhibition.start_at = start_at
         if exhibition.end_at is None and end_at is not None:
             exhibition.end_at = end_at
+        if normalized_catalog_source_id:
+            exhibition.catalog_source_id = normalized_catalog_source_id
+        if catalog_exhibition_id is not None:
+            exhibition.catalog_exhibition_id = catalog_exhibition_id
         db.flush()
         return exhibition
 
     exhibition = Exhibition(
         museum_id=museum.id,
         name=name,
+        catalog_source_id=normalized_catalog_source_id,
+        catalog_exhibition_id=catalog_exhibition_id,
         start_at=start_at,
         end_at=end_at,
     )
@@ -1046,14 +1093,61 @@ def resolve_capture_context(
     db: Session,
     capture_museum_name: str | None,
     exhibition_name: str | None,
+    catalog_exhibition_source_id: str | None = None,
+    catalog_exhibition_id: int | None = None,
 ) -> tuple[Museum | None, Exhibition | None]:
+    catalog_item: CatalogExhibition | None = None
+    normalized_source_id = optional_text(catalog_exhibition_source_id)
+    if normalized_source_id or catalog_exhibition_id is not None:
+        try:
+            with ExhibitionSessionLocal() as catalog_db:
+                if normalized_source_id:
+                    catalog_item = catalog_db.scalar(
+                        select(CatalogExhibition).where(
+                            CatalogExhibition.source_id == normalized_source_id
+                        )
+                    )
+                elif catalog_exhibition_id is not None:
+                    catalog_item = catalog_db.get(CatalogExhibition, catalog_exhibition_id)
+        except Exception:
+            logger.warning("resolve catalog exhibition failed", exc_info=True)
+
+    resolved_capture_museum_name = optional_text(capture_museum_name)
+    if resolved_capture_museum_name is None and catalog_item is not None:
+        resolved_capture_museum_name = (
+            optional_text(catalog_item.venue)
+            or optional_text(catalog_item.city)
+        )
     capture_museum = (
-        ensure_museum(db, capture_museum_name)
-        if optional_text(capture_museum_name)
+        ensure_museum(db, resolved_capture_museum_name)
+        if resolved_capture_museum_name
         else None
     )
+    resolved_exhibition_name = (
+        catalog_item.title if catalog_item is not None else exhibition_name
+    )
     exhibition = (
-        ensure_exhibition(db, capture_museum, exhibition_name)
+        ensure_exhibition(
+            db,
+            capture_museum,
+            resolved_exhibition_name,
+            (
+                datetime.combine(catalog_item.start_date, time.min)
+                if catalog_item is not None and catalog_item.start_date is not None
+                else None
+            ),
+            (
+                datetime.combine(catalog_item.end_date, time.max)
+                if catalog_item is not None and catalog_item.end_date is not None
+                else None
+            ),
+            catalog_source_id=(
+                catalog_item.source_id if catalog_item is not None else normalized_source_id
+            ),
+            catalog_exhibition_id=(
+                catalog_item.id if catalog_item is not None else catalog_exhibition_id
+            ),
+        )
         if capture_museum is not None
         else None
     )
@@ -1401,6 +1495,8 @@ async def submit_artifact_to_cloud(
     iso: int | None,
     edit_method: str | None,
     source_hash: str | None = None,
+    catalog_exhibition_source_id: str | None = None,
+    catalog_exhibition_id: int | None = None,
 ) -> ArtifactRead:
     if not settings.cloud_api_base_url:
         raise HTTPException(status_code=400, detail="未配置 CLOUD_API_BASE_URL。")
@@ -1425,6 +1521,10 @@ async def submit_artifact_to_cloud(
         "lens_model": lens_model or "",
         "capture_museum_name": capture_museum_name or "",
         "exhibition_name": normalize_exhibition_name(exhibition_name),
+        "catalog_exhibition_source_id": catalog_exhibition_source_id or "",
+        "catalog_exhibition_id": (
+            "" if catalog_exhibition_id is None else str(catalog_exhibition_id)
+        ),
         "capture_location": capture_location or "",
         "latitude": "" if latitude is None else str(latitude),
         "longitude": "" if longitude is None else str(longitude),
@@ -1738,6 +1838,33 @@ def should_proxy_artifact_queries_to_cloud() -> bool:
     return settings.app_role == "local" and bool(settings.cloud_api_base_url)
 
 
+def fetch_cloud_artifact_payload(
+    params: dict[str, object] | None = None,
+) -> list[dict]:
+    base = settings.cloud_api_base_url.rstrip("/")
+    last_error: Exception | None = None
+    with httpx.Client(timeout=30, follow_redirects=True) as client:
+        for attempt in range(2):
+            try:
+                response = client.get(
+                    f"{base}{settings.api_prefix}/artifacts",
+                    params=params,
+                )
+                if response.status_code in {502, 503, 504} and attempt == 0:
+                    continue
+                response.raise_for_status()
+                payload = response.json()
+                return payload if isinstance(payload, list) else []
+            except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+                last_error = exc
+                if attempt == 0:
+                    continue
+                raise
+    if last_error is not None:
+        raise last_error
+    return []
+
+
 def build_artifact_match_read(match: ArtifactMatchCandidate) -> ArtifactMatchRead:
     return ArtifactMatchRead(
         artifact=ArtifactRead.model_validate(match.artifact),
@@ -1810,6 +1937,76 @@ def merge_duplicate_artifact_reads(items: list[Artifact | ArtifactRead | dict]) 
         )
 
     return merged
+
+
+def enrich_artifact_catalog_links(items: list[ArtifactRead]) -> list[ArtifactRead]:
+    missing_names = {
+        exhibition.name.strip()
+        for item in items
+        for exhibition in item.exhibitions
+        if exhibition.name.strip() and not exhibition.catalog_source_id
+    }
+    if not missing_names:
+        return items
+
+    try:
+        with ExhibitionSessionLocal() as catalog_db:
+            catalog_items = list(
+                catalog_db.scalars(
+                    select(CatalogExhibition).where(
+                        CatalogExhibition.title.in_(sorted(missing_names))
+                    )
+                )
+            )
+    except Exception:
+        logger.warning("enrich artifact exhibition catalog links failed", exc_info=True)
+        return items
+
+    by_title: dict[str, list[CatalogExhibition]] = {}
+    for catalog_item in catalog_items:
+        by_title.setdefault(catalog_item.title, []).append(catalog_item)
+
+    enriched_items: list[ArtifactRead] = []
+    for item in items:
+        enriched_exhibitions: list[ExhibitionRead] = []
+        for exhibition in item.exhibitions:
+            if exhibition.catalog_source_id:
+                enriched_exhibitions.append(exhibition)
+                continue
+            candidates = by_title.get(exhibition.name.strip(), [])
+            if not candidates:
+                enriched_exhibitions.append(exhibition)
+                continue
+
+            def candidate_score(candidate: CatalogExhibition) -> tuple[int, int]:
+                score = 0
+                museum_name = exhibition.museum_name.casefold()
+                if candidate.venue and (
+                    museum_name in candidate.venue.casefold()
+                    or candidate.venue.casefold() in museum_name
+                ):
+                    score += 20
+                if exhibition.start_at and candidate.start_date:
+                    score += max(
+                        0,
+                        10
+                        - abs((exhibition.start_at.date() - candidate.start_date).days),
+                    )
+                return score, -candidate.id
+
+            matched = max(candidates, key=candidate_score)
+            enriched_exhibitions.append(
+                exhibition.model_copy(
+                    update={
+                        "catalog_source_id": matched.source_id,
+                        "catalog_exhibition_id": matched.id,
+                    }
+                )
+            )
+        enriched_items.append(
+            item.model_copy(update={"exhibitions": enriched_exhibitions})
+        )
+    return enriched_items
 
 
 def find_existing_artifact_match(
@@ -2531,6 +2728,8 @@ async def submit_artifact_with_exif_file(
     tags: str = Form("[]"),
     display_location_name: str | None = Form(None),
     exhibition_name: str | None = Form("常设"),
+    catalog_exhibition_source_id: str | None = Form(None),
+    catalog_exhibition_id: int | None = Form(None),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
     camera_model: str | None = Form(None),
@@ -2635,6 +2834,8 @@ async def submit_artifact_with_exif_file(
             iso=iso,
             edit_method=None,
             source_hash=source_hash,
+            catalog_exhibition_source_id=catalog_exhibition_source_id,
+            catalog_exhibition_id=catalog_exhibition_id,
         )
     except Exception as exc:
         # #region debug-point B:submit-error
@@ -2671,6 +2872,8 @@ async def ingest_artifact(
     lens_model: str | None = Form(None),
     capture_museum_name: str | None = Form(None),
     exhibition_name: str | None = Form("常设"),
+    catalog_exhibition_source_id: str | None = Form(None),
+    catalog_exhibition_id: int | None = Form(None),
     capture_location: str | None = Form(None),
     latitude: str | None = Form(None),
     longitude: str | None = Form(None),
@@ -2712,7 +2915,13 @@ async def ingest_artifact(
     )
 
     museum = ensure_museum(db, museum_name)
-    capture_museum, exhibition = resolve_capture_context(db, capture_museum_name, exhibition_name)
+    capture_museum, exhibition = resolve_capture_context(
+        db,
+        capture_museum_name,
+        exhibition_name,
+        catalog_exhibition_source_id,
+        catalog_exhibition_id,
+    )
     merged_tags = merge_unique_tags(
         parse_tags(tags),
         build_capture_tags(
@@ -2853,6 +3062,8 @@ async def submit_single_artifact_to_cloud(payload: CloudArtifactSubmitRequest) -
         lens_model=payload.lens_model,
         capture_museum_name=payload.capture_museum_name,
         exhibition_name=payload.exhibition_name,
+        catalog_exhibition_source_id=payload.catalog_exhibition_source_id,
+        catalog_exhibition_id=payload.catalog_exhibition_id,
         capture_location=payload.capture_location,
         latitude=payload.latitude,
         longitude=payload.longitude,
@@ -2883,6 +3094,8 @@ async def submit_single_artifact_file_to_cloud(
     lens_model: str | None = Form(None),
     capture_museum_name: str | None = Form(None),
     exhibition_name: str | None = Form(None),
+    catalog_exhibition_source_id: str | None = Form(None),
+    catalog_exhibition_id: int | None = Form(None),
     capture_location: str | None = Form(None),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
@@ -2918,6 +3131,8 @@ async def submit_single_artifact_file_to_cloud(
         lens_model=lens_model,
         capture_museum_name=capture_museum_name,
         exhibition_name=exhibition_name,
+        catalog_exhibition_source_id=catalog_exhibition_source_id,
+        catalog_exhibition_id=catalog_exhibition_id,
         capture_location=capture_location,
         latitude=latitude,
         longitude=longitude,
@@ -3248,6 +3463,309 @@ async def submit_pending(
     )
 
 
+def normalize_catalog_match_text(value: str | None) -> str:
+    return re.sub(r"[\W_]+", "", (value or "").casefold(), flags=re.UNICODE)
+
+
+def is_long_running_catalog_exhibition(
+    item: CatalogExhibition | ExhibitionRecommendationRead,
+) -> bool:
+    if item.is_permanent:
+        return True
+    if item.start_date is None and item.end_date is None:
+        return False
+    if item.start_date is None or item.end_date is None:
+        return True
+    return (item.end_date - item.start_date).days >= 365
+
+
+def haversine_distance_km(
+    latitude_a: float,
+    longitude_a: float,
+    latitude_b: float,
+    longitude_b: float,
+) -> float:
+    radius_km = 6371.0088
+    lat_a = math.radians(latitude_a)
+    lat_b = math.radians(latitude_b)
+    lat_delta = math.radians(latitude_b - latitude_a)
+    lon_delta = math.radians(longitude_b - longitude_a)
+    value = (
+        math.sin(lat_delta / 2) ** 2
+        + math.cos(lat_a) * math.cos(lat_b) * math.sin(lon_delta / 2) ** 2
+    )
+    return radius_km * 2 * math.atan2(math.sqrt(value), math.sqrt(1 - value))
+
+
+def artifact_summary(item: ArtifactRead) -> ExhibitionArtifactSummaryRead:
+    images = sorted(
+        item.images,
+        key=lambda image: (image.uploaded_at, image.id),
+        reverse=True,
+    )
+    captured_at = next(
+        (image.captured_at for image in images if image.captured_at is not None),
+        None,
+    )
+    return ExhibitionArtifactSummaryRead(
+        id=item.id,
+        name=item.name,
+        museum_name=item.museum_name,
+        era=item.era,
+        cover_url=images[0].url if images else None,
+        captured_at=captured_at,
+    )
+
+
+@app.get(
+    f"{settings.api_prefix}/exhibition-history",
+    response_model=HistoricalExhibitionDetailRead,
+)
+def get_historical_exhibition_detail(
+    name: str = Query(..., min_length=1),
+    museum_name: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> HistoricalExhibitionDetailRead:
+    normalized_name = name.strip()
+    normalized_museum = optional_text(museum_name)
+    if should_proxy_artifact_queries_to_cloud():
+        try:
+            artifacts = enrich_artifact_catalog_links(
+                merge_duplicate_artifact_reads(fetch_cloud_artifact_payload())
+            )
+        except Exception as exc:  # noqa: BLE001 - surface cloud query failure
+            raise HTTPException(status_code=502, detail=f"查询云端历史展览失败：{exc}") from exc
+    else:
+        query = artifact_detail_query().order_by(Artifact.created_at.desc())
+        artifacts = enrich_artifact_catalog_links(
+            merge_duplicate_artifact_reads(list(db.scalars(query)))
+        )
+
+    matched_artifacts: list[ArtifactRead] = []
+    matched_exhibitions: list[ExhibitionRead] = []
+    for artifact in artifacts:
+        exhibitions = [
+            exhibition
+            for exhibition in artifact.exhibitions
+            if exhibition.name.strip() == normalized_name
+            and (
+                normalized_museum is None
+                or exhibition.museum_name.strip() == normalized_museum
+            )
+        ]
+        if exhibitions:
+            matched_artifacts.append(artifact)
+            matched_exhibitions.extend(exhibitions)
+    if not matched_exhibitions:
+        raise HTTPException(status_code=404, detail="Historical exhibition not found")
+
+    start_at = min(
+        (
+            exhibition.start_at
+            for exhibition in matched_exhibitions
+            if exhibition.start_at is not None
+        ),
+        default=None,
+    )
+    end_at = max(
+        (
+            exhibition.end_at
+            for exhibition in matched_exhibitions
+            if exhibition.end_at is not None
+        ),
+        default=None,
+    )
+    return HistoricalExhibitionDetailRead(
+        name=normalized_name,
+        museum_name=normalized_museum or matched_exhibitions[0].museum_name,
+        start_at=start_at,
+        end_at=end_at,
+        artifacts=[artifact_summary(item) for item in matched_artifacts],
+    )
+
+
+@app.get(
+    f"{settings.api_prefix}/exhibition-catalog/recommendations",
+    response_model=list[ExhibitionRecommendationRead],
+)
+def recommend_exhibition_catalog(
+    captured_at: datetime | None = Query(default=None),
+    latitude: float | None = Query(default=None, ge=-90, le=90),
+    longitude: float | None = Query(default=None, ge=-180, le=180),
+    location: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    limit: int = Query(default=8, ge=1, le=30),
+    catalog_db: Session = Depends(get_exhibition_db),
+    artifact_db: Session = Depends(get_db),
+) -> list[ExhibitionRecommendationRead]:
+    normalized_location = optional_text(location)
+    normalized_query = optional_text(q)
+    if (
+        captured_at is None
+        and latitude is None
+        and longitude is None
+        and normalized_location is None
+        and normalized_query is None
+    ):
+        return []
+
+    capture_date = captured_at.date() if captured_at is not None else None
+    base_query = select(CatalogExhibition)
+    if normalized_query:
+        like = f"%{normalized_query}%"
+        base_query = base_query.where(
+            or_(
+                CatalogExhibition.title.ilike(like),
+                CatalogExhibition.venue.ilike(like),
+                CatalogExhibition.address.ilike(like),
+                CatalogExhibition.city.ilike(like),
+            )
+        )
+
+    dated_query = base_query.where(CatalogExhibition.is_permanent.is_(False))
+    if capture_date is not None:
+        dated_query = dated_query.where(
+            and_(
+                or_(
+                    CatalogExhibition.start_date.is_(None),
+                    CatalogExhibition.start_date <= capture_date,
+                ),
+                or_(
+                    CatalogExhibition.end_date.is_(None),
+                    CatalogExhibition.end_date >= capture_date,
+                ),
+            )
+        )
+    dated_candidates = list(
+        catalog_db.scalars(
+            dated_query.order_by(
+                CatalogExhibition.start_date.desc().nulls_last(),
+                CatalogExhibition.synced_at.desc(),
+            ).limit(2000)
+        )
+    )
+    permanent_candidates = list(
+        catalog_db.scalars(
+            base_query.where(CatalogExhibition.is_permanent.is_(True))
+            .order_by(CatalogExhibition.synced_at.desc())
+            .limit(1000)
+        )
+    )
+    candidates = [*dated_candidates, *permanent_candidates]
+
+    location_hints: list[tuple[str, str, float | None]] = []
+    if normalized_location:
+        location_hints.append((normalized_location, "EXIF 地点一致", None))
+    nearest_museum: Museum | None = None
+    nearest_distance: float | None = None
+    if latitude is not None and longitude is not None:
+        museums = list(
+            artifact_db.scalars(
+                select(Museum).where(
+                    Museum.latitude.is_not(None),
+                    Museum.longitude.is_not(None),
+                )
+            )
+        )
+        for museum in museums:
+            distance = haversine_distance_km(
+                latitude,
+                longitude,
+                float(museum.latitude),
+                float(museum.longitude),
+            )
+            if nearest_distance is None or distance < nearest_distance:
+                nearest_museum = museum
+                nearest_distance = distance
+        if nearest_museum is not None and nearest_distance is not None and nearest_distance <= 80:
+            location_hints.append(
+                (nearest_museum.name, f"距拍摄地点约 {nearest_distance:.1f} km", nearest_distance)
+            )
+            if nearest_museum.location:
+                location_hints.append(
+                    (nearest_museum.location, "邻近已收录场馆", nearest_distance)
+                )
+
+    scored: list[tuple[int, ExhibitionRecommendationRead]] = []
+    for candidate in candidates:
+        score = 0
+        reasons: list[str] = []
+        matched_distance: float | None = None
+        if capture_date is not None:
+            score += 70
+            if candidate.is_permanent:
+                reasons.append("常设展，长期有效")
+            elif is_long_running_catalog_exhibition(candidate):
+                reasons.append("拍摄日期在长期展期内")
+            else:
+                reasons.append("拍摄日期在展期内")
+        if normalized_query:
+            score += 50
+            reasons.append("名称或地点符合搜索")
+
+        field_values = {
+            "展馆": normalize_catalog_match_text(candidate.venue),
+            "地址": normalize_catalog_match_text(candidate.address),
+            "城市": normalize_catalog_match_text(candidate.city),
+        }
+        for hint, hint_reason, distance in location_hints:
+            normalized_hint = normalize_catalog_match_text(hint)
+            if len(normalized_hint) < 2:
+                continue
+            matched_label = next(
+                (
+                    label
+                    for label, field_value in field_values.items()
+                    if field_value
+                    and (
+                        normalized_hint in field_value
+                        or field_value in normalized_hint
+                    )
+                ),
+                None,
+            )
+            if matched_label is None:
+                continue
+            score += {"展馆": 65, "地址": 50, "城市": 35}[matched_label]
+            reason = f"{matched_label}与{hint_reason}"
+            if reason not in reasons:
+                reasons.append(reason)
+            if distance is not None:
+                matched_distance = distance
+
+        scored.append(
+            (
+                score,
+                ExhibitionRecommendationRead(
+                    **ExhibitionCatalogItemRead.model_validate(candidate).model_dump(),
+                    match_score=score,
+                    match_reasons=reasons,
+                    distance_km=matched_distance,
+                ),
+            )
+        )
+
+    scored.sort(
+        key=lambda entry: (
+            entry[0],
+            (
+                entry[1].start_date
+                if not entry[1].is_permanent and entry[1].start_date
+                else date.min
+            ),
+            entry[1].id,
+        ),
+        reverse=True,
+    )
+    selected = scored[:limit]
+    if capture_date is not None and limit >= 2:
+        permanent = [entry for entry in scored if entry[1].is_permanent]
+        if permanent and not any(entry[1].is_permanent for entry in selected):
+            selected[-1] = permanent[0]
+            selected.sort(key=scored.index)
+    return [entry[1] for entry in selected]
+
+
 @app.get(
     f"{settings.api_prefix}/exhibition-catalog",
     response_model=ExhibitionCatalogListRead,
@@ -3421,6 +3939,74 @@ def start_exhibition_sync(
 
 
 @app.get(
+    f"{settings.api_prefix}/exhibition-catalog/source/{{source_id}}/artifacts",
+    response_model=list[ExhibitionArtifactSummaryRead],
+)
+def list_exhibition_catalog_artifacts(
+    source_id: str,
+    catalog_db: Session = Depends(get_exhibition_db),
+    artifact_db: Session = Depends(get_db),
+) -> list[ExhibitionArtifactSummaryRead]:
+    catalog_item = catalog_db.scalar(
+        select(CatalogExhibition).where(CatalogExhibition.source_id == source_id)
+    )
+    if catalog_item is None:
+        raise HTTPException(status_code=404, detail="Exhibition not found")
+
+    if should_proxy_artifact_queries_to_cloud():
+        try:
+            artifacts = enrich_artifact_catalog_links(
+                merge_duplicate_artifact_reads(fetch_cloud_artifact_payload())
+            )
+        except Exception as exc:  # noqa: BLE001 - surface cloud query failure
+            raise HTTPException(status_code=502, detail=f"查询云端展览文物失败：{exc}") from exc
+    else:
+        query = (
+            artifact_detail_query()
+            .join(Artifact.exhibition_links)
+            .join(ArtifactExhibition.exhibition)
+            .where(
+                or_(
+                    Exhibition.catalog_source_id == source_id,
+                    Exhibition.name == catalog_item.title,
+                )
+            )
+            .distinct()
+            .order_by(Artifact.created_at.desc())
+        )
+        artifacts = enrich_artifact_catalog_links(
+            merge_duplicate_artifact_reads(list(artifact_db.scalars(query)))
+        )
+
+    matched = [
+        item
+        for item in artifacts
+        if any(
+            exhibition.catalog_source_id == source_id
+            or exhibition.name == catalog_item.title
+            for exhibition in item.exhibitions
+        )
+    ]
+    return [artifact_summary(item) for item in matched]
+
+
+@app.get(
+    f"{settings.api_prefix}/exhibition-catalog/source/{{source_id}}",
+    response_model=ExhibitionCatalogDetailRead,
+)
+def get_exhibition_catalog_detail_by_source(
+    source_id: str,
+    db: Session = Depends(get_exhibition_db),
+) -> ExhibitionCatalogDetailRead:
+    item = db.scalar(
+        select(CatalogExhibition).where(CatalogExhibition.source_id == source_id)
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Exhibition not found")
+    return ExhibitionCatalogDetailRead.model_validate(item)
+
+
+@app.get(
     f"{settings.api_prefix}/exhibition-catalog/{{exhibition_id}}",
     response_model=ExhibitionCatalogDetailRead,
 )
@@ -3530,7 +4116,15 @@ def create_exhibition(payload: ExhibitionCreate, db: Session = Depends(get_db)) 
     museum = db.get(Museum, payload.museum_id)
     if museum is None:
         raise HTTPException(status_code=404, detail="Museum not found")
-    exhibition = ensure_exhibition(db, museum, payload.name, payload.start_at, payload.end_at)
+    exhibition = ensure_exhibition(
+        db,
+        museum,
+        payload.name,
+        payload.start_at,
+        payload.end_at,
+        payload.catalog_source_id,
+        payload.catalog_exhibition_id,
+    )
     db.commit()
     db.refresh(exhibition)
     return exhibition
@@ -3562,17 +4156,13 @@ def list_artifacts(
         filtered_params = {
             key: value for key, value in params.items() if value is not None and value != ""
         }
-        base = settings.cloud_api_base_url.rstrip("/")
         try:
-            with httpx.Client(timeout=30, follow_redirects=True) as client:
-                response = client.get(
-                    f"{base}{settings.api_prefix}/artifacts",
-                    params=filtered_params,
-                )
-                response.raise_for_status()
+            payload = fetch_cloud_artifact_payload(filtered_params)
         except Exception as exc:  # noqa: BLE001 - surface cloud query failure to the operator
             raise HTTPException(status_code=502, detail=f"查询云端图库失败：{exc}") from exc
-        return merge_duplicate_artifact_reads(response.json())
+        return enrich_artifact_catalog_links(
+            merge_duplicate_artifact_reads(payload)
+        )
 
     query = artifact_detail_query().order_by(Artifact.created_at.desc())
     if museum_id is not None:
@@ -3611,7 +4201,9 @@ def list_artifacts(
             )
             .distinct()
         )
-    return merge_duplicate_artifact_reads(list(db.scalars(query)))
+    return enrich_artifact_catalog_links(
+        merge_duplicate_artifact_reads(list(db.scalars(query)))
+    )
 
 
 @app.patch(f"{settings.api_prefix}/artifacts/{{artifact_id}}", response_model=ArtifactRead)
@@ -3662,6 +4254,8 @@ def update_artifact(
             db,
             payload.capture_museum_name,
             payload.exhibition_name,
+            payload.catalog_exhibition_source_id,
+            payload.catalog_exhibition_id,
         )
         target_image.camera_model = optional_text(payload.camera_model)
         target_image.lens_model = optional_text(payload.lens_model)
@@ -3752,7 +4346,11 @@ def create_artifact(payload: ArtifactCreate, db: Session = Depends(get_db)) -> A
             build_capture_tags(image.camera_model, image.lens_model),
         )
         capture_museum, exhibition = resolve_capture_context(
-            db, image.capture_museum_name, image.exhibition_name
+            db,
+            image.capture_museum_name,
+            image.exhibition_name,
+            image.catalog_exhibition_source_id,
+            image.catalog_exhibition_id,
         )
         if exhibition is not None and exhibition.id not in linked_exhibition_ids:
             db.add(ArtifactExhibition(artifact_id=artifact.id, exhibition_id=exhibition.id))
@@ -3880,7 +4478,11 @@ def create_artifact_image(
         raise HTTPException(status_code=404, detail="Artifact not found")
 
     capture_museum, exhibition = resolve_capture_context(
-        db, payload.capture_museum_name, payload.exhibition_name
+        db,
+        payload.capture_museum_name,
+        payload.exhibition_name,
+        payload.catalog_exhibition_source_id,
+        payload.catalog_exhibition_id,
     )
     image = ArtifactImage(
         artifact_id=payload.artifact_id,

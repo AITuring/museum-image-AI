@@ -56,6 +56,29 @@ class ExhibitionCatalogDetailRead(ExhibitionCatalogItemRead):
     image_urls: list[str] = Field(default_factory=list)
 
 
+class ExhibitionRecommendationRead(ExhibitionCatalogItemRead):
+    match_score: int
+    match_reasons: list[str] = Field(default_factory=list)
+    distance_km: float | None = None
+
+
+class ExhibitionArtifactSummaryRead(BaseModel):
+    id: int
+    name: str
+    museum_name: str
+    era: str | None = None
+    cover_url: str | None = None
+    captured_at: datetime | None = None
+
+
+class HistoricalExhibitionDetailRead(BaseModel):
+    name: str
+    museum_name: str
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    artifacts: list[ExhibitionArtifactSummaryRead] = Field(default_factory=list)
+
+
 class ExhibitionSyncRunRead(BaseModel):
     id: int
     mode: str

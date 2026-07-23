@@ -118,6 +118,11 @@ class Exhibition(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     museum_id: Mapped[int] = mapped_column(ForeignKey("museums.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    # Stable logical link to the separately stored global exhibition catalog.
+    # The numeric catalog id is environment-local; source_id remains stable
+    # across the operator machine and cloud deployment.
+    catalog_source_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    catalog_exhibition_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

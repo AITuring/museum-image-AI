@@ -24,6 +24,8 @@ class ExhibitionCreate(BaseModel):
     name: str
     start_at: datetime | None = None
     end_at: datetime | None = None
+    catalog_source_id: str | None = None
+    catalog_exhibition_id: int | None = None
 
 
 class ExhibitionRead(ExhibitionCreate):
@@ -59,6 +61,8 @@ class ArtifactImageCreate(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = None
+    catalog_exhibition_source_id: str | None = None
+    catalog_exhibition_id: int | None = None
     capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
@@ -103,6 +107,8 @@ class ArtifactUpdate(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = "常设"
+    catalog_exhibition_source_id: str | None = None
+    catalog_exhibition_id: int | None = None
     capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None
@@ -127,6 +133,8 @@ class CloudArtifactSubmitRequest(BaseModel):
     lens_model: str | None = None
     capture_museum_name: str | None = None
     exhibition_name: str | None = "常设"
+    catalog_exhibition_source_id: str | None = None
+    catalog_exhibition_id: int | None = None
     capture_location: str | None = None
     latitude: float | None = None
     longitude: float | None = None

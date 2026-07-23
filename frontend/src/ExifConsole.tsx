@@ -59,6 +59,21 @@ type MuseumOption = {
   longitude: number | null
 }
 
+type ExhibitionRecommendation = {
+  id: number
+  source_id: string
+  title: string
+  city: string
+  venue: string | null
+  address: string | null
+  start_date: string | null
+  end_date: string | null
+  is_permanent: boolean
+  match_score: number
+  match_reasons: string[]
+  distance_km: number | null
+}
+
 type SubmitNotice = {
   type: "success" | "error"
   text: string
@@ -81,6 +96,8 @@ type FormState = {
   placeOfExcavation: string
   displayLocationName: string
   exhibitionName: string
+  catalogExhibitionId: number | null
+  catalogExhibitionSourceId: string
   latitude: string
   longitude: string
   cameraModel: string
@@ -331,6 +348,8 @@ const EMPTY_FORM: FormState = {
   placeOfExcavation: "",
   displayLocationName: "",
   exhibitionName: "常设",
+  catalogExhibitionId: null,
+  catalogExhibitionSourceId: "",
   latitude: "",
   longitude: "",
   cameraModel: "",
@@ -377,6 +396,151 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
     throw new Error(message)
   }
   return (await response.json()) as T
+}
+
+function formatRecommendationDate(item: ExhibitionRecommendation) {
+  if (item.is_permanent) return "常设展"
+  if (item.start_date && item.end_date) return `${item.start_date} — ${item.end_date}`
+  if (item.start_date) return `${item.start_date} 起`
+  if (item.end_date) return `至 ${item.end_date}`
+  return "日期待确认"
+}
+
+function ExhibitionRecommendationPicker({
+  apiBaseUrl,
+  capturedAt,
+  latitude,
+  longitude,
+  location,
+  selectedSourceId,
+  selectedName,
+  onSelect,
+  onManualChange,
+}: {
+  apiBaseUrl: string
+  capturedAt: string
+  latitude: string
+  longitude: string
+  location: string
+  selectedSourceId: string
+  selectedName: string
+  onSelect: (item: ExhibitionRecommendation | null) => void
+  onManualChange: (value: string) => void
+}) {
+  const [recommendations, setRecommendations] = useState<ExhibitionRecommendation[]>([])
+  const [query, setQuery] = useState("")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const hasContext = Boolean(
+      capturedAt.trim()
+      || location.trim()
+      || (latitude.trim() && longitude.trim())
+      || query.trim(),
+    )
+    if (!hasContext) {
+      const resetTimer = window.setTimeout(() => {
+        setRecommendations([])
+        setError(null)
+      }, 0)
+      return () => window.clearTimeout(resetTimer)
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams({ limit: "10" })
+      if (capturedAt.trim()) params.set("captured_at", capturedAt.trim())
+      if (location.trim()) params.set("location", location.trim())
+      if (latitude.trim()) params.set("latitude", latitude.trim())
+      if (longitude.trim()) params.set("longitude", longitude.trim())
+      if (query.trim()) params.set("q", query.trim())
+      setLoading(true)
+      setError(null)
+      void fetchJson<ExhibitionRecommendation[]>(
+        `${apiBaseUrl}/api/exhibition-catalog/recommendations?${params.toString()}`,
+        { signal: controller.signal },
+      )
+        .then((items) => setRecommendations(items))
+        .catch((nextError) => {
+          if (!controller.signal.aborted) {
+            setError(nextError instanceof Error ? nextError.message : "展览推荐加载失败")
+          }
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false)
+        })
+    }, 320)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [apiBaseUrl, capturedAt, latitude, longitude, location, query])
+
+  const options = recommendations.map((item) => ({
+    value: item.source_id,
+    label: (
+      <div className="exhibition-option">
+        <strong>{item.title}</strong>
+        <span>
+          {[item.city, item.venue, formatRecommendationDate(item)].filter(Boolean).join(" · ")}
+        </span>
+        {item.match_reasons.length ? <small>{item.match_reasons.join("；")}</small> : null}
+      </div>
+    ),
+  }))
+  if (
+    selectedSourceId
+    && !options.some((option) => option.value === selectedSourceId)
+  ) {
+    options.unshift({
+      value: selectedSourceId,
+      label: (
+        <div className="exhibition-option">
+          <strong>{selectedName || "已关联展览"}</strong>
+          <span>已保存的展览关联</span>
+        </div>
+      ),
+    })
+  }
+
+  return (
+    <div className="exhibition-picker">
+      <Select
+        allowClear
+        showSearch
+        filterOption={false}
+        loading={loading}
+        value={selectedSourceId || undefined}
+        placeholder={
+          capturedAt || latitude || longitude || location
+            ? "按 EXIF 时间与地点推荐展览"
+            : "照片含时间或定位后自动推荐"
+        }
+        options={options}
+        popupMatchSelectWidth={420}
+        notFoundContent={loading ? "正在检索…" : "没有符合条件的展览"}
+        onSearch={setQuery}
+        onClear={() => onSelect(null)}
+        onSelect={(sourceId) => {
+          const item = recommendations.find((candidate) => candidate.source_id === sourceId)
+          if (item) onSelect(item)
+        }}
+      />
+      <Input
+        value={selectedName}
+        placeholder="找不到时可手动填写展览名称"
+        onChange={(event) => onManualChange(event.target.value)}
+      />
+      {error ? <span className="field-help error">{error}</span> : null}
+      {!error && recommendations.length > 0 ? (
+        <span className="field-help">
+          已结合拍摄日期、GPS 邻近场馆和地点文字排序，常设展会持续参与推荐。
+        </span>
+      ) : null}
+    </div>
+  )
 }
 
 function postFormDataWithProgress<T>(url: string, formData: FormData, onProgress: (progress: number) => void): Promise<T> {
@@ -455,6 +619,8 @@ function buildBaseForm(): FormState {
 function cloneFormState(form: FormState): FormState {
   return {
     ...form,
+    catalogExhibitionId: form.catalogExhibitionId ?? null,
+    catalogExhibitionSourceId: form.catalogExhibitionSourceId ?? "",
     tags: [...form.tags],
   }
 }
@@ -560,6 +726,11 @@ function buildMetadataSyncDiffRows(
     ? [
         { label: "展出地点", target: target.displayLocationName, source: source.displayLocationName },
         { label: "对应展览", target: target.exhibitionName, source: source.exhibitionName },
+        {
+          label: "展览目录关联",
+          target: target.catalogExhibitionSourceId,
+          source: source.catalogExhibitionSourceId,
+        },
         { label: "纬度", target: target.latitude, source: source.latitude },
         { label: "经度", target: target.longitude, source: source.longitude },
       ]
@@ -605,6 +776,8 @@ function applySourceMetadata(
     ...(selection.location ? {
       displayLocationName: source.displayLocationName,
       exhibitionName: source.exhibitionName,
+      catalogExhibitionId: source.catalogExhibitionId,
+      catalogExhibitionSourceId: source.catalogExhibitionSourceId,
       latitude: source.latitude,
       longitude: source.longitude,
     } : {}),
@@ -655,6 +828,8 @@ function applySharedForm(current: FormState, shared: FormState): FormState {
     placeOfExcavation: shared.placeOfExcavation,
     displayLocationName: shared.displayLocationName,
     exhibitionName: shared.exhibitionName,
+    catalogExhibitionId: shared.catalogExhibitionId,
+    catalogExhibitionSourceId: shared.catalogExhibitionSourceId,
     latitude: shared.latitude,
     longitude: shared.longitude,
     description: shared.description,
@@ -708,7 +883,11 @@ function changedParts(item: ExifWorkbenchItem) {
   const initial = item.originalForm
   const current = item.form
   if (initial.latitude !== current.latitude || initial.longitude !== current.longitude) changed.push("GPS")
-  if (initial.displayLocationName !== current.displayLocationName || initial.exhibitionName !== current.exhibitionName) changed.push("展出")
+  if (
+    initial.displayLocationName !== current.displayLocationName
+    || initial.exhibitionName !== current.exhibitionName
+    || initial.catalogExhibitionSourceId !== current.catalogExhibitionSourceId
+  ) changed.push("展出")
   if (initial.cameraModel !== current.cameraModel || initial.lensModel !== current.lensModel || initial.capturedAt !== current.capturedAt || initial.shutterSpeed !== current.shutterSpeed || initial.aperture !== current.aperture || initial.iso !== current.iso) changed.push("拍摄")
   if (initial.name !== current.name || initial.era !== current.era || initial.museumName !== current.museumName || initial.placeOfExcavation !== current.placeOfExcavation) changed.push("信息")
   if (initial.description !== current.description || initial.tags.join("\u0000") !== current.tags.join("\u0000")) changed.push("内容")
@@ -779,6 +958,15 @@ async function geocodeLocationName(name: string): Promise<{ latitude: number; lo
   })
 }
 
+async function reverseGeocodeCoordinates(latitude: number, longitude: number): Promise<string> {
+  const AMap = await loadAmap()
+  return new Promise((resolve) => {
+    new AMap.Geocoder({}).getAddress([longitude, latitude], (status, result) => {
+      resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")
+    })
+  })
+}
+
 function GpsMapPicker({ latitude, longitude, onPick }: {
   latitude: string
   longitude: string
@@ -794,12 +982,10 @@ function GpsMapPicker({ latitude, longitude, onPick }: {
     const nextLongitude = event.lnglat.getLng().toFixed(6)
     let locationName = ""
     try {
-      const AMap = await loadAmap()
-      locationName = await new Promise<string>((resolve) => {
-        new AMap.Geocoder({}).getAddress([Number(nextLongitude), Number(nextLatitude)], (status, result) => {
-          resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")
-        })
-      })
+      locationName = await reverseGeocodeCoordinates(
+        Number(nextLatitude),
+        Number(nextLongitude),
+      )
     } catch {
       // Coordinates remain usable even if reverse geocoding is unavailable.
     }
@@ -877,6 +1063,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [batchRemove, setBatchRemove] = useState("")
   const [batchLocationName, setBatchLocationName] = useState("")
   const [batchExhibitionName, setBatchExhibitionName] = useState("常设")
+  const [batchCatalogExhibitionId, setBatchCatalogExhibitionId] = useState<number | null>(null)
+  const [batchCatalogExhibitionSourceId, setBatchCatalogExhibitionSourceId] = useState("")
   const [batchLatitude, setBatchLatitude] = useState("")
   const [batchLongitude, setBatchLongitude] = useState("")
   const [metadataSyncSourceId, setMetadataSyncSourceId] = useState("")
@@ -1182,6 +1370,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (!selectedItem) return
     setBatchLocationName(selectedItem.form.displayLocationName)
     setBatchExhibitionName(selectedItem.form.exhibitionName)
+    setBatchCatalogExhibitionId(selectedItem.form.catalogExhibitionId)
+    setBatchCatalogExhibitionSourceId(selectedItem.form.catalogExhibitionSourceId)
     setBatchLatitude(selectedItem.form.latitude)
     setBatchLongitude(selectedItem.form.longitude)
     setSubmitNotice({ type: "success", text: "已带入当前图片的展出地点与 GPS，可继续微调后应用到全部图片" })
@@ -1256,6 +1446,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         ...item.form,
         displayLocationName: batchLocationName.trim() || item.form.displayLocationName,
         exhibitionName: batchExhibitionName.trim() || item.form.exhibitionName,
+        catalogExhibitionId: batchCatalogExhibitionId,
+        catalogExhibitionSourceId: batchCatalogExhibitionSourceId,
         latitude: latitude === null ? item.form.latitude : String(latitude),
         longitude: longitude === null ? item.form.longitude : String(longitude),
       },
@@ -1317,6 +1509,19 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         iso: metadata.iso?.toString() ?? "",
         latitude: metadata.latitude?.toString() ?? "",
         longitude: metadata.longitude?.toString() ?? "",
+      }
+      if (metadata.latitude !== null && metadata.longitude !== null) {
+        try {
+          form = {
+            ...form,
+            displayLocationName: await reverseGeocodeCoordinates(
+              metadata.latitude,
+              metadata.longitude,
+            ),
+          }
+        } catch {
+          // GPS is still sufficient for nearest-museum recommendation.
+        }
       }
       previewUrl = metadata.preview_data_url ?? ""
     } catch {
@@ -1709,6 +1914,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         data.append("description", target.form.description.trim() || "")
         data.append("display_location_name", target.form.displayLocationName.trim() || "")
         data.append("exhibition_name", target.form.exhibitionName.trim() || "常设")
+        if (target.form.catalogExhibitionSourceId) {
+          data.append("catalog_exhibition_source_id", target.form.catalogExhibitionSourceId)
+        }
+        if (target.form.catalogExhibitionId !== null) {
+          data.append("catalog_exhibition_id", String(target.form.catalogExhibitionId))
+        }
         if (latitude !== null) data.append("latitude", String(latitude))
         if (longitude !== null) data.append("longitude", String(longitude))
         data.append("camera_model", target.form.cameraModel.trim())
@@ -2118,7 +2329,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </label>
                   <label className="exif-tool-field">
                     <span>对应展览</span>
-                    <Input value={batchExhibitionName} placeholder="例如：常设展" onChange={(event) => setBatchExhibitionName(event.target.value)} />
+                    <Input
+                      value={batchExhibitionName}
+                      placeholder="例如：常设展"
+                      onChange={(event) => {
+                        setBatchExhibitionName(event.target.value)
+                        setBatchCatalogExhibitionId(null)
+                        setBatchCatalogExhibitionSourceId("")
+                      }}
+                    />
                   </label>
                   <label className="exif-tool-field">
                     <span>纬度</span>
@@ -2310,7 +2529,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         <Input
                           value={sharedForm.exhibitionName}
                           placeholder="例如：常设展 / 汉唐文明展"
-                          onChange={(event) => updateSharedForm({ exhibitionName: event.target.value })}
+                          onChange={(event) => updateSharedForm({
+                            exhibitionName: event.target.value,
+                            catalogExhibitionId: null,
+                            catalogExhibitionSourceId: "",
+                          })}
                         />
                       </label>
                       <label className="field">
@@ -2537,10 +2760,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
                       <label className="field">
                         <span>对应展览</span>
-                        <Input
-                          value={selectedItem.form.exhibitionName}
-                          placeholder="例如：常设展 / 汉唐文明展"
-                          onChange={(event) => updateSelectedForm({ exhibitionName: event.target.value })}
+                        <ExhibitionRecommendationPicker
+                          apiBaseUrl={apiBaseUrl}
+                          capturedAt={selectedItem.form.capturedAt}
+                          latitude={selectedItem.form.latitude}
+                          longitude={selectedItem.form.longitude}
+                          location={selectedItem.form.displayLocationName}
+                          selectedSourceId={selectedItem.form.catalogExhibitionSourceId}
+                          selectedName={selectedItem.form.exhibitionName}
+                          onSelect={(item) => updateSelectedForm(item ? {
+                            exhibitionName: item.title,
+                            catalogExhibitionId: item.id,
+                            catalogExhibitionSourceId: item.source_id,
+                          } : {
+                            exhibitionName: "常设",
+                            catalogExhibitionId: null,
+                            catalogExhibitionSourceId: "",
+                          })}
+                          onManualChange={(value) => updateSelectedForm({
+                            exhibitionName: value,
+                            catalogExhibitionId: null,
+                            catalogExhibitionSourceId: "",
+                          })}
                         />
                       </label>
 

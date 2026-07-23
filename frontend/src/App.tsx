@@ -247,7 +247,11 @@ function getDefaultView(): View {
 
 function normalizeViewFromPath(pathname: string): View {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/"
-  if (/^\/exhibitions\/\d+$/.test(normalizedPath)) {
+  if (
+    /^\/exhibitions\/\d+$/.test(normalizedPath)
+    || /^\/exhibitions\/source\/[A-Za-z0-9_-]+$/.test(normalizedPath)
+    || /^\/exhibitions\/history\/[^/]+$/.test(normalizedPath)
+  ) {
     return "exhibitions"
   }
   const matched = (Object.entries(VIEW_PATHS) as Array<[View, string]>).find(
@@ -738,7 +742,11 @@ function App() {
     const targetPath = getPathForView(normalizedView)
     const isExhibitionDetailPath =
       normalizedView === "exhibitions"
-      && /^\/exhibitions\/\d+\/?$/.test(window.location.pathname)
+      && (
+        /^\/exhibitions\/\d+\/?$/.test(window.location.pathname)
+        || /^\/exhibitions\/source\/[A-Za-z0-9_-]+\/?$/.test(window.location.pathname)
+        || /^\/exhibitions\/history\/[^/]+\/?$/.test(window.location.pathname)
+      )
     if (window.location.pathname !== targetPath && !isExhibitionDetailPath) {
       window.history.replaceState({}, "", targetPath)
     }

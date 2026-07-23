@@ -61,6 +61,8 @@ type GalleryArtifact = {
     name: string
     start_at: string | null
     end_at: string | null
+    catalog_source_id?: string | null
+    catalog_exhibition_id?: number | null
   }>
   images: GalleryImage[]
 }
@@ -603,6 +605,11 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
   const thumbnailStripRef = useRef<HTMLDivElement | null>(null)
+  const requestedArtifactIdRef = useRef<number | null>((() => {
+    const value = new URLSearchParams(window.location.search).get("artifact")
+    const parsed = value ? Number(value) : Number.NaN
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  })())
 
   const fetchJson = useCallback(async <T,>(input: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(input, init)
@@ -644,6 +651,14 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   useEffect(() => {
     void load("")
   }, [load])
+
+  useEffect(() => {
+    const requestedArtifactId = requestedArtifactIdRef.current
+    if (requestedArtifactId === null || items.length === 0) return
+    const requestedArtifact = items.find((item) => item.id === requestedArtifactId)
+    requestedArtifactIdRef.current = null
+    if (requestedArtifact) setActive(requestedArtifact)
+  }, [items])
 
   useEffect(() => {
     void (async () => {
@@ -1443,14 +1458,32 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     <span>历史展出</span>
                                   </span>
                                   <div className="gallery-badge-row">
-                                    {active.exhibitions.map((exhibition) => (
-                                      <Tag key={exhibition.id}>
-                                        {exhibition.museum_name} · {exhibition.name}
-                                        {exhibition.start_at || exhibition.end_at
-                                          ? ` (${exhibition.start_at?.slice(0, 10) ?? "未知"} - ${exhibition.end_at?.slice(0, 10) ?? "至今"})`
-                                          : ""}
-                                      </Tag>
-                                    ))}
+                                    {active.exhibitions.map((exhibition) => {
+                                      const label = (
+                                        <>
+                                          {exhibition.museum_name} · {exhibition.name}
+                                          {exhibition.start_at || exhibition.end_at
+                                            ? ` (${exhibition.start_at?.slice(0, 10) ?? "未知"} - ${exhibition.end_at?.slice(0, 10) ?? "至今"})`
+                                            : ""}
+                                        </>
+                                      )
+                                      const detailPath = exhibition.catalog_source_id
+                                        ? `/exhibitions/source/${encodeURIComponent(exhibition.catalog_source_id)}`
+                                        : exhibition.catalog_exhibition_id
+                                          ? `/exhibitions/${exhibition.catalog_exhibition_id}`
+                                          : `/exhibitions/history/${encodeURIComponent(exhibition.name)}?${new URLSearchParams({
+                                              museum: exhibition.museum_name,
+                                            }).toString()}`
+                                      return (
+                                        <a
+                                          key={exhibition.id}
+                                          className="gallery-exhibition-link"
+                                          href={detailPath}
+                                        >
+                                          {label}
+                                        </a>
+                                      )
+                                    })}
                                   </div>
                                 </div>
                               ) : null}

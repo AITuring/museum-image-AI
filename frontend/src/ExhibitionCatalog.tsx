@@ -6,6 +6,7 @@ import {
   CalendarDays,
   Clock3,
   ExternalLink,
+  Images,
   MapPin,
   Search,
   Ticket,
@@ -49,6 +50,28 @@ type ExhibitionItem = {
 type ExhibitionDetail = ExhibitionItem & {
   description: string | null
   image_urls: string[]
+}
+
+type ExhibitionArtifact = {
+  id: number
+  name: string
+  museum_name: string
+  era: string | null
+  cover_url: string | null
+  captured_at: string | null
+}
+
+type ExhibitionDetailReference =
+  | { kind: "id"; value: string }
+  | { kind: "source"; value: string }
+  | { kind: "history"; value: string; museum: string | null }
+
+type HistoricalExhibitionDetail = {
+  name: string
+  museum_name: string
+  start_at: string | null
+  end_at: string | null
+  artifacts: ExhibitionArtifact[]
 }
 
 type CatalogResponse = {
@@ -105,9 +128,25 @@ function formatSyncTime(value: string | null) {
   })}`
 }
 
-function getDetailIdFromPath() {
-  const match = window.location.pathname.match(/^\/exhibitions\/(\d+)\/?$/)
-  return match ? Number(match[1]) : null
+function resolveBackendAssetUrl(apiBaseUrl: string, value: string) {
+  if (!value.startsWith("/")) return value
+  return `${apiBaseUrl}${value}`
+}
+
+function getDetailReferenceFromPath(): ExhibitionDetailReference | null {
+  const numericMatch = window.location.pathname.match(/^\/exhibitions\/(\d+)\/?$/)
+  if (numericMatch) return { kind: "id", value: numericMatch[1] }
+  const sourceMatch = window.location.pathname.match(
+    /^\/exhibitions\/source\/([A-Za-z0-9_-]+)\/?$/,
+  )
+  if (sourceMatch) return { kind: "source", value: sourceMatch[1] }
+  const historyMatch = window.location.pathname.match(/^\/exhibitions\/history\/([^/]+)\/?$/)
+  if (!historyMatch) return null
+  return {
+    kind: "history",
+    value: decodeURIComponent(historyMatch[1]),
+    museum: new URLSearchParams(window.location.search).get("museum"),
+  }
 }
 
 function navigateTo(path: string) {
@@ -119,12 +158,13 @@ function navigateTo(path: string) {
 
 function ExhibitionDetailView({
   apiBaseUrl,
-  exhibitionId,
+  detailReference,
 }: {
   apiBaseUrl: string
-  exhibitionId: number
+  detailReference: ExhibitionDetailReference
 }) {
   const [item, setItem] = useState<ExhibitionDetail | null>(null)
+  const [artifacts, setArtifacts] = useState<ExhibitionArtifact[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -134,12 +174,69 @@ function ExhibitionDetailView({
       setLoading(true)
       setError(null)
       try {
+        if (detailReference.kind === "history") {
+          const params = new URLSearchParams({ name: detailReference.value })
+          if (detailReference.museum) params.set("museum_name", detailReference.museum)
+          const historyResponse = await fetch(
+            `${apiBaseUrl}/api/exhibition-history?${params.toString()}`,
+            { signal: controller.signal },
+          )
+          if (!historyResponse.ok) throw new Error(`HTTP ${historyResponse.status}`)
+          const history = (await historyResponse.json()) as HistoricalExhibitionDetail
+          const today = new Date().toISOString().slice(0, 10)
+          const startDate = history.start_at?.slice(0, 10) ?? null
+          const endDate = history.end_at?.slice(0, 10) ?? null
+          const status: ExhibitionItem["status"] = endDate && endDate < today
+            ? "ended"
+            : startDate && startDate > today
+              ? "upcoming"
+              : "ongoing"
+          setItem({
+            id: -1,
+            source_id: "",
+            source_url: "",
+            source_name: "Museum",
+            title: history.name,
+            region: "历史展出",
+            city: history.museum_name,
+            venue: history.museum_name,
+            address: null,
+            start_date: startDate,
+            end_date: endDate,
+            start_year: startDate ? Number(startDate.slice(0, 4)) : null,
+            end_year: endDate ? Number(endDate.slice(0, 4)) : null,
+            is_permanent: false,
+            opening_hours: null,
+            fee: null,
+            summary: "该页面由已上传文物的历史展出记录汇总。",
+            description: "该页面由已上传文物的历史展出记录汇总。后续匹配到全球展览目录后，将自动切换为完整展览资料。",
+            image_urls: [],
+            cover_url: history.artifacts[0]?.cover_url ?? null,
+            source_time_text: null,
+            synced_at: new Date().toISOString(),
+            status,
+          })
+          setArtifacts(history.artifacts)
+          return
+        }
         const response = await fetch(
-          `${apiBaseUrl}/api/exhibition-catalog/${exhibitionId}`,
+          detailReference.kind === "source"
+            ? `${apiBaseUrl}/api/exhibition-catalog/source/${encodeURIComponent(detailReference.value)}`
+            : `${apiBaseUrl}/api/exhibition-catalog/${detailReference.value}`,
           { signal: controller.signal },
         )
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        setItem((await response.json()) as ExhibitionDetail)
+        const detail = (await response.json()) as ExhibitionDetail
+        setItem(detail)
+        const artifactResponse = await fetch(
+          `${apiBaseUrl}/api/exhibition-catalog/source/${encodeURIComponent(detail.source_id)}/artifacts`,
+          { signal: controller.signal },
+        )
+        if (artifactResponse.ok) {
+          setArtifacts((await artifactResponse.json()) as ExhibitionArtifact[])
+        } else {
+          setArtifacts([])
+        }
       } catch (err) {
         if (!controller.signal.aborted) {
           setError(err instanceof Error ? err.message : "加载展览详情失败")
@@ -152,7 +249,7 @@ function ExhibitionDetailView({
       controller.abort()
       window.clearTimeout(timeout)
     }
-  }, [apiBaseUrl, exhibitionId])
+  }, [apiBaseUrl, detailReference])
 
   if (loading) {
     return <section className="exhibition-detail-state"><Spin size="small" /> 正在读取展览详情…</section>
@@ -190,7 +287,7 @@ function ExhibitionDetailView({
         <div className="exhibition-detail-heading">
           <div>
             <span className={`exhibition-detail-status ${item.status}`}>
-              {STATUS_LABELS[item.status]}
+              {item.source_name === "Museum" ? "历史记录" : STATUS_LABELS[item.status]}
             </span>
             <span className="exhibition-detail-region">{item.region} · {item.city}</span>
           </div>
@@ -229,6 +326,41 @@ function ExhibitionDetailView({
               </div>
             </section>
           ) : null}
+
+          <section className="exhibition-detail-artifacts">
+            <div className="exhibition-detail-section-title">
+              <span className="exhibition-kicker">UPLOADED ARTIFACTS</span>
+              <h3>已上传文物</h3>
+              <p>{artifacts.length > 0 ? `已有 ${artifacts.length} 件文物关联到本次展览。` : "暂时还没有关联文物。"}</p>
+            </div>
+            {artifacts.length > 0 ? (
+              <div className="exhibition-artifact-grid">
+                {artifacts.map((artifact) => (
+                  <a
+                    key={artifact.id}
+                    className="exhibition-artifact-card"
+                    href={`/gallery?artifact=${artifact.id}`}
+                  >
+                    <div className="exhibition-artifact-cover">
+                      {artifact.cover_url ? (
+                        <img
+                          src={resolveBackendAssetUrl(apiBaseUrl, artifact.cover_url)}
+                          alt={artifact.name}
+                          loading="lazy"
+                        />
+                      ) : (
+                        <Images size={24} aria-hidden="true" />
+                      )}
+                    </div>
+                    <div>
+                      <strong>{artifact.name}</strong>
+                      <span>{artifact.era || "时代待确认"} · {artifact.museum_name}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </section>
         </main>
 
         <aside className="exhibition-detail-aside">
@@ -260,10 +392,12 @@ function ExhibitionDetailView({
               </div>
             ) : null}
           </dl>
-          <a className="exhibition-source-button" href={item.source_url} target="_blank" rel="noreferrer">
-            查看原始来源
-            <ExternalLink size={14} />
-          </a>
+          {item.source_url ? (
+            <a className="exhibition-source-button" href={item.source_url} target="_blank" rel="noreferrer">
+              查看原始来源
+              <ExternalLink size={14} />
+            </a>
+          ) : null}
           <span className="exhibition-detail-sync">最后同步 {formatSyncTime(item.synced_at).replace("更新于 ", "")}</span>
         </aside>
       </div>
@@ -272,7 +406,9 @@ function ExhibitionDetailView({
 }
 
 export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }) {
-  const [detailId, setDetailId] = useState<number | null>(() => getDetailIdFromPath())
+  const [detailReference, setDetailReference] = useState<ExhibitionDetailReference | null>(
+    () => getDetailReferenceFromPath(),
+  )
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [year, setYear] = useState<number | null>(new Date().getFullYear())
@@ -286,7 +422,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const handleLocationChange = () => setDetailId(getDetailIdFromPath())
+    const handleLocationChange = () => setDetailReference(getDetailReferenceFromPath())
     window.addEventListener("popstate", handleLocationChange)
     return () => window.removeEventListener("popstate", handleLocationChange)
   }, [])
@@ -332,10 +468,10 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
   )
 
   useEffect(() => {
-    if (detailId !== null) return
+    if (detailReference !== null) return
     const timeout = window.setTimeout(() => void fetchPage(1), 0)
     return () => window.clearTimeout(timeout)
-  }, [detailId, fetchPage])
+  }, [detailReference, fetchPage])
 
   const groupedItems = useMemo(() => {
     const groups = new Map<string, ExhibitionItem[]>()
@@ -370,8 +506,8 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
     navigateTo(`/exhibitions/${exhibitionId}`)
   }, [])
 
-  if (detailId !== null) {
-    return <ExhibitionDetailView apiBaseUrl={apiBaseUrl} exhibitionId={detailId} />
+  if (detailReference !== null) {
+    return <ExhibitionDetailView apiBaseUrl={apiBaseUrl} detailReference={detailReference} />
   }
 
   return (
