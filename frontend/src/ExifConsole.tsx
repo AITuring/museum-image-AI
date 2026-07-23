@@ -1934,6 +1934,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         type: target.localFile.type,
         lastModified: target.localFile.lastModified,
       })
+      let sourceHash: string | null = null
+      let exifPrepared = false
       let localWriteSucceeded = false
       let resolvedWriteHandle = target.fileHandle
       if (target.fileHandle) {
@@ -1946,7 +1948,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           body: exifForm,
         })
         if (!response.ok) throw new Error(`本地 EXIF 回写准备失败（HTTP ${response.status}）`)
+        sourceHash = response.headers.get("X-Source-Hash")
         const editedBlob = await response.blob()
+        exifPrepared = true
         try {
           if (directoryHandle && !await verifyWritablePermission(directoryHandle)) {
             throw new Error("文件夹写入权限已失效，请重新选择照片文件夹")
@@ -1989,6 +1993,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       formData.append("file", uploadFile)
       appendMetadata(formData)
       formData.append("tags", JSON.stringify(target.form.tags))
+      if (exifPrepared) formData.append("exif_prepared", "true")
+      if (sourceHash) formData.append("source_hash", sourceHash)
       const result = await postFormDataWithProgress<ArtifactSubmitResult>(`${apiBaseUrl}/api/artifacts/exif-submit-file`, formData, (progress) => {
         updateItem(itemId, (item) => ({ ...item, uploadProgress: progress, uploadStage: "正在上传 OSS 并写入档案" }))
       })
@@ -2030,13 +2036,19 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     const pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
     let succeeded = 0
     let failed = 0
-    for (const item of pendingItems) {
-      if (await submitOne(item.id)) {
-        succeeded += 1
-      } else {
-        failed += 1
+    const queue = [...pendingItems]
+    const worker = async () => {
+      while (queue.length > 0) {
+        const item = queue.shift()
+        if (!item) return
+        if (await submitOne(item.id)) {
+          succeeded += 1
+        } else {
+          failed += 1
+        }
       }
     }
+    await Promise.all(Array.from({ length: Math.min(2, pendingItems.length) }, () => worker()))
     setSubmittingAll(false)
     setSubmitNotice(failed > 0
       ? { type: "error", text: `批量提交完成：${succeeded} 张成功，${failed} 张失败。可在队列中点击“重试”后再次提交。` }

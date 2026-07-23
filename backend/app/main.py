@@ -7,6 +7,7 @@ import math
 import mimetypes
 import re
 import tempfile
+import time as time_module
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from io import BytesIO
@@ -17,7 +18,7 @@ from typing import BinaryIO
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -178,6 +179,8 @@ ERA_TOKEN_CANDIDATES = [
     "民国",
 ]
 CATALOG_NO_PATTERN = re.compile(r"^[A-Za-z]{2,}[\-_]?\d{3,}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+cloud_http_client: httpx.AsyncClient | None = None
 MUSEUM_SEGMENT_PATTERN = re.compile(r"(博物馆|纪念馆|美术馆|收藏|馆藏|藏)$")
 
 logger = logging.getLogger("app.vision")
@@ -603,6 +606,7 @@ def sync_reference_options(connection) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    global cloud_http_client
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_VARIANT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with engine.begin() as connection:
@@ -628,9 +632,15 @@ async def lifespan(_: FastAPI):
         with ExhibitionSessionLocal() as exhibition_db:
             if exhibition_catalog_count(exhibition_db) == 0:
                 exhibition_sync_coordinator.start(mode="incremental", trigger="bootstrap")
+    cloud_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(120, connect=15),
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    )
     try:
         yield
     finally:
+        await cloud_http_client.aclose()
+        cloud_http_client = None
         await exhibition_sync_coordinator.stop()
 
 
@@ -642,6 +652,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Source-Hash", "Server-Timing"],
 )
 
 
@@ -1300,19 +1311,28 @@ def find_artifact_images_by_content(
 ) -> list[ArtifactImage]:
     if not content_hash:
         return []
-    candidates = list(
+    candidates = db.execute(
+        select(ArtifactImage.id, ArtifactImage.content_hash)
+        .where(ArtifactImage.content_hash.is_not(None))
+        .order_by(ArtifactImage.id.asc())
+    )
+    matched_ids = [
+        image_id
+        for image_id, candidate_hash in candidates
+        if (
+            (distance := fingerprint_distance(content_hash, candidate_hash)) is not None
+            and distance <= max_distance
+        )
+    ]
+    if not matched_ids:
+        return []
+    return list(
         db.scalars(
             artifact_image_query()
-            .where(ArtifactImage.content_hash.is_not(None))
+            .where(ArtifactImage.id.in_(matched_ids))
             .order_by(ArtifactImage.id.asc())
         ).unique()
     )
-    matches: list[ArtifactImage] = []
-    for image in candidates:
-        distance = fingerprint_distance(content_hash, image.content_hash)
-        if distance is not None and distance <= max_distance:
-            matches.append(image)
-    return matches
 
 
 def cleanup_existing_content_duplicates() -> int:
@@ -1540,49 +1560,64 @@ async def submit_artifact_to_cloud(
         submit_data["existing_artifact_id"] = str(existing_artifact_id)
 
     cloud_url = f"{base}{settings.api_prefix}/ingest/artifacts"
+    client = cloud_http_client
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(
+            timeout=httpx.Timeout(120, connect=15),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        )
+    started_at = time_module.perf_counter()
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            for attempt in range(2):
-                try:
-                    response = await client.post(
-                        cloud_url,
-                        files={"image": (image_name, image_bytes, content_type)},
-                        data=submit_data,
-                        headers={"Authorization": f"Bearer {settings.ingest_token}"},
-                    )
-                except httpx.RequestError as exc:
-                    if attempt == 0:
-                        logger.warning("cloud ingest connection failed for %s; retrying once: %s", image_name, exc)
-                        await asyncio.sleep(0.8)
-                        continue
-                    raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
-
-                if response.status_code in {502, 503, 504} and attempt == 0:
-                    logger.warning(
-                        "cloud ingest returned HTTP %s for %s; retrying once. response=%s",
-                        response.status_code,
-                        image_name,
-                        response.text[:2000],
-                    )
+        for attempt in range(2):
+            try:
+                response = await client.post(
+                    cloud_url,
+                    files={"image": (image_name, image_bytes, content_type)},
+                    data=submit_data,
+                    headers={"Authorization": f"Bearer {settings.ingest_token}"},
+                )
+            except httpx.RequestError as exc:
+                if attempt == 0:
+                    logger.warning("cloud ingest connection failed for %s; retrying once: %s", image_name, exc)
                     await asyncio.sleep(0.8)
                     continue
-                if not response.is_success:
-                    detail = extract_http_error_detail(response)
-                    logger.error(
-                        "cloud ingest failed for %s with HTTP %s: %s",
-                        image_name,
-                        response.status_code,
-                        detail,
-                    )
-                    raise HTTPException(
-                        status_code=response.status_code,
-                        detail=f"提交云端失败：{detail}",
-                    )
-                break
+                raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
+
+            if response.status_code in {502, 503, 504} and attempt == 0:
+                logger.warning(
+                    "cloud ingest returned HTTP %s for %s; retrying once. response=%s",
+                    response.status_code,
+                    image_name,
+                    response.text[:2000],
+                )
+                await asyncio.sleep(0.8)
+                continue
+            if not response.is_success:
+                detail = extract_http_error_detail(response)
+                logger.error(
+                    "cloud ingest failed for %s with HTTP %s: %s",
+                    image_name,
+                    response.status_code,
+                    detail,
+                )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"提交云端失败：{detail}",
+                )
+            break
     except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
         if isinstance(exc, HTTPException):
             raise exc
         raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+        logger.info(
+            "cloud ingest round trip completed for %s in %.0fms",
+            image_name,
+            (time_module.perf_counter() - started_at) * 1000,
+        )
 
     return ArtifactRead.model_validate(response.json())
 
@@ -2618,16 +2653,19 @@ async def prepare_artifact_exif_file(
     longitude: float | None = Form(None),
 ) -> Response:
     """Return edited bytes for a user-authorised local overwrite."""
+    started_at = time_module.perf_counter()
     original_bytes = await file.read()
     if not original_bytes:
         raise HTTPException(status_code=400, detail="图片内容为空。")
+    source_hash = await run_in_threadpool(hash_bytes, original_bytes)
     description_text = description or build_fallback_description(
         museum_name=museum_name,
         name=name,
         era=era,
         Place_of_Excavation=Place_of_Excavation,
     )
-    image_bytes = update_image_exif_metadata(
+    image_bytes = await run_in_threadpool(
+        update_image_exif_metadata,
         original_bytes,
         artifact_name=name,
         description=description_text,
@@ -2638,9 +2676,18 @@ async def prepare_artifact_exif_file(
         place_of_excavation=Place_of_Excavation,
         display_location_name=display_location_name,
     )
-    verify_written_gps(image_bytes, latitude, longitude)
+    await run_in_threadpool(verify_written_gps, image_bytes, latitude, longitude)
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
-    return Response(content=image_bytes, media_type=content_type)
+    elapsed_ms = (time_module.perf_counter() - started_at) * 1000
+    logger.info("prepared EXIF for %s in %.0fms", file.filename, elapsed_ms)
+    return Response(
+        content=image_bytes,
+        media_type=content_type,
+        headers={
+            "X-Source-Hash": source_hash,
+            "Server-Timing": f'exif;dur={elapsed_ms:.1f};desc="EXIF prepare"',
+        },
+    )
 
 
 @app.post(f"{settings.api_prefix}/artifacts/extract-exif-file")
@@ -2741,6 +2788,8 @@ async def submit_artifact_with_exif_file(
     iso: int | None = Form(None),
     existing_artifact_id: int | None = Form(None),
     skip_existing_match: bool = Form(False),
+    exif_prepared: bool = Form(False),
+    source_hash: str | None = Form(None),
 ) -> ArtifactRead:
     # #region debug-point A:submit-entry
     report_debug_event(
@@ -2759,13 +2808,18 @@ async def submit_artifact_with_exif_file(
             "longitude": longitude,
             "existing_artifact_id": existing_artifact_id,
             "skip_existing_match": skip_existing_match,
+            "exif_prepared": exif_prepared,
         },
     )
     # #endregion
     original_bytes = await file.read()
     if not original_bytes:
         raise HTTPException(status_code=400, detail="图片内容为空。")
-    source_hash = hash_bytes(original_bytes)
+    normalized_source_hash = (source_hash or "").strip().lower() or None
+    if normalized_source_hash is not None and not SHA256_PATTERN.fullmatch(normalized_source_hash):
+        raise HTTPException(status_code=400, detail="原图哈希格式不正确。")
+    if normalized_source_hash is None:
+        normalized_source_hash = await run_in_threadpool(hash_bytes, original_bytes)
 
     try:
         parsed_tags = json.loads(tags or "[]")
@@ -2782,18 +2836,25 @@ async def submit_artifact_with_exif_file(
         era=era,
         Place_of_Excavation=Place_of_Excavation,
     )
-    image_bytes = update_image_exif_metadata(
-        original_bytes,
-        artifact_name=name,
-        description=description_text,
-        latitude=latitude,
-        longitude=longitude,
-        museum_name=museum_name,
-        era=era,
-        place_of_excavation=Place_of_Excavation,
-        display_location_name=display_location_name,
-    )
-    verify_written_gps(image_bytes, latitude, longitude)
+    if exif_prepared:
+        # The local-overwrite endpoint already encoded and verified these exact
+        # bytes. Re-encoding a large JPEG here used to duplicate the slowest
+        # CPU step and could introduce another lossy generation.
+        image_bytes = original_bytes
+    else:
+        image_bytes = await run_in_threadpool(
+            update_image_exif_metadata,
+            original_bytes,
+            artifact_name=name,
+            description=description_text,
+            latitude=latitude,
+            longitude=longitude,
+            museum_name=museum_name,
+            era=era,
+            place_of_excavation=Place_of_Excavation,
+            display_location_name=display_location_name,
+        )
+    await run_in_threadpool(verify_written_gps, image_bytes, latitude, longitude)
     # #region debug-point B:submit-after-exif
     report_debug_event(
         session_id="exif-submit-parse",
@@ -2834,7 +2895,7 @@ async def submit_artifact_with_exif_file(
             aperture=aperture,
             iso=iso,
             edit_method=None,
-            source_hash=source_hash,
+            source_hash=normalized_source_hash,
             catalog_exhibition_source_id=catalog_exhibition_source_id,
             catalog_exhibition_id=catalog_exhibition_id,
         )
@@ -2859,7 +2920,8 @@ async def submit_artifact_with_exif_file(
     response_model=ArtifactRead,
     status_code=201,
 )
-async def ingest_artifact(
+def ingest_artifact(
+    background_tasks: BackgroundTasks,
     image: UploadFile = File(...),
     museum_name: str = Form(...),
     name: str = Form(...),
@@ -2888,18 +2950,25 @@ async def ingest_artifact(
     db: Session = Depends(get_db),
 ) -> Artifact | ArtifactRead:
     """Store the image in OSS and the metadata in the cloud DB. Bearer-token protected."""
+    started_at = time_module.perf_counter()
     require_ingest_token(authorization)
 
-    contents = await image.read()
+    contents = image.file.read()
     if not contents:
         raise HTTPException(status_code=400, detail="图片内容为空。")
     image_hash = hash_bytes(contents)
+    byte_duplicate = (
+        find_artifact_image_by_source_hash_local(db, source_hash)
+        or find_artifact_image_by_hash_local(db, image_hash)
+    )
     content_hash = image_content_fingerprint(contents)
-    duplicate_images = find_artifact_images_by_content(db, content_hash)
-    byte_duplicate = find_artifact_image_by_source_hash_local(db, source_hash) or find_artifact_image_by_hash_local(db, image_hash)
-    if byte_duplicate is not None and all(image.id != byte_duplicate.id for image in duplicate_images):
-        duplicate_images.append(byte_duplicate)
-        duplicate_images.sort(key=lambda item: item.id)
+    # Exact hashes use indexed lookups. Only genuinely new bytes need the
+    # perceptual-hash scan used to catch EXIF/re-encode variants.
+    duplicate_images = (
+        [byte_duplicate]
+        if byte_duplicate is not None
+        else find_artifact_images_by_content(db, content_hash)
+    )
     duplicate_image = duplicate_images[0] if duplicate_images else None
 
     image_metadata = build_image_metadata(
@@ -2946,9 +3015,11 @@ async def ingest_artifact(
         )
         artifact = existing_match.artifact if existing_match is not None else None
 
+    upload_started_at = time_module.perf_counter()
     image_url = upload_image(
         contents, image.filename or "image.jpg", image.content_type
     )
+    upload_elapsed_ms = (time_module.perf_counter() - upload_started_at) * 1000
 
     if artifact is not None:
         artifact.ai_status = "reviewed"
@@ -3020,23 +3091,43 @@ async def ingest_artifact(
     db.expire_all()
     refreshed = db.scalar(artifact_detail_query().where(Artifact.id == artifact.id))
     if duplicate_image is None:
+        logger.info(
+            "cloud ingest completed for %s in %.0fms (OSS %.0fms)",
+            image.filename,
+            (time_module.perf_counter() - started_at) * 1000,
+            upload_elapsed_ms,
+        )
         return refreshed
 
-    for old_url in set(replaced_urls):
-        try:
-            delete_image(old_url)
-        except Exception as exc:  # noqa: BLE001 - DB replacement must remain committed
-            logger.warning("delete replaced OSS image failed for %s: %s", old_url, exc)
+    old_urls = set(replaced_urls)
+    if old_urls:
+        background_tasks.add_task(delete_images_best_effort, old_urls)
     removed_count = max(0, len(duplicate_images) - 1)
     detail = "已用本次校正覆盖已有图片"
     if removed_count:
         detail += f"，并清理 {removed_count} 条历史重复图片记录"
+    logger.info(
+        "cloud ingest replacement completed for %s in %.0fms (OSS %.0fms; %d old objects queued)",
+        image.filename,
+        (time_module.perf_counter() - started_at) * 1000,
+        upload_elapsed_ms,
+        len(old_urls),
+    )
     return ArtifactRead.model_validate(refreshed).model_copy(
         update={
             "duplicate_image_replaced": True,
             "duplicate_image_detail": f"{detail}。",
         }
     )
+
+
+def delete_images_best_effort(urls: set[str]) -> None:
+    """Delete superseded OSS objects after the ingest response is sent."""
+    for old_url in urls:
+        try:
+            delete_image(old_url)
+        except Exception as exc:  # noqa: BLE001 - DB replacement must remain committed
+            logger.warning("delete replaced OSS image failed for %s: %s", old_url, exc)
 
 
 @app.post(
