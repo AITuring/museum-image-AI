@@ -420,58 +420,11 @@ def run_startup_migrations(connection) -> None:
             "ON artifact_images (content_hash)"
         )
     )
-    legacy_image_rows = connection.execute(
-        text(
-            """
-            SELECT id, url, content_hash
-            FROM artifact_images
-            WHERE (image_hash IS NULL OR content_hash IS NULL)
-              AND url IS NOT NULL
-            ORDER BY id ASC
-            """
-        )
-    ).mappings()
-    with httpx.Client(timeout=20, follow_redirects=True) as client:
-        for row in legacy_image_rows:
-            url = str(row["url"]).strip()
-            try:
-                if url.startswith("/files/uploads/"):
-                    relative_path = url.removeprefix("/files/").lstrip("/")
-                    image_contents = (DATA_DIR / relative_path).read_bytes()
-                elif url.startswith(("http://", "https://")):
-                    response = client.get(url)
-                    response.raise_for_status()
-                    image_contents = response.content
-                else:
-                    continue
-                values = {
-                    "id": row["id"],
-                    "image_hash": hash_bytes(image_contents),
-                    "content_hash": image_content_fingerprint(image_contents),
-                }
-                connection.execute(
-                    text(
-                        """
-                        UPDATE artifact_images
-                        SET image_hash = CASE
-                                WHEN image_hash IS NULL
-                                 AND NOT EXISTS (
-                                    SELECT 1
-                                    FROM artifact_images AS other
-                                    WHERE other.image_hash = :image_hash
-                                      AND other.id <> :id
-                                 )
-                                THEN :image_hash
-                                ELSE image_hash
-                            END,
-                            content_hash = COALESCE(content_hash, :content_hash)
-                        WHERE id = :id
-                        """
-                    ),
-                    values,
-                )
-            except Exception as exc:  # noqa: BLE001 - keep startup resilient on legacy rows
-                logger.warning("backfill image hash for artifact image %s failed: %s", row["id"], exc)
+    # Historical image hashing is intentionally not a startup migration.
+    # Downloading and decoding every legacy OSS object here used to hold this
+    # transaction open for hours, preventing even /health from becoming ready.
+    # New uploads populate all hashes during ingest; legacy backfill belongs in
+    # an explicit, resumable maintenance job.
 
     if "pending_artifacts" not in table_names:
         return
@@ -607,6 +560,8 @@ def sync_reference_options(connection) -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global cloud_http_client
+    startup_started_at = time_module.perf_counter()
+    logger.info("application startup: initializing schema and reference data")
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_VARIANT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with engine.begin() as connection:
@@ -617,6 +572,10 @@ async def lifespan(_: FastAPI):
         Base.metadata.create_all(bind=connection)
         run_startup_migrations(connection)
         sync_reference_options(connection)
+    logger.info(
+        "application startup: primary database ready in %.0fms",
+        (time_module.perf_counter() - startup_started_at) * 1000,
+    )
     exhibition_catalog_ready = False
     try:
         initialize_exhibition_database()
@@ -626,7 +585,8 @@ async def lifespan(_: FastAPI):
             "exhibition catalog database is unavailable; catalog API will recover when it is online",
             exc_info=True,
         )
-    cleanup_existing_content_duplicates()
+    # Do not run whole-library image maintenance before the application becomes
+    # ready. On a large collection this is CPU-bound and blocks every endpoint.
     if settings.exhibition_sync_enabled and exhibition_catalog_ready:
         exhibition_sync_coordinator.start_scheduler()
         with ExhibitionSessionLocal() as exhibition_db:
@@ -635,6 +595,10 @@ async def lifespan(_: FastAPI):
     cloud_http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(120, connect=15),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    )
+    logger.info(
+        "application startup complete in %.0fms",
+        (time_module.perf_counter() - startup_started_at) * 1000,
     )
     try:
         yield
