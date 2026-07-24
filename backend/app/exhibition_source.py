@@ -136,6 +136,7 @@ class ParsedExhibition:
     region: str
     city: str
     city_slug: str
+    museum_name: str | None
     venue: str | None
     address: str | None
     start_date: date | None
@@ -406,6 +407,7 @@ def parse_exhibition_detail(
         region=region,
         city=city_name,
         city_slug=city_slug or "unknown",
+        museum_name=fields.get("展馆"),
         venue=fields.get("展厅"),
         address=fields.get("地址"),
         start_date=parsed_range.start_date,

@@ -68,7 +68,8 @@ class ExhibitionSourceTests(unittest.TestCase):
             <table class="info-fields">
               <tr><td class="title">时间</td><td>2026年4月15日 - 9月6日 11:00 - 19:00</td></tr>
               <tr><td class="title">地址</td><td>测试地址</td></tr>
-              <tr><td class="title">展厅</td><td>测试美术馆</td></tr>
+              <tr><td class="title">展馆</td><td>测试美术馆</td></tr>
+              <tr><td class="title">展厅</td><td>第一展览厅</td></tr>
               <tr><td class="title">费用</td><td>Free</td></tr>
             </table>
             <div class="content">
@@ -90,7 +91,8 @@ class ExhibitionSourceTests(unittest.TestCase):
         self.assertEqual(parsed.title, "测试展览")
         self.assertEqual(parsed.region, "中国大陆")
         self.assertEqual(parsed.city, "北京")
-        self.assertEqual(parsed.venue, "测试美术馆")
+        self.assertEqual(parsed.museum_name, "测试美术馆")
+        self.assertEqual(parsed.venue, "第一展览厅")
         self.assertEqual(parsed.start_date, date(2026, 4, 15))
         self.assertEqual(parsed.end_date, date(2026, 9, 6))
         self.assertEqual(parsed.summary, "一段公开摘要")

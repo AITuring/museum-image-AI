@@ -18,6 +18,9 @@ class CatalogExhibition(ExhibitionCatalogBase):
     region: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     city: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     city_slug: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    museum_name: Mapped[str | None] = mapped_column(
+        String(500), nullable=True, index=True
+    )
     venue: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
     address: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 

@@ -11,6 +11,7 @@ class ExhibitionCatalogItemRead(BaseModel):
     title: str
     region: str
     city: str
+    museum_name: str | None = None
     venue: str | None = None
     address: str | None = None
     start_date: date | None = None

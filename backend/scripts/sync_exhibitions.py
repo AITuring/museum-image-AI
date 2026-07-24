@@ -19,7 +19,7 @@ from app.exhibition_db import ExhibitionSessionLocal
 from app.exhibition_models import ExhibitionSyncWorkerState
 from app.exhibition_service import (
     ExhibitionSyncCoordinator,
-    exhibition_catalog_count,
+    exhibition_backfill_remaining,
     run_exhibition_sync,
 )
 
@@ -57,7 +57,7 @@ def remaining_after(run) -> int:
     if run is None:
         return 0
     with ExhibitionSessionLocal() as db:
-        return max(0, run.discovered - exhibition_catalog_count(db))
+        return exhibition_backfill_remaining(db, run.discovered)
 
 
 class WorkerHeartbeat:

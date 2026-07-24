@@ -46,6 +46,29 @@ class MuseumRead(MuseumCreate):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MuseumDirectoryRead(BaseModel):
+    id: int
+    museum_id: int | None = None
+    name: str
+    location: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    description: str | None = None
+    artifact_count: int = 0
+    exhibition_count: int = 0
+    catalog_exhibition_count: int = 0
+    first_year: int | None = None
+    last_year: int | None = None
+    cover_url: str | None = None
+    catalog_museum_name: str | None = None
+    catalog_address: str | None = None
+    catalog_venue: str | None = None
+    catalog_city: str | None = None
+    catalog_region: str | None = None
+    derived_from_catalog: bool = False
+    exhibitions: list[ExhibitionRead] = Field(default_factory=list)
+
+
 class EraOptionRead(BaseModel):
     id: int
     name: str

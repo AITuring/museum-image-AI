@@ -18,6 +18,7 @@ def exhibition(
     *,
     description: str | None,
     end_date: date | None,
+    museum_name: str | None = "测试美术馆",
 ) -> CatalogExhibition:
     return CatalogExhibition(
         source_id=source_id,
@@ -26,6 +27,7 @@ def exhibition(
         region="中国大陆",
         city="北京",
         city_slug="beijing",
+        museum_name=museum_name,
         description=description,
         end_date=end_date,
         is_permanent=False,
@@ -57,11 +59,18 @@ class ExhibitionSyncCandidateTests(unittest.TestCase):
             description=None,
             end_date=date.today() - timedelta(days=30),
         )
-        self.db.add_all([current, missing_detail])
+        missing_museum = exhibition(
+            "missing-museum",
+            description="已有详情",
+            end_date=date.today() - timedelta(days=30),
+            museum_name=None,
+        )
+        self.db.add_all([current, missing_detail, missing_museum])
         self.db.commit()
         discovered = [
             current.source_url,
             missing_detail.source_url,
+            missing_museum.source_url,
             "https://art.icity.ly/events/new",
         ]
 
@@ -74,6 +83,7 @@ class ExhibitionSyncCandidateTests(unittest.TestCase):
 
         self.assertNotIn(current.source_url, candidates)
         self.assertIn(missing_detail.source_url, candidates)
+        self.assertIn(missing_museum.source_url, candidates)
         self.assertIn("https://art.icity.ly/events/new", candidates)
 
     def test_first_incremental_run_refreshes_current_exhibitions(self) -> None:
@@ -128,8 +138,8 @@ class ExhibitionSyncCoordinatorTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda: nullcontext(object()),
             ),
             patch(
-                "app.exhibition_service.exhibition_catalog_count",
-                side_effect=[1000, 2000, 2500],
+                "app.exhibition_service.exhibition_backfill_remaining",
+                side_effect=[1500, 500, 0],
             ),
             patch(
                 "app.exhibition_service.asyncio.sleep",
@@ -180,8 +190,8 @@ class ExhibitionSyncCoordinatorTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=lambda: nullcontext(object()),
             ),
             patch(
-                "app.exhibition_service.exhibition_catalog_count",
-                return_value=2000,
+                "app.exhibition_service.exhibition_backfill_remaining",
+                return_value=500,
             ),
             patch(
                 "app.exhibition_service.asyncio.sleep",

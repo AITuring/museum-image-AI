@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import type { ImgHTMLAttributes } from "react"
 import { Button, Input } from "antd"
 import "./styles/museum.css"
 
@@ -38,6 +39,7 @@ type MuseumExhibition = {
 
 type MuseumRecord = {
   id: number
+  museum_id: number | null
   name: string
   location: string | null
   latitude: number | null
@@ -45,8 +47,70 @@ type MuseumRecord = {
   description: string | null
   artifact_count: number
   exhibition_count: number
-  created_at: string
+  catalog_exhibition_count: number
+  first_year: number | null
+  last_year: number | null
+  cover_url: string | null
+  catalog_museum_name: string | null
+  catalog_address: string | null
+  catalog_venue: string | null
+  catalog_city: string | null
+  catalog_region: string | null
+  derived_from_catalog: boolean
   exhibitions: MuseumExhibition[]
+}
+
+type RawMuseumRecord = Omit<
+  MuseumRecord,
+  | "museum_id"
+  | "catalog_exhibition_count"
+  | "first_year"
+  | "last_year"
+  | "cover_url"
+  | "catalog_museum_name"
+  | "catalog_address"
+  | "catalog_venue"
+  | "catalog_city"
+  | "catalog_region"
+  | "derived_from_catalog"
+> & Partial<
+  Pick<
+    MuseumRecord,
+    | "museum_id"
+    | "catalog_exhibition_count"
+    | "first_year"
+    | "last_year"
+    | "cover_url"
+    | "catalog_museum_name"
+    | "catalog_address"
+    | "catalog_venue"
+    | "catalog_city"
+    | "catalog_region"
+    | "derived_from_catalog"
+  >
+>
+
+type CatalogExhibition = {
+  id: number
+  title: string
+  museum_name: string | null
+  venue: string | null
+  city: string
+  region: string
+  start_date: string | null
+  end_date: string | null
+  start_year: number | null
+  end_year: number | null
+  is_permanent: boolean
+  status: "ongoing" | "upcoming" | "ended" | "permanent"
+  cover_url: string | null
+}
+
+type CatalogExhibitionResponse = {
+  items: CatalogExhibition[]
+  total: number
+  page: number
+  page_size: number
 }
 
 type GalleryImage = {
@@ -80,6 +144,7 @@ type FolderEntry = {
   artifactEra: string | null
   previewUrl: string
   originalUrl: string
+  fallbackUrl: string
   capturedAt: string | null
 }
 
@@ -87,23 +152,40 @@ function toAbsoluteUrl(apiBaseUrl: string, url: string) {
   return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
 }
 
-function isOssImageUrl(url: string) {
-  return /^https:\/\/.+\.aliyuncs\.com\//.test(url)
-}
-
-function withOssImageProcess(url: string, process: string) {
-  if (!isOssImageUrl(url)) return url
-  const separator = url.includes("?") ? "&" : "?"
-  return `${url}${separator}x-oss-process=${encodeURIComponent(process)}`
+function getBackendImageVariantUrl(apiBaseUrl: string, url: string, size: number) {
+  const params = new URLSearchParams({ url, size: String(size) })
+  return `${apiBaseUrl}/api/image-variant?${params.toString()}`
 }
 
 function getDisplayImageUrl(apiBaseUrl: string, url: string, mode: "thumb" | "preview" | "original") {
-  const absoluteUrl = toAbsoluteUrl(apiBaseUrl, url)
-  if (mode === "original") return absoluteUrl
-  if (mode === "thumb") {
-    return withOssImageProcess(absoluteUrl, "image/resize,m_lfit,w_480/quality,q_75/format,webp")
-  }
-  return withOssImageProcess(absoluteUrl, "image/resize,m_lfit,w_1280/quality,q_82/format,webp")
+  if (mode === "thumb") return getBackendImageVariantUrl(apiBaseUrl, url, 480)
+  return getBackendImageVariantUrl(apiBaseUrl, url, 1280)
+}
+
+function FallbackImage({
+  src,
+  fallbackSrc,
+  onError,
+  ...props
+}: ImgHTMLAttributes<HTMLImageElement> & { src: string; fallbackSrc?: string }) {
+  const [currentSrc, setCurrentSrc] = useState(src)
+
+  useEffect(() => {
+    setCurrentSrc(src)
+  }, [src])
+
+  return (
+    <img
+      {...props}
+      src={currentSrc}
+      onError={(event) => {
+        onError?.(event)
+        if (fallbackSrc && currentSrc !== fallbackSrc) {
+          setCurrentSrc(fallbackSrc)
+        }
+      }}
+    />
+  )
 }
 
 function normalizeMuseumCoordinates<T extends { latitude: number | null; longitude: number | null }>(museum: T): T {
@@ -208,6 +290,7 @@ function buildMuseumFolders(apiBaseUrl: string, artifacts: MuseumArtifact[]) {
         artifactEra: artifact.era,
         previewUrl,
         originalUrl: getDisplayImageUrl(apiBaseUrl, image.url, "original"),
+        fallbackUrl: toAbsoluteUrl(apiBaseUrl, image.url),
         capturedAt: image.captured_at ?? null,
       })
       current.artifactIds.add(artifact.id)
@@ -255,6 +338,9 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [artifactStore, setArtifactStore] = useState<Record<number, MuseumArtifact[]>>({})
   const [artifactLoadingId, setArtifactLoadingId] = useState<number | null>(null)
   const [artifactErrors, setArtifactErrors] = useState<Record<number, string | null>>({})
+  const [historyStore, setHistoryStore] = useState<Record<number, CatalogExhibitionResponse>>({})
+  const [historyLoadingId, setHistoryLoadingId] = useState<number | null>(null)
+  const [historyErrors, setHistoryErrors] = useState<Record<number, string | null>>({})
   const [activeFolderKey, setActiveFolderKey] = useState<string | null>(null)
   const [mapLoading, setMapLoading] = useState(false)
   const [mapError, setMapError] = useState<string | null>(null)
@@ -281,8 +367,25 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   )
 
   const activeArtifactsLoaded = activeMuseum ? Object.prototype.hasOwnProperty.call(artifactStore, activeMuseum.id) : false
-  const activeArtifacts = activeMuseum ? artifactStore[activeMuseum.id] ?? [] : []
+  const activeArtifacts = useMemo(
+    () => activeMuseum ? artifactStore[activeMuseum.id] ?? [] : [],
+    [activeMuseum, artifactStore],
+  )
   const activeArtifactError = activeMuseum ? artifactErrors[activeMuseum.id] ?? null : null
+  const activeHistory = activeMuseum ? historyStore[activeMuseum.id] ?? null : null
+  const activeHistoryError = activeMuseum ? historyErrors[activeMuseum.id] ?? null : null
+  const historyGroups = useMemo(() => {
+    const groups = new Map<string, CatalogExhibition[]>()
+    for (const exhibition of activeHistory?.items ?? []) {
+      const year = exhibition.is_permanent
+        ? "常设"
+        : String(exhibition.start_year ?? exhibition.end_year ?? "时间待确认")
+      const items = groups.get(year) ?? []
+      items.push(exhibition)
+      groups.set(year, items)
+    }
+    return Array.from(groups.entries())
+  }, [activeHistory])
   const folders = useMemo(() => buildMuseumFolders(apiBaseUrl, activeArtifacts), [activeArtifacts, apiBaseUrl])
   const activeFolder = useMemo(() => folders.find((folder) => folder.key === activeFolderKey) ?? folders[0] ?? null, [activeFolderKey, folders])
   const museumsWithCoordinates = useMemo(
@@ -294,9 +397,25 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch(`${apiBaseUrl}/api/museums?limit=500`)
+      let response = await fetch(`${apiBaseUrl}/api/museum-directory?limit=5000`)
+      if (response.status === 404) {
+        response = await fetch(`${apiBaseUrl}/api/museums?limit=500`)
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const payload = ((await response.json()) as MuseumRecord[]).map((item) => normalizeMuseumCoordinates(item))
+      const payload = ((await response.json()) as RawMuseumRecord[]).map((item) => normalizeMuseumCoordinates({
+        ...item,
+        museum_id: item.museum_id ?? item.id,
+        catalog_exhibition_count: item.catalog_exhibition_count ?? 0,
+        first_year: item.first_year ?? null,
+        last_year: item.last_year ?? null,
+        cover_url: item.cover_url ?? null,
+        catalog_museum_name: item.catalog_museum_name ?? null,
+        catalog_address: item.catalog_address ?? null,
+        catalog_venue: item.catalog_venue ?? null,
+        catalog_city: item.catalog_city ?? null,
+        catalog_region: item.catalog_region ?? null,
+        derived_from_catalog: item.derived_from_catalog ?? false,
+      }))
       setItems(payload)
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载博物馆失败")
@@ -306,33 +425,85 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [apiBaseUrl])
 
   const loadMuseumArtifacts = useCallback(
-    async (museumId: number) => {
-      setArtifactLoadingId(museumId)
-      setArtifactErrors((current) => ({ ...current, [museumId]: null }))
+    async (museum: MuseumRecord) => {
+      if (museum.museum_id == null) {
+        setArtifactStore((current) => ({ ...current, [museum.id]: [] }))
+        return
+      }
+      setArtifactLoadingId(museum.id)
+      setArtifactErrors((current) => ({ ...current, [museum.id]: null }))
       try {
-        const response = await fetch(`${apiBaseUrl}/api/artifacts?museum_id=${museumId}`)
+        const response = await fetch(`${apiBaseUrl}/api/artifacts?museum_id=${museum.museum_id}`)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         const payload = ((await response.json()) as RawMuseumArtifact[]).map((item) => normalizeArtifact(item))
-        setArtifactStore((current) => ({ ...current, [museumId]: payload }))
+        setArtifactStore((current) => ({ ...current, [museum.id]: payload }))
       } catch (err) {
         setArtifactErrors((current) => ({
           ...current,
-          [museumId]: err instanceof Error ? err.message : "加载博物馆图片失败",
+          [museum.id]: err instanceof Error ? err.message : "加载博物馆图片失败",
         }))
-        setArtifactStore((current) => ({ ...current, [museumId]: [] }))
+        setArtifactStore((current) => ({ ...current, [museum.id]: [] }))
       } finally {
-        setArtifactLoadingId((current) => (current === museumId ? null : current))
+        setArtifactLoadingId((current) => (current === museum.id ? null : current))
       }
     },
     [apiBaseUrl],
   )
 
   const ensureMuseumArtifacts = useCallback(
-    (museumId: number) => {
-      if (Object.prototype.hasOwnProperty.call(artifactStore, museumId)) return
-      void loadMuseumArtifacts(museumId)
+    (museum: MuseumRecord) => {
+      if (Object.prototype.hasOwnProperty.call(artifactStore, museum.id)) return
+      void loadMuseumArtifacts(museum)
     },
     [artifactStore, loadMuseumArtifacts],
+  )
+
+  const loadMuseumHistory = useCallback(
+    async (museum: MuseumRecord, page = 1) => {
+      if (!museum.catalog_museum_name && !museum.catalog_address) {
+        setHistoryStore((current) => ({
+          ...current,
+          [museum.id]: { items: [], total: 0, page: 1, page_size: 100 },
+        }))
+        return
+      }
+      setHistoryLoadingId(museum.id)
+      setHistoryErrors((current) => ({ ...current, [museum.id]: null }))
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: "100",
+        include_facets: "false",
+      })
+      if (museum.catalog_address) {
+        params.set("address", museum.catalog_address)
+      } else if (museum.catalog_museum_name) {
+        params.set("museum_name", museum.catalog_museum_name)
+      }
+      if (museum.catalog_city) params.set("city", museum.catalog_city)
+      if (museum.catalog_region) params.set("region", museum.catalog_region)
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/exhibition-catalog?${params.toString()}`)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = (await response.json()) as CatalogExhibitionResponse
+        setHistoryStore((current) => {
+          const previous = current[museum.id]
+          return {
+            ...current,
+            [museum.id]: page > 1 && previous
+              ? { ...payload, items: [...previous.items, ...payload.items] }
+              : payload,
+          }
+        })
+      } catch (err) {
+        setHistoryErrors((current) => ({
+          ...current,
+          [museum.id]: err instanceof Error ? err.message : "加载历年展览失败",
+        }))
+      } finally {
+        setHistoryLoadingId((current) => (current === museum.id ? null : current))
+      }
+    },
+    [apiBaseUrl],
   )
 
   useEffect(() => {
@@ -342,8 +513,14 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   useEffect(() => {
     if (!activeMuseum) return
     if (Object.prototype.hasOwnProperty.call(artifactStore, activeMuseum.id)) return
-    void loadMuseumArtifacts(activeMuseum.id)
+    void loadMuseumArtifacts(activeMuseum)
   }, [activeMuseum, artifactStore, loadMuseumArtifacts])
+
+  useEffect(() => {
+    if (!activeMuseum) return
+    if (Object.prototype.hasOwnProperty.call(historyStore, activeMuseum.id)) return
+    void loadMuseumHistory(activeMuseum)
+  }, [activeMuseum, historyStore, loadMuseumHistory])
 
   useEffect(() => {
     if (!detailModalOpen) return
@@ -680,7 +857,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
               <div>
                 <h3 id="museum-detail-title">{activeMuseum.name}</h3>
                 <p className="museum-stage-meta-line">
-                  {activeMuseum.description?.trim() || activeMuseum.location?.trim() || "暂无简介，先通过图片浏览这座馆的拍摄记录。"}
+                  {activeMuseum.description?.trim() || activeMuseum.location?.trim() || "暂无简介，可先浏览这座馆的历年展览。"}
                 </p>
               </div>
               <div className="museum-stage-stats" aria-label="博物馆概况">
@@ -691,6 +868,80 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
             </div>
           </div>
         </header>
+
+        <section className="museum-history-panel">
+          <div className="museum-history-head">
+            <div>
+              <strong>历年展览</strong>
+              <p className="muted small">
+                {activeMuseum.first_year && activeMuseum.last_year
+                  ? `${activeMuseum.first_year}—${activeMuseum.last_year} 年展览档案`
+                  : "按公开展览目录持续补全"}
+              </p>
+            </div>
+            <span>
+              {activeHistory
+                ? `已载入 ${activeHistory.items.length} / ${activeHistory.total}`
+                : `${activeMuseum.catalog_exhibition_count} 场`}
+            </span>
+          </div>
+
+          {historyLoadingId === activeMuseum.id && !activeHistory ? (
+            <div className="museum-history-state">正在读取历年展览…</div>
+          ) : null}
+          {activeHistoryError ? (
+            <div className="museum-history-state error">
+              <span>历年展览暂时无法加载（{activeHistoryError}）</span>
+              <Button size="small" onClick={() => void loadMuseumHistory(activeMuseum)}>重试</Button>
+            </div>
+          ) : null}
+          {!activeHistoryError && activeHistory && activeHistory.items.length === 0 ? (
+            <div className="museum-history-state">这座馆暂未关联到公开展览目录。</div>
+          ) : null}
+
+          {historyGroups.length > 0 ? (
+            <div className="museum-history-years">
+              {historyGroups.map(([year, exhibitions]) => (
+                <section className="museum-history-year" key={year}>
+                  <strong>{year}</strong>
+                  <div>
+                    {exhibitions.map((exhibition) => (
+                      <a
+                        href={`/exhibitions/${exhibition.id}`}
+                        className="museum-history-item"
+                        key={exhibition.id}
+                      >
+                        <span className={`museum-history-status ${exhibition.status}`}>
+                          {exhibition.status === "ongoing"
+                            ? "展出中"
+                            : exhibition.status === "upcoming"
+                              ? "即将开始"
+                              : exhibition.status === "permanent"
+                                ? "常设"
+                                : "已结束"}
+                        </span>
+                        <span className="museum-history-copy">
+                          <strong>{exhibition.title}</strong>
+                          <span>{formatDateRange(exhibition.start_date, exhibition.end_date)}</span>
+                        </span>
+                      </a>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : null}
+
+          {activeHistory && activeHistory.items.length < activeHistory.total ? (
+            <Button
+              size="small"
+              loading={historyLoadingId === activeMuseum.id}
+              onClick={() => void loadMuseumHistory(activeMuseum, activeHistory.page + 1)}
+            >
+              加载更早展览
+            </Button>
+          ) : null}
+        </section>
 
         <div className="museum-stage-body">
           <aside className="museum-folder-column">
@@ -758,7 +1009,13 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      <img src={entry.previewUrl} alt={entry.artifactName} loading="lazy" />
+                      <FallbackImage
+                        src={entry.previewUrl}
+                        fallbackSrc={entry.fallbackUrl}
+                        alt={entry.artifactName}
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                      />
                       <div className="museum-image-card-copy">
                         <strong>{entry.artifactName}</strong>
                         <span>{entry.artifactEra || "时代待确认"}</span>
@@ -834,7 +1091,12 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       {!loading && filteredMuseums.length > 0 && mode === "cards" ? (
         <div className="museum-card-grid">
           {filteredMuseums.map((museum) => {
-              const previewStack = getMuseumPreviewStack(apiBaseUrl, artifactStore[museum.id] ?? [])
+              const artifactPreviews = getMuseumPreviewStack(apiBaseUrl, artifactStore[museum.id] ?? [])
+              const previewStack = artifactPreviews.length > 0
+                ? artifactPreviews
+                : museum.cover_url
+                  ? [getDisplayImageUrl(apiBaseUrl, museum.cover_url, "thumb")]
+                  : []
               return (
                 <button data-ui="interactive-surface"
                   type="button"
@@ -844,18 +1106,19 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                     setActiveId(museum.id)
                     setDetailModalOpen(true)
                   }}
-                  onMouseEnter={() => ensureMuseumArtifacts(museum.id)}
-                  onFocus={() => ensureMuseumArtifacts(museum.id)}
+                  onMouseEnter={() => ensureMuseumArtifacts(museum)}
+                  onFocus={() => ensureMuseumArtifacts(museum)}
                 >
                   <div className={`museum-summary-photo-stack ${previewStack.length === 0 ? "empty" : ""}`} aria-hidden="true">
                     {previewStack.length > 0 ? (
                       previewStack.map((previewUrl, index) => (
-                        <img
+                        <FallbackImage
                           key={`${museum.id}-preview-${index}`}
                           className={`museum-summary-photo photo-${index + 1}`}
                           src={previewUrl}
                           alt=""
                           loading="lazy"
+                          referrerPolicy="no-referrer"
                         />
                       ))
                     ) : (
@@ -875,12 +1138,24 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                   <div className="museum-summary-card-copy">
                     <div className="museum-summary-card-head">
                       <strong>{museum.name}</strong>
-                      <span>{museum.artifact_count} 件</span>
+                      <span>
+                        {museum.artifact_count > 0
+                          ? `${museum.artifact_count} 件`
+                          : museum.derived_from_catalog
+                            ? "目录补全"
+                            : "暂无藏品"}
+                      </span>
                     </div>
                     <p>{museum.description?.trim() || museum.location?.trim() || "暂无简介，先从展览文件夹进入。"}</p>
                     <div className="museum-summary-card-foot">
                       <span>{museum.exhibition_count} 个展览</span>
-                      <span>{museum.latitude != null && museum.longitude != null ? "已记录坐标" : "未记录坐标"}</span>
+                      <span>
+                        {museum.first_year
+                          ? `${museum.first_year}—${museum.last_year ?? "至今"}`
+                          : museum.latitude != null && museum.longitude != null
+                            ? "已记录坐标"
+                            : "时间待补全"}
+                      </span>
                     </div>
                   </div>
                 </button>

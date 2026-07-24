@@ -79,6 +79,7 @@ def _candidate_urls(
                 CatalogExhibition.end_date,
                 CatalogExhibition.is_permanent,
                 CatalogExhibition.description,
+                CatalogExhibition.museum_name,
             )
         )
     )
@@ -99,7 +100,9 @@ def _candidate_urls(
         else []
     )
     missing_detail_urls = [
-        row.source_url for row in rows if not (row.description or "").strip()
+        row.source_url
+        for row in rows
+        if not (row.description or "").strip() or row.museum_name is None
     ]
     unknown_urls = [url for url in reversed(discovered_urls) if url not in existing_urls]
     backfill_urls = list(dict.fromkeys([*missing_detail_urls, *unknown_urls]))
@@ -132,6 +135,10 @@ def _upsert_exhibition(
     item.region = parsed.region
     item.city = parsed.city
     item.city_slug = parsed.city_slug
+    # Empty string means the source page was checked but did not expose a
+    # parent venue. Existing rows start as NULL after the online migration, so
+    # the low-concurrency worker can backfill them exactly once.
+    item.museum_name = parsed.museum_name or ""
     item.venue = parsed.venue
     item.address = parsed.address
     item.start_date = parsed.start_date
@@ -304,6 +311,22 @@ def exhibition_catalog_count(db: Session) -> int:
     return int(db.scalar(select(func.count()).select_from(CatalogExhibition)) or 0)
 
 
+def exhibition_enrichment_pending_count(db: Session) -> int:
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(CatalogExhibition)
+            .where(CatalogExhibition.museum_name.is_(None))
+        )
+        or 0
+    )
+
+
+def exhibition_backfill_remaining(db: Session, discovered: int) -> int:
+    missing_catalog = max(0, discovered - exhibition_catalog_count(db))
+    return missing_catalog + exhibition_enrichment_pending_count(db)
+
+
 class ExhibitionSyncCoordinator:
     def __init__(self) -> None:
         self._task: asyncio.Task[ExhibitionSyncRun | None] | None = None
@@ -334,7 +357,7 @@ class ExhibitionSyncCoordinator:
 
         while run is not None and run.status in {"success", "partial"}:
             with ExhibitionSessionLocal() as db:
-                remaining = max(0, run.discovered - exhibition_catalog_count(db))
+                remaining = exhibition_backfill_remaining(db, run.discovered)
             if remaining == 0:
                 logger.info("exhibition backfill caught up")
                 return run

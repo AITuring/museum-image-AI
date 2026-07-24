@@ -8,6 +8,7 @@ import mimetypes
 import re
 import tempfile
 import time as time_module
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from io import BytesIO
@@ -54,6 +55,7 @@ from app.exhibition_schemas import (
     ExhibitionYearFacetRead,
 )
 from app.exhibition_service import (
+    exhibition_backfill_remaining,
     exhibition_catalog_count,
     exhibition_sync_coordinator,
     latest_sync_run,
@@ -123,6 +125,7 @@ from app.schemas import (
     GooglePhotosStatusRead,
     HealthRead,
     MuseumCreate,
+    MuseumDirectoryRead,
     MuseumRead,
     MuseumUpdate,
     ParsedArtifactNameRead,
@@ -984,6 +987,18 @@ def normalize_museum_segment(value: str) -> str:
     if segment.endswith("馆藏") and len(segment) > 2:
         return f"{segment[:-2]}馆"
     return segment
+
+
+def normalize_museum_directory_key(value: str | None) -> str:
+    if not value:
+        return ""
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    return re.sub(r"[\s·•・,，。．()（）\[\]【】<>《》\-—–_/]+", "", normalized)
+
+
+def catalog_museum_directory_id(venue: str, city: str, region: str) -> int:
+    digest = hashlib.sha256(f"{venue}\0{city}\0{region}".encode("utf-8")).digest()
+    return -(int.from_bytes(digest[:8], "big") % 2_000_000_000 + 1)
 
 
 def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
@@ -3690,6 +3705,7 @@ def recommend_exhibition_catalog(
         base_query = base_query.where(
             or_(
                 CatalogExhibition.title.ilike(like),
+                CatalogExhibition.museum_name.ilike(like),
                 CatalogExhibition.venue.ilike(like),
                 CatalogExhibition.address.ilike(like),
                 CatalogExhibition.city.ilike(like),
@@ -3849,9 +3865,13 @@ def list_exhibition_catalog(
     year: int | None = Query(default=None, ge=1800, le=2200),
     region: str | None = Query(default=None),
     city: str | None = Query(default=None),
+    museum_name: str | None = Query(default=None),
+    address: str | None = Query(default=None),
+    venue: str | None = Query(default=None),
     status: str | None = Query(default=None, pattern="^(ongoing|upcoming|ended|permanent)$"),
+    include_facets: bool = Query(default=True),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=36, ge=1, le=100),
+    page_size: int = Query(default=36, ge=1, le=200),
     db: Session = Depends(get_exhibition_db),
 ) -> ExhibitionCatalogListRead:
     today = datetime.now().date()
@@ -3861,6 +3881,7 @@ def list_exhibition_catalog(
         filters.append(
             or_(
                 CatalogExhibition.title.ilike(like),
+                CatalogExhibition.museum_name.ilike(like),
                 CatalogExhibition.venue.ilike(like),
                 CatalogExhibition.address.ilike(like),
                 CatalogExhibition.city.ilike(like),
@@ -3879,6 +3900,12 @@ def list_exhibition_catalog(
         filters.append(CatalogExhibition.region == region.strip())
     if city and city.strip():
         filters.append(CatalogExhibition.city == city.strip())
+    if museum_name and museum_name.strip():
+        filters.append(CatalogExhibition.museum_name == museum_name.strip())
+    if address and address.strip():
+        filters.append(CatalogExhibition.address == address.strip())
+    if venue and venue.strip():
+        filters.append(CatalogExhibition.venue == venue.strip())
     if status == "permanent":
         filters.append(CatalogExhibition.is_permanent.is_(True))
     elif status == "upcoming":
@@ -3927,49 +3954,56 @@ def list_exhibition_catalog(
     )
     total = int(db.scalar(count_query) or 0)
 
-    year_rows = db.execute(
-        select(CatalogExhibition.start_year, func.count())
-        .where(CatalogExhibition.start_year.is_not(None))
-        .group_by(CatalogExhibition.start_year)
-        .order_by(CatalogExhibition.start_year.desc())
-    )
-    region_rows = db.execute(
-        select(CatalogExhibition.region, func.count())
-        .group_by(CatalogExhibition.region)
-        .order_by(func.count().desc(), CatalogExhibition.region.asc())
-    )
-    city_query = select(CatalogExhibition.city, func.count()).group_by(
-        CatalogExhibition.city
-    )
-    if region and region.strip():
-        city_query = city_query.where(CatalogExhibition.region == region.strip())
-    city_rows = db.execute(
-        city_query.order_by(func.count().desc(), CatalogExhibition.city.asc())
-    )
+    years: list[ExhibitionYearFacetRead] = []
+    regions: list[ExhibitionFacetRead] = []
+    cities: list[ExhibitionFacetRead] = []
+    if include_facets:
+        year_rows = db.execute(
+            select(CatalogExhibition.start_year, func.count())
+            .where(CatalogExhibition.start_year.is_not(None))
+            .group_by(CatalogExhibition.start_year)
+            .order_by(CatalogExhibition.start_year.desc())
+        )
+        region_rows = db.execute(
+            select(CatalogExhibition.region, func.count())
+            .group_by(CatalogExhibition.region)
+            .order_by(func.count().desc(), CatalogExhibition.region.asc())
+        )
+        city_query = select(CatalogExhibition.city, func.count()).group_by(
+            CatalogExhibition.city
+        )
+        if region and region.strip():
+            city_query = city_query.where(CatalogExhibition.region == region.strip())
+        city_rows = db.execute(
+            city_query.order_by(func.count().desc(), CatalogExhibition.city.asc())
+        )
+        years = [
+            ExhibitionYearFacetRead(year=int(row[0]), count=int(row[1]))
+            for row in year_rows
+            if row[0] is not None
+        ]
+        regions = [
+            ExhibitionFacetRead(value=str(row[0]), count=int(row[1]))
+            for row in region_rows
+        ]
+        cities = [
+            ExhibitionFacetRead(value=str(row[0]), count=int(row[1]))
+            for row in city_rows
+        ]
     last_synced_at = db.scalar(select(func.max(CatalogExhibition.synced_at)))
     latest_run = latest_sync_run(db)
     remaining = None
     if latest_run and latest_run.discovered:
-        remaining = max(0, latest_run.discovered - exhibition_catalog_count(db))
+        remaining = exhibition_backfill_remaining(db, latest_run.discovered)
 
     return ExhibitionCatalogListRead(
         items=[ExhibitionCatalogItemRead.model_validate(item) for item in items],
         total=total,
         page=page,
         page_size=page_size,
-        years=[
-            ExhibitionYearFacetRead(year=int(row[0]), count=int(row[1]))
-            for row in year_rows
-            if row[0] is not None
-        ],
-        regions=[
-            ExhibitionFacetRead(value=str(row[0]), count=int(row[1]))
-            for row in region_rows
-        ],
-        cities=[
-            ExhibitionFacetRead(value=str(row[0]), count=int(row[1]))
-            for row in city_rows
-        ],
+        years=years,
+        regions=regions,
+        cities=cities,
         last_synced_at=last_synced_at,
         backfill_remaining=remaining,
     )
@@ -4013,7 +4047,7 @@ def get_exhibition_sync_live_status(
             run.created + run.updated + run.failed,
         )
         if run.discovered:
-            backfill_remaining = max(0, run.discovered - catalog_total)
+            backfill_remaining = exhibition_backfill_remaining(db, run.discovered)
 
         now = datetime.now(timezone.utc)
         created_total = 0
@@ -4199,6 +4233,323 @@ def get_exhibition_catalog_detail(
     if item is None:
         raise HTTPException(status_code=404, detail="Exhibition not found")
     return ExhibitionCatalogDetailRead.model_validate(item)
+
+
+@app.get(
+    f"{settings.api_prefix}/museum-directory",
+    response_model=list[MuseumDirectoryRead],
+)
+def list_museum_directory(
+    q: str | None = Query(default=None),
+    limit: int = Query(default=1000, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    catalog_db: Session = Depends(get_exhibition_db),
+) -> list[MuseumDirectoryRead]:
+    museums = list(
+        db.scalars(
+            select(Museum)
+            .options(
+                selectinload(Museum.exhibitions),
+                selectinload(Museum.artifacts),
+            )
+            .order_by(Museum.name.asc())
+        )
+    )
+    catalog_rows = list(
+        catalog_db.execute(
+            select(
+                CatalogExhibition.museum_name,
+                CatalogExhibition.region,
+                CatalogExhibition.city,
+                func.max(CatalogExhibition.address),
+                func.count(),
+                func.min(CatalogExhibition.start_year),
+                func.max(
+                    func.coalesce(
+                        CatalogExhibition.end_year,
+                        CatalogExhibition.start_year,
+                    )
+                ),
+                func.max(CatalogExhibition.cover_url),
+            )
+            .where(
+                CatalogExhibition.museum_name.is_not(None),
+                func.trim(CatalogExhibition.museum_name) != "",
+            )
+            .group_by(
+                CatalogExhibition.museum_name,
+                CatalogExhibition.region,
+                CatalogExhibition.city,
+            )
+        )
+    )
+    address_rows = list(
+        catalog_db.execute(
+            select(
+                CatalogExhibition.address,
+                CatalogExhibition.region,
+                CatalogExhibition.city,
+                func.count(),
+                func.min(CatalogExhibition.start_year),
+                func.max(
+                    func.coalesce(
+                        CatalogExhibition.end_year,
+                        CatalogExhibition.start_year,
+                    )
+                ),
+                func.max(CatalogExhibition.cover_url),
+            )
+            .where(
+                CatalogExhibition.address.is_not(None),
+                func.trim(CatalogExhibition.address) != "",
+            )
+            .group_by(
+                CatalogExhibition.address,
+                CatalogExhibition.region,
+                CatalogExhibition.city,
+            )
+        )
+    )
+    address_groups = {
+        (
+            str(row[0]).strip(),
+            str(row[1] or "").strip(),
+            str(row[2] or "").strip(),
+        ): {
+            "museum_name": None,
+            "region": str(row[1] or "").strip(),
+            "city": str(row[2] or "").strip(),
+            "address": str(row[0]).strip(),
+            "count": int(row[3] or 0),
+            "first_year": int(row[4]) if row[4] is not None else None,
+            "last_year": int(row[5]) if row[5] is not None else None,
+            "cover_url": str(row[6]) if row[6] else None,
+            "match_by_address": True,
+        }
+        for row in address_rows
+    }
+
+    groups: list[dict[str, object]] = []
+    groups_by_name: dict[str, list[dict[str, object]]] = {}
+    for row in catalog_rows:
+        museum_name = str(row[0]).strip()
+        region = str(row[1] or "").strip()
+        city = str(row[2] or "").strip()
+        address = str(row[3] or "").strip() or None
+        group: dict[str, object] = {
+            "museum_name": museum_name,
+            "region": region,
+            "city": city,
+            "address": address,
+            "count": int(row[4] or 0),
+            "first_year": int(row[5]) if row[5] is not None else None,
+            "last_year": int(row[6]) if row[6] is not None else None,
+            "cover_url": str(row[7]) if row[7] else None,
+            "match_by_address": False,
+        }
+        groups.append(group)
+        groups_by_name.setdefault(
+            normalize_museum_directory_key(museum_name),
+            [],
+        ).append(group)
+
+    directory: list[MuseumDirectoryRead] = []
+    matched_group_ids: set[int] = set()
+    for museum in museums:
+        candidates = groups_by_name.get(
+            normalize_museum_directory_key(museum.name),
+            [],
+        )
+        for candidate in candidates:
+            matched_group_ids.add(id(candidate))
+        matched_group = None
+        if len(candidates) == 1:
+            matched_group = candidates[0]
+        elif candidates and museum.location:
+            normalized_location = normalize_museum_directory_key(museum.location)
+            city_matches = [
+                candidate
+                for candidate in candidates
+                if normalize_museum_directory_key(str(candidate["city"]))
+                in normalized_location
+            ]
+            if len(city_matches) == 1:
+                matched_group = city_matches[0]
+
+        # Rows deployed before the parent venue field existed only contain the
+        # room name. Until the throttled worker revisits all historical pages,
+        # use the dominant address among titles mentioning this museum. The
+        # exact-address query then also finds exhibitions whose title omits it.
+        address_candidate = catalog_db.execute(
+            select(
+                CatalogExhibition.address,
+                CatalogExhibition.region,
+                CatalogExhibition.city,
+                func.count(),
+            )
+            .where(
+                CatalogExhibition.title.ilike(f"%{museum.name.strip()}%"),
+                CatalogExhibition.address.is_not(None),
+                func.trim(CatalogExhibition.address) != "",
+            )
+            .group_by(
+                CatalogExhibition.address,
+                CatalogExhibition.region,
+                CatalogExhibition.city,
+            )
+            .order_by(func.count().desc())
+            .limit(1)
+        ).first()
+        if address_candidate is not None:
+            fallback_group = address_groups.get(
+                (
+                    str(address_candidate[0]).strip(),
+                    str(address_candidate[1] or "").strip(),
+                    str(address_candidate[2] or "").strip(),
+                )
+            )
+            if fallback_group is not None and (
+                matched_group is None
+                or int(fallback_group["count"]) > int(matched_group["count"])
+            ):
+                matched_group = fallback_group
+
+        catalog_count = int(matched_group["count"]) if matched_group else 0
+        directory.append(
+            MuseumDirectoryRead(
+                id=museum.id,
+                museum_id=museum.id,
+                name=museum.name,
+                location=museum.location
+                or (
+                    str(matched_group["address"])
+                    if matched_group and matched_group["address"]
+                    else None
+                )
+                or (
+                    " · ".join(
+                        part
+                        for part in (
+                            str(matched_group["city"]),
+                            str(matched_group["region"]),
+                        )
+                        if part
+                    )
+                    if matched_group
+                    else None
+                ),
+                latitude=museum.latitude,
+                longitude=museum.longitude,
+                description=museum.description,
+                artifact_count=museum.artifact_count,
+                exhibition_count=max(museum.exhibition_count, catalog_count),
+                catalog_exhibition_count=catalog_count,
+                first_year=(
+                    matched_group["first_year"] if matched_group else None
+                ),
+                last_year=(
+                    matched_group["last_year"] if matched_group else None
+                ),
+                cover_url=(
+                    str(matched_group["cover_url"])
+                    if matched_group and matched_group["cover_url"]
+                    else None
+                ),
+                catalog_museum_name=(
+                    str(matched_group["museum_name"])
+                    if matched_group
+                    and not matched_group["match_by_address"]
+                    and matched_group["museum_name"]
+                    else None
+                ),
+                catalog_address=(
+                    str(matched_group["address"])
+                    if matched_group
+                    and matched_group["match_by_address"]
+                    and matched_group["address"]
+                    else None
+                ),
+                catalog_venue=(
+                    str(matched_group["museum_name"])
+                    if matched_group and matched_group["museum_name"]
+                    else None
+                ),
+                catalog_city=(
+                    str(matched_group["city"]) if matched_group else None
+                ),
+                catalog_region=(
+                    str(matched_group["region"]) if matched_group else None
+                ),
+                derived_from_catalog=False,
+                exhibitions=[
+                    ExhibitionRead.model_validate(item)
+                    for item in museum.exhibitions
+                ],
+            )
+        )
+
+    used_ids = {item.id for item in directory}
+    for group in groups:
+        if id(group) in matched_group_ids:
+            continue
+        museum_name = str(group["museum_name"])
+        city = str(group["city"])
+        region = str(group["region"])
+        directory_id = catalog_museum_directory_id(museum_name, city, region)
+        while directory_id in used_ids:
+            directory_id -= 1
+        used_ids.add(directory_id)
+        count = int(group["count"])
+        location = (
+            str(group["address"]) if group["address"] else None
+        ) or " · ".join(part for part in (city, region) if part)
+        directory.append(
+            MuseumDirectoryRead(
+                id=directory_id,
+                name=museum_name,
+                location=location or None,
+                description=f"根据公开展览目录整理，收录 {count} 场历年展览。",
+                artifact_count=0,
+                exhibition_count=count,
+                catalog_exhibition_count=count,
+                first_year=group["first_year"],
+                last_year=group["last_year"],
+                cover_url=(
+                    str(group["cover_url"]) if group["cover_url"] else None
+                ),
+                catalog_museum_name=museum_name,
+                catalog_venue=museum_name,
+                catalog_city=city or None,
+                catalog_region=region or None,
+                derived_from_catalog=True,
+            )
+        )
+
+    search_text = normalize_museum_directory_key(q)
+    if search_text:
+        directory = [
+            item
+            for item in directory
+            if search_text
+            in normalize_museum_directory_key(
+                " ".join(
+                    value
+                    for value in (
+                        item.name,
+                        item.location,
+                        item.description,
+                    )
+                    if value
+                )
+            )
+        ]
+    directory.sort(
+        key=lambda item: (
+            normalize_museum_directory_key(item.name),
+            item.id,
+        )
+    )
+    return directory[:limit]
 
 
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])

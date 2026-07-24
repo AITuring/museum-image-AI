@@ -40,6 +40,34 @@ def initialize_exhibition_database() -> None:
             column["name"]
             for column in inspect(connection).get_columns("catalog_exhibitions")
         }
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                text(
+                    "ALTER TABLE catalog_exhibitions "
+                    "ADD COLUMN IF NOT EXISTS museum_name VARCHAR(500)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS "
+                    "ix_catalog_exhibitions_museum_name "
+                    "ON catalog_exhibitions (museum_name)"
+                )
+            )
+        elif "museum_name" not in columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE catalog_exhibitions "
+                    "ADD COLUMN museum_name VARCHAR(500)"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS "
+                    "ix_catalog_exhibitions_museum_name "
+                    "ON catalog_exhibitions (museum_name)"
+                )
+            )
         if "description" not in columns:
             connection.execute(
                 text("ALTER TABLE catalog_exhibitions ADD COLUMN description TEXT")
