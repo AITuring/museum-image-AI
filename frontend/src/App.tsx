@@ -412,6 +412,10 @@ function App() {
     if (!import.meta.env.DEV) {
       return "local"
     }
+    const initialView = normalizeViewFromPath(window.location.pathname)
+    if (!NAV_ITEMS.find((item) => item.view === initialView)?.cloudVisible) {
+      return "local"
+    }
     const storedValue = window.localStorage.getItem(backendPreferenceStorageKey)
     return storedValue === "cloud" ? "cloud" : "local"
   })
@@ -481,6 +485,21 @@ function App() {
       window.dispatchEvent(new PopStateEvent("popstate"))
     }
   }, [])
+
+  const handleViewChange = useCallback((nextView: View) => {
+    const nextItem = NAV_ITEMS.find((item) => item.view === nextView)
+    if (import.meta.env.DEV && backendTarget === "cloud" && nextItem && !nextItem.cloudVisible) {
+      setBackendTarget("local")
+    }
+    setView(nextView)
+  }, [backendTarget, setView])
+
+  const handleBackendTargetChange = useCallback((nextTarget: BackendTarget) => {
+    setBackendTarget(nextTarget)
+    if (nextTarget === "cloud" && !NAV_ITEMS.find((item) => item.view === view)?.cloudVisible) {
+      setView("gallery", { replace: true })
+    }
+  }, [setView, view])
 
   const bestCandidateKey = useMemo(() => {
     let bestKey: string | null = null
@@ -794,10 +813,7 @@ function App() {
       return
     }
     window.localStorage.setItem(backendPreferenceStorageKey, backendTarget)
-    if (backendTarget === "cloud" && !cloudOnly && !NAV_ITEMS.find((item) => item.view === view)?.cloudVisible) {
-      setView("gallery", { replace: true })
-    }
-  }, [backendTarget, setView, view])
+  }, [backendTarget])
 
   useEffect(() => {
     const normalizedView = normalizeViewFromPath(window.location.pathname)
@@ -1199,7 +1215,7 @@ function App() {
                 label: item.label,
               }))}
               size="small"
-              onChange={(value) => setView(value as View)}
+              onChange={(value) => handleViewChange(value as View)}
             />
           </nav>
           {import.meta.env.DEV ? (
@@ -1207,7 +1223,7 @@ function App() {
               <select
                 className="backend-target-select"
                 value={backendTarget}
-                onChange={(event) => setBackendTarget(event.target.value as BackendTarget)}
+                onChange={(event) => handleBackendTargetChange(event.target.value as BackendTarget)}
                 title={
                   loadingHealth
                     ? "检查后端中"
