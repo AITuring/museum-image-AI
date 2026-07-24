@@ -96,11 +96,25 @@ class ExhibitionSyncRunRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ExhibitionSyncWorkerRead(BaseModel):
+    status: str
+    message: str | None = None
+    heartbeat_at: datetime
+    next_run_at: datetime | None = None
+    online: bool
+
+
 class ExhibitionSyncStatusRead(BaseModel):
     catalog_total: int
+    discovered_total: int = 0
     backfill_remaining: int | None = None
     processed: int = 0
+    overall_progress: float = 0
+    rate_per_minute: float | None = None
+    eta_seconds: int | None = None
     run: ExhibitionSyncRunRead | None = None
+    recent_runs: list[ExhibitionSyncRunRead] = Field(default_factory=list)
+    worker: ExhibitionSyncWorkerRead | None = None
 
 
 class ExhibitionSyncAcceptedRead(BaseModel):

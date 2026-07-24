@@ -114,7 +114,12 @@ class Settings(BaseSettings):
     exhibition_sync_minute: int = 20
     exhibition_sync_timezone: str = "Asia/Shanghai"
     exhibition_sync_backfill_batch_size: int = 1000
-    exhibition_sync_concurrency: int = 4
+    exhibition_sync_continuous_backfill: bool = True
+    exhibition_sync_backfill_pause_seconds: int = 15
+    exhibition_sync_retry_seconds: int = 600
+    exhibition_sync_concurrency: int = 2
+    exhibition_sync_commit_batch_size: int = 50
+    exhibition_sync_commit_pause_seconds: float = 0.5
     exhibition_sync_request_timeout_seconds: int = 30
     exhibition_sync_user_agent: str = "MuseumImageDB-ExhibitionCatalog/1.0"
 

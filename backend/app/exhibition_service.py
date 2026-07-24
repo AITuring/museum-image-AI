@@ -69,6 +69,8 @@ def _candidate_urls(
     db: Session,
     discovered_urls: list[str],
     mode: SyncMode,
+    *,
+    refresh_existing: bool = True,
 ) -> tuple[list[str], set[str]]:
     rows = list(
         db.execute(
@@ -85,13 +87,17 @@ def _candidate_urls(
         return list(dict.fromkeys(discovered_urls)), existing_urls
 
     today = date.today()
-    refresh_urls = [
-        row.source_url
-        for row in rows
-        if row.is_permanent
-        or row.end_date is None
-        or row.end_date >= today - timedelta(days=7)
-    ]
+    refresh_urls = (
+        [
+            row.source_url
+            for row in rows
+            if row.is_permanent
+            or row.end_date is None
+            or row.end_date >= today - timedelta(days=7)
+        ]
+        if refresh_existing
+        else []
+    )
     missing_detail_urls = [
         row.source_url for row in rows if not (row.description or "").strip()
     ]
@@ -177,6 +183,7 @@ async def run_exhibition_sync(
     *,
     mode: SyncMode = "incremental",
     trigger: str = "manual",
+    refresh_existing: bool = True,
 ) -> ExhibitionSyncRun | None:
     db = ExhibitionSessionLocal()
     locked = False
@@ -206,7 +213,12 @@ async def run_exhibition_sync(
             sitemap_response.raise_for_status()
             city_regions = parse_city_regions(root_response.text)
             discovered_urls = parse_sitemap_event_urls(sitemap_response.content)
-            candidates, existing_urls = _candidate_urls(db, discovered_urls, mode)
+            candidates, existing_urls = _candidate_urls(
+                db,
+                discovered_urls,
+                mode,
+                refresh_existing=refresh_existing,
+            )
 
             run.discovered = len(discovered_urls)
             run.attempted = len(candidates)
@@ -220,7 +232,7 @@ async def run_exhibition_sync(
                 )
             }
             semaphore = asyncio.Semaphore(max(1, settings.exhibition_sync_concurrency))
-            batch_size = 100
+            batch_size = max(1, settings.exhibition_sync_commit_batch_size)
             errors: list[str] = []
 
             for start in range(0, len(candidates), batch_size):
@@ -253,6 +265,10 @@ async def run_exhibition_sync(
                     run.updated,
                     run.failed,
                 )
+                if start + batch_size < len(candidates):
+                    await asyncio.sleep(
+                        max(0, settings.exhibition_sync_commit_pause_seconds)
+                    )
 
         run.status = "partial" if errors else "success"
         run.error = "\n".join(errors[:20]) if errors else None
@@ -301,10 +317,51 @@ class ExhibitionSyncCoordinator:
         if self.running:
             return False
         self._task = asyncio.create_task(
-            run_exhibition_sync(mode=mode, trigger=trigger),
+            self.run_until_caught_up(mode=mode, trigger=trigger),
             name=f"exhibition-sync-{trigger}-{mode}",
         )
         return True
+
+    async def run_until_caught_up(
+        self,
+        *,
+        mode: SyncMode,
+        trigger: str,
+    ) -> ExhibitionSyncRun | None:
+        run = await run_exhibition_sync(mode=mode, trigger=trigger)
+        if mode != "incremental" or not settings.exhibition_sync_continuous_backfill:
+            return run
+
+        while run is not None and run.status in {"success", "partial"}:
+            with ExhibitionSessionLocal() as db:
+                remaining = max(0, run.discovered - exhibition_catalog_count(db))
+            if remaining == 0:
+                logger.info("exhibition backfill caught up")
+                return run
+
+            made_progress = run.created + run.updated > 0
+            if not made_progress:
+                logger.warning(
+                    "exhibition backfill stopped with %s remaining because the last run made no progress",
+                    remaining,
+                )
+                return run
+
+            logger.info(
+                "exhibition backfill continuing in %ss with %s remaining",
+                settings.exhibition_sync_backfill_pause_seconds,
+                remaining,
+            )
+            await asyncio.sleep(
+                max(1, settings.exhibition_sync_backfill_pause_seconds)
+            )
+            run = await run_exhibition_sync(
+                mode="incremental",
+                trigger="backfill",
+                refresh_existing=False,
+            )
+
+        return run
 
     def start_scheduler(self) -> None:
         if self._scheduler_task is None or self._scheduler_task.done():

@@ -1,4 +1,5 @@
-# Cloud deployment (Alibaba Cloud server): database + backend (cloud role) only.
+# Cloud deployment (Alibaba Cloud server): databases, API backend, and the
+# resource-isolated exhibition sync worker.
 # The frontend is deployed separately to Vercel (see README "云端部署"). No Chrome /
 # qwen bridge here — that runs on the local machine.
 #
@@ -50,6 +51,7 @@ services:
       EXHIBITION_DATABASE_URL: ${EXHIBITION_DATABASE_URL:-postgresql+psycopg://museum:museum123@exhibitions-postgres:5432/museum_exhibition_db}
       APP_ENV: ${APP_ENV:-production}
       IMAGE_VARIANT_CONCURRENCY: ${IMAGE_VARIANT_CONCURRENCY:-1}
+      EXHIBITION_SYNC_ENABLED: "false"
     # Cloud role does not need Chrome/Xvfb — run uvicorn directly.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     volumes:
@@ -66,6 +68,29 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      exhibitions-postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  exhibition-sync-worker:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    container_name: museum-cloud-exhibition-sync
+    env_file:
+      - .env
+    environment:
+      APP_ROLE: cloud
+      EXHIBITION_DATABASE_URL: ${EXHIBITION_DATABASE_URL:-postgresql+psycopg://museum:museum123@exhibitions-postgres:5432/museum_exhibition_db}
+      EXHIBITION_SYNC_ENABLED: "true"
+      EXHIBITION_SYNC_CONCURRENCY: ${EXHIBITION_SYNC_CONCURRENCY:-2}
+      EXHIBITION_SYNC_BACKFILL_BATCH_SIZE: ${EXHIBITION_SYNC_BACKFILL_BATCH_SIZE:-1000}
+      EXHIBITION_SYNC_BACKFILL_PAUSE_SECONDS: ${EXHIBITION_SYNC_BACKFILL_PAUSE_SECONDS:-15}
+      EXHIBITION_SYNC_COMMIT_BATCH_SIZE: ${EXHIBITION_SYNC_COMMIT_BATCH_SIZE:-50}
+      EXHIBITION_SYNC_COMMIT_PAUSE_SECONDS: ${EXHIBITION_SYNC_COMMIT_PAUSE_SECONDS:-0.5}
+    command: python scripts/sync_exhibitions.py --daemon
+    mem_limit: ${EXHIBITION_SYNC_MEMORY_LIMIT:-512m}
+    memswap_limit: ${EXHIBITION_SYNC_MEMORY_SWAP_LIMIT:-768m}
+    cpus: ${EXHIBITION_SYNC_CPU_LIMIT:-0.35}
+    depends_on:
       exhibitions-postgres:
         condition: service_healthy
     restart: unless-stopped

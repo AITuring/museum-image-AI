@@ -34,7 +34,11 @@ from app.exhibition_db import (
     get_exhibition_db,
     initialize_exhibition_database,
 )
-from app.exhibition_models import CatalogExhibition, ExhibitionSyncRun
+from app.exhibition_models import (
+    CatalogExhibition,
+    ExhibitionSyncRun,
+    ExhibitionSyncWorkerState,
+)
 from app.exhibition_schemas import (
     ExhibitionArtifactSummaryRead,
     ExhibitionCatalogItemRead,
@@ -46,6 +50,7 @@ from app.exhibition_schemas import (
     ExhibitionSyncAcceptedRead,
     ExhibitionSyncRunRead,
     ExhibitionSyncStatusRead,
+    ExhibitionSyncWorkerRead,
     ExhibitionYearFacetRead,
 )
 from app.exhibition_service import (
@@ -593,8 +598,14 @@ async def lifespan(_: FastAPI):
     if settings.exhibition_sync_enabled and exhibition_catalog_ready:
         exhibition_sync_coordinator.start_scheduler()
         with ExhibitionSessionLocal() as exhibition_db:
-            if exhibition_catalog_count(exhibition_db) == 0:
-                exhibition_sync_coordinator.start(mode="incremental", trigger="bootstrap")
+            catalog_total = exhibition_catalog_count(exhibition_db)
+            latest_run = latest_sync_run(exhibition_db)
+            discovered_total = latest_run.discovered if latest_run is not None else 0
+            if catalog_total == 0 or catalog_total < discovered_total:
+                exhibition_sync_coordinator.start(
+                    mode="incremental",
+                    trigger="bootstrap",
+                )
     cloud_http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(120, connect=15),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
@@ -3982,25 +3993,97 @@ def get_exhibition_sync_live_status(
     db: Session = Depends(get_exhibition_db),
 ) -> ExhibitionSyncStatusRead:
     catalog_total = exhibition_catalog_count(db)
-    run = latest_sync_run(db)
+    recent_runs = list(
+        db.scalars(
+            select(ExhibitionSyncRun)
+            .order_by(ExhibitionSyncRun.started_at.desc())
+            .limit(8)
+        )
+    )
+    run = recent_runs[0] if recent_runs else None
     processed = 0
     backfill_remaining = None
+    discovered_total = 0
+    rate_per_minute = None
+    eta_seconds = None
     if run is not None:
+        discovered_total = max(catalog_total, run.discovered)
         processed = min(
             run.attempted,
             run.created + run.updated + run.failed,
         )
         if run.discovered:
             backfill_remaining = max(0, run.discovered - catalog_total)
+
+        now = datetime.now(timezone.utc)
+        created_total = 0
+        duration_seconds = 0.0
+        for recent_run in recent_runs:
+            if recent_run.created <= 0:
+                continue
+            started_at = recent_run.started_at
+            completed_at = recent_run.completed_at or now
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            if completed_at.tzinfo is None:
+                completed_at = completed_at.replace(tzinfo=timezone.utc)
+            created_total += recent_run.created
+            duration_seconds += max(
+                1,
+                (completed_at - started_at).total_seconds(),
+            )
+        if created_total > 0 and duration_seconds > 0:
+            rate_per_minute = created_total / (duration_seconds / 60)
+            if backfill_remaining:
+                eta_seconds = int(
+                    math.ceil(backfill_remaining / rate_per_minute * 60)
+                )
+
+    overall_progress = (
+        min(100.0, catalog_total / discovered_total * 100)
+        if discovered_total
+        else 0
+    )
+    worker_state = db.get(ExhibitionSyncWorkerState, 1)
+    worker_read = None
+    if worker_state is not None:
+        heartbeat_at = worker_state.heartbeat_at
+        normalized_heartbeat = (
+            heartbeat_at
+            if heartbeat_at.tzinfo is not None
+            else heartbeat_at.replace(tzinfo=timezone.utc)
+        )
+        worker_read = ExhibitionSyncWorkerRead(
+            status=worker_state.status,
+            message=worker_state.message,
+            heartbeat_at=heartbeat_at,
+            next_run_at=worker_state.next_run_at,
+            online=(
+                datetime.now(timezone.utc) - normalized_heartbeat
+            ).total_seconds() <= 45,
+        )
     return ExhibitionSyncStatusRead(
         catalog_total=catalog_total,
+        discovered_total=discovered_total,
         backfill_remaining=backfill_remaining,
         processed=processed,
+        overall_progress=round(overall_progress, 2),
+        rate_per_minute=(
+            round(rate_per_minute, 1)
+            if rate_per_minute is not None
+            else None
+        ),
+        eta_seconds=eta_seconds,
         run=(
             ExhibitionSyncRunRead.model_validate(run)
             if run is not None
             else None
         ),
+        recent_runs=[
+            ExhibitionSyncRunRead.model_validate(item)
+            for item in recent_runs
+        ],
+        worker=worker_read,
     )
 
 
@@ -4015,6 +4098,11 @@ def start_exhibition_sync(
     db: Session = Depends(get_exhibition_db),
 ) -> ExhibitionSyncAcceptedRead:
     require_ingest_token(authorization)
+    if not settings.exhibition_sync_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="展览同步由独立 Worker 管理，API 进程未启用同步任务。",
+        )
     accepted = exhibition_sync_coordinator.start(
         mode=mode,  # type: ignore[arg-type]
         trigger="manual",

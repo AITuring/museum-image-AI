@@ -103,9 +103,21 @@ type ExhibitionSyncRun = {
 
 type ExhibitionSyncStatus = {
   catalog_total: number
+  discovered_total: number
   backfill_remaining: number | null
   processed: number
+  overall_progress: number
+  rate_per_minute: number | null
+  eta_seconds: number | null
   run: ExhibitionSyncRun | null
+  recent_runs: ExhibitionSyncRun[]
+  worker: {
+    status: "starting" | "syncing" | "retry_wait" | "waiting_daily" | string
+    message: string | null
+    heartbeat_at: string
+    next_run_at: string | null
+    online: boolean
+  } | null
 }
 
 const STATUS_OPTIONS = [
@@ -155,6 +167,21 @@ function formatSyncTime(value: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   })}`
+}
+
+function formatDuration(seconds: number | null) {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "计算中"
+  if (seconds < 60) return "不足 1 分钟"
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes < 60) return `约 ${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (hours < 24) {
+    return remainingMinutes ? `约 ${hours} 小时 ${remainingMinutes} 分` : `约 ${hours} 小时`
+  }
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours ? `约 ${days} 天 ${remainingHours} 小时` : `约 ${days} 天`
 }
 
 function resolveBackendAssetUrl(apiBaseUrl: string, value: string) {
@@ -519,7 +546,19 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
         const data = (await response.json()) as ExhibitionSyncStatus
         setSyncStatus(data)
         setSyncStatusError(false)
-        timer = window.setTimeout(poll, data.run?.status === "running" ? 1500 : 15000)
+        const workerSyncing = Boolean(data.worker?.online && data.worker.status === "syncing")
+        const activelySyncing = data.worker
+          ? workerSyncing
+          : data.run?.status === "running"
+        const backfillActive = (data.backfill_remaining ?? 0) > 0
+        timer = window.setTimeout(
+          poll,
+          activelySyncing
+            ? 1500
+            : backfillActive
+              ? 5000
+              : 30000,
+        )
       } catch {
         if (!controller.signal.aborted) {
           setSyncStatusError(true)
@@ -568,6 +607,33 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
     : 0
   const catalogTotal = syncStatus?.catalog_total ?? payload?.total ?? 0
   const backfillRemaining = syncStatus?.backfill_remaining ?? payload?.backfill_remaining ?? null
+  const discoveredTotal = syncStatus?.discovered_total ?? currentRun?.discovered ?? catalogTotal
+  const overallProgress = syncStatus?.overall_progress
+    ?? (discoveredTotal ? Math.min(100, catalogTotal / discoveredTotal * 100) : 0)
+  const worker = syncStatus?.worker ?? null
+  const syncActive = worker
+    ? Boolean(worker.online && worker.status === "syncing")
+    : syncRunning
+  const syncStateLabel = worker && !worker.online
+    ? "Worker 离线"
+    : worker?.status === "retry_wait"
+      ? "等待重试"
+      : worker?.status === "waiting_daily"
+        ? "数据已追平"
+        : backfillRemaining && backfillRemaining > 0
+          ? "持续同步中"
+          : currentRun
+            ? SYNC_STATUS_LABELS[currentRun.status]
+            : "同步状态"
+  const recentRuns = syncStatus?.recent_runs ?? (currentRun ? [currentRun] : [])
+  const syncFootnote = syncStatusError
+    ? "实时状态暂不可用"
+    : worker?.status === "waiting_daily" && worker.next_run_at
+      ? formatSyncTime(worker.next_run_at).replace("更新于 ", "下次同步 ")
+      : worker?.message
+        ?? (backfillRemaining
+          ? `待补详情 ${backfillRemaining.toLocaleString("zh-CN")} 条`
+          : "目录详情已追平")
   const cityOptions = [
     { value: "", label: "全部城市" },
     ...(payload?.cities ?? []).map((item) => ({
@@ -602,23 +668,63 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
           <h2>全球展览</h2>
           <p>按年份与地域浏览展览记录，数据每日从公开展览目录同步。</p>
         </div>
-        <div className={`exhibition-sync-card${syncRunning ? " running" : ""}`}>
+        <div className={`exhibition-sync-card${syncActive ? " running" : ""}`}>
           <div className="exhibition-sync-card-head">
             <span className="exhibition-sync-state">
               <i aria-hidden="true" />
-              {currentRun ? SYNC_STATUS_LABELS[currentRun.status] : "同步状态"}
+              {syncStateLabel}
             </span>
-            <span>{formatSyncTime(payload?.last_synced_at ?? null)}</span>
+            <span>
+              {worker?.heartbeat_at
+                ? `心跳 ${formatSyncTime(worker.heartbeat_at).replace("更新于 ", "")}`
+                : formatSyncTime(payload?.last_synced_at ?? null)}
+            </span>
           </div>
-          <div className="exhibition-sync-total">
-            <strong>{catalogTotal.toLocaleString("zh-CN")}</strong>
-            <span>条展览已同步</span>
+          <div className="exhibition-sync-overall">
+            <div className="exhibition-sync-total">
+              <strong>{overallProgress.toFixed(overallProgress < 10 ? 1 : 0)}%</strong>
+              <span>
+                已同步 {catalogTotal.toLocaleString("zh-CN")} / {discoveredTotal.toLocaleString("zh-CN")}
+              </span>
+            </div>
+            <div
+              className="exhibition-sync-progress exhibition-sync-progress-overall"
+              role="progressbar"
+              aria-label="展览总体同步进度"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={overallProgress}
+            >
+              <span style={{ width: `${overallProgress}%` }} />
+            </div>
+          </div>
+          <div className="exhibition-sync-metrics">
+            <div>
+              <strong>{(backfillRemaining ?? 0).toLocaleString("zh-CN")}</strong>
+              <span>待同步</span>
+            </div>
+            <div>
+              <strong>
+                {syncStatus?.rate_per_minute != null
+                  ? syncStatus.rate_per_minute.toLocaleString("zh-CN", { maximumFractionDigits: 1 })
+                  : "—"}
+              </strong>
+              <span>条 / 分钟</span>
+            </div>
+            <div>
+              <strong>{formatDuration(syncStatus?.eta_seconds ?? null)}</strong>
+              <span>预计完成</span>
+            </div>
+            <div className={worker?.online ? "online" : "offline"}>
+              <strong>{worker?.online ? "在线" : "未连接"}</strong>
+              <span>同步 Worker</span>
+            </div>
           </div>
           {currentRun ? (
-            <>
+            <div className="exhibition-sync-batch">
               <div className="exhibition-sync-progress-head">
-                <span>本轮已处理 {syncStatus?.processed.toLocaleString("zh-CN") ?? 0} / {currentRun.attempted.toLocaleString("zh-CN")}</span>
-                <span>{syncProgress}%</span>
+                <span>{syncActive ? "当前批次" : "最近批次"}</span>
+                <span>{syncStatus?.processed.toLocaleString("zh-CN") ?? 0} / {currentRun.attempted.toLocaleString("zh-CN")} · {syncProgress}%</span>
               </div>
               <div
                 className="exhibition-sync-progress"
@@ -636,16 +742,26 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
                 <span>更新 {currentRun.updated.toLocaleString("zh-CN")}</span>
                 {currentRun.failed > 0 ? <span className="failed">失败 {currentRun.failed.toLocaleString("zh-CN")}</span> : null}
               </div>
-            </>
+            </div>
+          ) : null}
+          {recentRuns.length > 0 ? (
+            <div className="exhibition-sync-history">
+              <span>最近批次</span>
+              <div>
+                {recentRuns.slice(0, 5).map((run) => (
+                  <i
+                    key={run.id}
+                    className={run.status === "failed" ? "failed" : ""}
+                    title={`新增 ${run.created} · 更新 ${run.updated} · 失败 ${run.failed}`}
+                  >
+                    +{run.created.toLocaleString("zh-CN")}
+                  </i>
+                ))}
+              </div>
+            </div>
           ) : null}
           <div className="exhibition-sync-card-foot">
-            <span>
-              {syncStatusError
-                ? "实时状态暂不可用"
-                : backfillRemaining
-                  ? `待补详情 ${backfillRemaining.toLocaleString("zh-CN")} 条`
-                  : "目录详情已追平"}
-            </span>
+            <span>{syncFootnote}</span>
             <a href="https://art.icity.ly/" target="_blank" rel="noreferrer">
               数据来源 iMuseum <ExternalLink size={12} />
             </a>

@@ -10,7 +10,7 @@
   display: flex;
   max-width: 1480px;
   margin: 0 auto 22px;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 28px;
 }
@@ -39,8 +39,8 @@
 }
 
 .exhibition-sync-card {
-  width: min(390px, 42vw);
-  padding: 13px 15px 12px;
+  width: min(560px, 54vw);
+  padding: 14px 16px 12px;
   border: 1px solid rgb(123 101 69 / 0.16);
   border-radius: 11px;
   background: rgb(255 255 255 / 0.78);
@@ -84,17 +84,80 @@
 .exhibition-sync-total {
   display: flex;
   align-items: baseline;
-  margin: 8px 0 7px;
+  margin: 9px 0 7px;
   gap: 7px;
 }
 
 .exhibition-sync-total strong {
   color: var(--ui-text-primary);
   font-family: "Songti SC", "Noto Serif SC", serif;
-  font-size: 25px;
+  font-size: 27px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   letter-spacing: -0.04em;
+}
+
+.exhibition-sync-overall {
+  margin-bottom: 11px;
+}
+
+.exhibition-sync-progress-overall {
+  height: 6px;
+}
+
+.exhibition-sync-progress-overall span {
+  background: linear-gradient(90deg, #84623a, #bd8e52 72%, #d2ac76);
+}
+
+.exhibition-sync-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 -5px 11px;
+}
+
+.exhibition-sync-metrics > div {
+  min-width: 0;
+  padding: 3px 8px 4px;
+  border-right: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-sync-metrics > div:last-child {
+  border-right: 0;
+}
+
+.exhibition-sync-metrics strong,
+.exhibition-sync-metrics span {
+  display: block;
+}
+
+.exhibition-sync-metrics strong {
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-sync-metrics span {
+  margin-top: 2px;
+  color: var(--ui-text-tertiary);
+  font-size: 9px;
+}
+
+.exhibition-sync-metrics .online strong {
+  color: #68785d;
+}
+
+.exhibition-sync-metrics .offline strong {
+  color: #a85a4f;
+}
+
+.exhibition-sync-batch {
+  padding: 9px 10px 8px;
+  border-radius: 8px;
+  background: rgb(123 101 69 / 0.055);
 }
 
 .exhibition-sync-progress-head {
@@ -125,6 +188,37 @@
   font-variant-numeric: tabular-nums;
 }
 
+.exhibition-sync-history {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 9px;
+  gap: 12px;
+}
+
+.exhibition-sync-history > div {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+}
+
+.exhibition-sync-history i {
+  min-width: 38px;
+  padding: 3px 6px;
+  border-radius: 99px;
+  background: rgb(113 129 99 / 0.1);
+  color: #68785d;
+  font-size: 9px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.exhibition-sync-history i.failed {
+  background: rgb(168 90 79 / 0.1);
+  color: #a85a4f;
+}
+
 .exhibition-sync-counts .failed {
   color: #a85a4f;
 }
@@ -147,6 +241,16 @@
   50% {
     opacity: 0.48;
     transform: scale(0.78);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exhibition-sync-card.running .exhibition-sync-state i {
+    animation: none;
+  }
+
+  .exhibition-sync-progress span {
+    transition: none;
   }
 }
 
@@ -806,6 +910,15 @@
 
   .exhibition-sync-card {
     width: 100%;
+  }
+
+  .exhibition-sync-metrics {
+    grid-template-columns: 1fr 1fr;
+    row-gap: 8px;
+  }
+
+  .exhibition-sync-metrics > div:nth-child(2) {
+    border-right: 0;
   }
 
   .exhibition-toolbar {

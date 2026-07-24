@@ -1,12 +1,16 @@
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.exhibition_db import ExhibitionCatalogBase
-from app.exhibition_models import CatalogExhibition, ExhibitionSyncRun
+from app.exhibition_models import (
+    CatalogExhibition,
+    ExhibitionSyncRun,
+    ExhibitionSyncWorkerState,
+)
 from app.main import get_exhibition_sync_live_status, recommend_exhibition_catalog
 from app.models import Museum
 
@@ -128,6 +132,7 @@ class ExhibitionRecommendationTests(unittest.TestCase):
         self.assertIn("拍摄日期在长期展期内", long_running.match_reasons)
 
     def test_live_sync_status_reports_catalog_and_run_progress(self) -> None:
+        now = datetime.now(timezone.utc)
         self.catalog_db.add(
             exhibition(
                 "existing",
@@ -146,6 +151,15 @@ class ExhibitionRecommendationTests(unittest.TestCase):
                 created=10,
                 updated=20,
                 failed=2,
+                started_at=now - timedelta(minutes=10),
+            )
+        )
+        self.catalog_db.add(
+            ExhibitionSyncWorkerState(
+                id=1,
+                status="syncing",
+                message="正在补齐历史展览",
+                heartbeat_at=now,
             )
         )
         self.catalog_db.commit()
@@ -153,10 +167,18 @@ class ExhibitionRecommendationTests(unittest.TestCase):
         status = get_exhibition_sync_live_status(self.catalog_db)
 
         self.assertEqual(status.catalog_total, 1)
+        self.assertEqual(status.discovered_total, 100)
         self.assertEqual(status.processed, 32)
         self.assertEqual(status.backfill_remaining, 99)
+        self.assertEqual(status.overall_progress, 1)
+        self.assertIsNotNone(status.rate_per_minute)
+        self.assertIsNotNone(status.eta_seconds)
         self.assertIsNotNone(status.run)
         self.assertEqual(status.run.status, "running")
+        self.assertEqual(len(status.recent_runs), 1)
+        self.assertIsNotNone(status.worker)
+        self.assertTrue(status.worker.online)
+        self.assertEqual(status.worker.status, "syncing")
 
 
 if __name__ == "__main__":
