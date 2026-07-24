@@ -31,18 +31,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Encode repo deploy key
-        id: repo_key
-        env:
-          REPO_SSH_PRIVATE_KEY: ${{ secrets.REPO_SSH_PRIVATE_KEY }}
-        run: |
-          {
-            echo "repo_key_b64<<EOF"
-            printf '%s' "$REPO_SSH_PRIVATE_KEY" | base64 | tr -d '\n'
-            echo
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Fetch recent release history
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
@@ -102,7 +90,7 @@ jobs:
         uses: appleboy/ssh-action@v1.2.0
         env:
           DEPLOY_PATH: ${{ secrets.SERVER_APP_PATH }}
-          REPO_URL: git@github.com:${{ github.repository }}.git
+          REPO_URL: https://github.com/${{ github.repository }}.git
           BRANCH: main
           COMPOSE_FILE: docker-compose.cloud.yml
           HEALTHCHECK_URL: ${{ secrets.BACKEND_HEALTHCHECK_URL }}
@@ -111,9 +99,6 @@ jobs:
           ROLLBACK_TARGET: ${{ inputs.rollback_target }}
           ROLLBACK_REF: ${{ steps.meta.outputs.rollback_ref }}
           ROLLBACK_IMAGE: ${{ steps.meta.outputs.rollback_image }}
-          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          REPO_SSH_PRIVATE_KEY_B64: ${{ steps.repo_key.outputs.repo_key_b64 }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
@@ -121,7 +106,7 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           command_timeout: 30m
           script_stop: true
-          envs: DEPLOY_PATH,REPO_URL,BRANCH,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,ROLLBACK_TARGET,ROLLBACK_REF,ROLLBACK_IMAGE,GHCR_USERNAME,GHCR_TOKEN,REPO_SSH_PRIVATE_KEY_B64
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,ROLLBACK_TARGET,ROLLBACK_REF,ROLLBACK_IMAGE
           script: |
             set -euo pipefail
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
@@ -129,6 +114,7 @@ jobs:
               exit 1
             fi
             cd "$DEPLOY_PATH"
+            git remote set-url origin "$REPO_URL"
             git fetch --prune origin "$BRANCH" --tags
             if [ -n "${ROLLBACK_REF:-}" ]; then
               git checkout --force "$ROLLBACK_REF"
