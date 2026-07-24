@@ -213,7 +213,37 @@ type ArtifactSubmitResult = {
   duplicate_image_detail?: string | null
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ??(import.meta.env.PROD ? "" : "http://localhost:8000")).replace(/\/$/, "")
+type BackendTarget = "local" | "cloud"
+
+type BackendOption = {
+  value: BackendTarget
+  label: string
+  detail: string
+  apiBaseUrl: string
+}
+
+const backendPreferenceStorageKey = "museum-backend-target"
+const localApiBaseUrl = (
+  import.meta.env.VITE_API_BASE_URL
+  ?? (import.meta.env.PROD ? "" : "http://localhost:8000")
+).replace(/\/$/, "")
+const cloudApiBaseUrl = import.meta.env.DEV ? "/cloud-api" : ""
+const backendOptions: BackendOption[] = [
+  {
+    value: "local",
+    label: "本地dev",
+    detail: localApiBaseUrl || "当前站点",
+    apiBaseUrl: localApiBaseUrl,
+  },
+  ...(import.meta.env.DEV
+    ? [{
+        value: "cloud" as const,
+        label: "线上production",
+        detail: "走前端代理",
+        apiBaseUrl: cloudApiBaseUrl,
+      }]
+    : []),
+]
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
 
@@ -378,6 +408,21 @@ function buildArtifactFormFromImage(image?: UploadedImage | null): ArtifactFormS
 }
 
 function App() {
+  const [backendTarget, setBackendTarget] = useState<BackendTarget>(() => {
+    if (!import.meta.env.DEV) {
+      return "local"
+    }
+    const storedValue = window.localStorage.getItem(backendPreferenceStorageKey)
+    return storedValue === "cloud" ? "cloud" : "local"
+  })
+  const apiBaseUrl = useMemo(
+    () => backendOptions.find((option) => option.value === backendTarget)?.apiBaseUrl ?? localApiBaseUrl,
+    [backendTarget],
+  )
+  const activeBackend = useMemo(
+    () => backendOptions.find((option) => option.value === backendTarget) ?? backendOptions[0],
+    [backendTarget],
+  )
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(true)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -413,6 +458,13 @@ function App() {
   const [showWebBridgeLoginModal, setShowWebBridgeLoginModal] = useState(false)
   const [launchingWebBridgeLogin, setLaunchingWebBridgeLogin] = useState(false)
   const streamAbortRef = useRef<AbortController | null>(null)
+  const backendSelectOptions = useMemo(
+    () => backendOptions.map((option) => ({
+      value: option.value,
+      label: option.label,
+    })),
+    [],
+  )
 
   const orderedStreams = useMemo(
     () => providerOrder.map((name) => providerStreams[name]).filter(Boolean) as ProviderStream[],
@@ -735,7 +787,17 @@ function App() {
       }
     }
     void loadInitialData()
-  }, [])
+  }, [apiBaseUrl])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return
+    }
+    window.localStorage.setItem(backendPreferenceStorageKey, backendTarget)
+    if (backendTarget === "cloud" && !cloudOnly && !NAV_ITEMS.find((item) => item.view === view)?.cloudVisible) {
+      setView("gallery", { replace: true })
+    }
+  }, [backendTarget, setView, view])
 
   useEffect(() => {
     const normalizedView = normalizeViewFromPath(window.location.pathname)
@@ -1140,12 +1202,40 @@ function App() {
               onChange={(value) => setView(value as View)}
             />
           </nav>
-          <div className={`health-pill ${health ? "online" : "offline"}`}>
-            <span className="status-dot" />
-            <span>
-              {loadingHealth ? "检查后端…" : health ? `后端在线 · ${health.environment}` : "后端未连通"}
-            </span>
-          </div>
+          {import.meta.env.DEV ? (
+            <label className={`backend-target-select-wrap ${health ? "online" : "offline"}`}>
+              <select
+                className="backend-target-select"
+                value={backendTarget}
+                onChange={(event) => setBackendTarget(event.target.value as BackendTarget)}
+                title={
+                  loadingHealth
+                    ? "检查后端中"
+                    : health
+                      ? `${activeBackend.label} · ${health.environment}`
+                      : `${activeBackend.label} · 未连通`
+                }
+              >
+                {backendSelectOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <span className="backend-target-caret" aria-hidden="true">▾</span>
+            </label>
+          ) : (
+            <div className={`health-pill ${health ? "online" : "offline"}`}>
+              <span className="status-dot" />
+              <span className="health-pill-text">
+                {loadingHealth
+                  ? "检查中"
+                  : health
+                    ? `${activeBackend.label} · ${health.environment}`
+                    : `${activeBackend.label} · 未连通`}
+              </span>
+            </div>
+          )}
         </div>
       </header>
 

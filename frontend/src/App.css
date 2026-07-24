@@ -256,6 +256,12 @@ button.danger,
   color: var(--app-success);
 }
 
+.health-pill.offline {
+  border-color: color-mix(in oklch, var(--app-danger) 18%, var(--app-border));
+  background: color-mix(in oklch, var(--app-danger) 7%, white);
+  color: var(--app-danger);
+}
+
 .status-dot,
 .pulse,
 .single-status::before {
@@ -275,6 +281,63 @@ button.danger,
 .pulse.done,
 .pulse.submitted {
   background: var(--app-success);
+}
+
+.health-pill.offline .status-dot {
+  background: var(--app-danger);
+}
+
+.backend-target-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 24px 0 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-card);
+}
+
+.backend-target-select-wrap.online {
+  border-color: color-mix(in oklch, var(--app-success) 16%, var(--app-border));
+  background: color-mix(in oklch, var(--ui-success-muted) 64%, white);
+  color: var(--app-success);
+}
+
+.backend-target-select-wrap.offline {
+  border-color: color-mix(in oklch, var(--app-danger) 18%, var(--app-border));
+  background: color-mix(in oklch, var(--app-danger) 7%, white);
+  color: var(--app-danger);
+}
+
+.backend-target-select {
+  min-width: 7.6em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.backend-target-select:focus {
+  outline: none;
+}
+
+.backend-target-caret {
+  position: absolute;
+  right: 10px;
+  color: currentColor;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.health-pill-text {
+  font-size: 10px;
 }
 
 .pulse.failed,

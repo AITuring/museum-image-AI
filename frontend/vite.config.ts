@@ -55,15 +55,20 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_AMAP_SECURITY_CODE': JSON.stringify(env.AMAP_SECURITY_CODE ?? ''),
       'import.meta.env.VITE_AMAP_SCRIPT_SRC': JSON.stringify(env.AMAP_SCRIPT_SRC ?? ''),
     },
-    ...(isGallery
-      ? {
-          server: {
-            proxy: {
+    server: {
+      proxy: {
+        '/cloud-api': {
+          target: cloudBackend,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/cloud-api/, ''),
+        },
+        ...(isGallery
+          ? {
               '/api': { target: cloudBackend, changeOrigin: true },
               '/files': { target: cloudBackend, changeOrigin: true },
-            },
-          },
-        }
-      : {}),
+            }
+          : {}),
+      },
+    },
   }
 })

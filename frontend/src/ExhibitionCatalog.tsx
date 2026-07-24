@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from "react"
 import { Button, Input, Select, Spin } from "antd"
 import {
   ArrowLeft,
   Building2,
   CalendarDays,
+  ChevronDown,
   Clock3,
   ExternalLink,
   Images,
@@ -182,6 +183,44 @@ function formatDuration(seconds: number | null) {
   const days = Math.floor(hours / 24)
   const remainingHours = hours % 24
   return remainingHours ? `约 ${days} 天 ${remainingHours} 小时` : `约 ${days} 天`
+}
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000
+
+function parseDateValue(value: string | null) {
+  if (!value) return null
+  const [year, month, day] = value.slice(0, 10).split("-").map(Number)
+  if (!year || !month || !day) return null
+  return Date.UTC(year, month - 1, day)
+}
+
+function getTimelinePlacement(item: ExhibitionItem, year: number) {
+  const yearStart = Date.UTC(year, 0, 1)
+  const yearEnd = Date.UTC(year + 1, 0, 1)
+  const startValue = parseDateValue(item.start_date)
+  const endValue = parseDateValue(item.end_date)
+
+  if (startValue == null && endValue == null && !item.is_permanent) return null
+
+  const sourceStart = item.is_permanent ? yearStart : (startValue ?? endValue ?? yearStart)
+  const sourceEnd = item.is_permanent
+    ? yearEnd
+    : (endValue != null ? endValue + DAY_IN_MS : (startValue ?? yearStart) + DAY_IN_MS)
+
+  if (sourceEnd <= yearStart || sourceStart >= yearEnd) return null
+
+  const start = Math.max(sourceStart, yearStart)
+  const end = Math.min(Math.max(sourceEnd, start + DAY_IN_MS), yearEnd)
+  const total = yearEnd - yearStart
+  const leftPercent = (start - yearStart) / total * 100
+  const rawWidthPercent = (end - start) / total * 100
+
+  return {
+    start,
+    end,
+    leftPercent,
+    widthPercent: Math.min(Math.max(rawWidthPercent, 1.2), 100 - leftPercent),
+  }
 }
 
 function resolveBackendAssetUrl(apiBaseUrl: string, value: string) {
@@ -478,6 +517,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
   const [error, setError] = useState<string | null>(null)
   const [syncStatus, setSyncStatus] = useState<ExhibitionSyncStatus | null>(null)
   const [syncStatusError, setSyncStatusError] = useState(false)
+  const [syncCardExpanded, setSyncCardExpanded] = useState(false)
   const previousSyncRunState = useRef<string | null>(null)
 
   useEffect(() => {
@@ -598,6 +638,83 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
     })
     return Array.from(groups.entries())
   }, [items])
+  const timelineRows = useMemo(() => {
+    if (!year) return []
+
+    const rows = new Map<string, {
+      key: string
+      museum: string
+      city: string
+      region: string
+      items: ExhibitionItem[]
+    }>()
+
+    items.forEach((item) => {
+      const museum = item.venue?.trim() || item.city || "馆名待补充"
+      const key = [museum, item.city, item.region].join("::")
+      const row = rows.get(key) ?? {
+        key,
+        museum,
+        city: item.city,
+        region: item.region,
+        items: [],
+      }
+      row.items.push(item)
+      rows.set(key, row)
+    })
+
+    return Array.from(rows.values())
+      .map((row) => {
+        const undated: ExhibitionItem[] = []
+        const placed = row.items
+          .map((item) => {
+            const placement = getTimelinePlacement(item, year)
+            if (!placement) {
+              undated.push(item)
+              return null
+            }
+            return { item, ...placement }
+          })
+          .filter((segment): segment is NonNullable<typeof segment> => segment !== null)
+          .sort((left, right) => {
+            if (left.start !== right.start) return left.start - right.start
+            return right.end - left.end
+          })
+
+        const laneEndTimes: number[] = []
+        const segments = placed.map((segment) => {
+          let lane = laneEndTimes.findIndex((end) => segment.start >= end)
+          if (lane === -1) {
+            lane = laneEndTimes.length
+            laneEndTimes.push(segment.end)
+          } else {
+            laneEndTimes[lane] = segment.end
+          }
+          return {
+            ...segment,
+            lane,
+          }
+        })
+
+        return {
+          ...row,
+          count: row.items.length,
+          laneCount: Math.max(laneEndTimes.length, segments.length ? 1 : 0),
+          segments,
+          undated,
+        }
+      })
+      .sort((left, right) => {
+        const cityOrder = left.city.localeCompare(right.city, "zh-CN")
+        if (cityOrder !== 0) return cityOrder
+        return left.museum.localeCompare(right.museum, "zh-CN")
+      })
+  }, [items, year])
+  const monthLabels = useMemo(
+    () => Array.from({ length: 12 }, (_, index) => `${index + 1}月`),
+    [],
+  )
+  const currentYear = new Date().getFullYear()
 
   const hasMore = payload ? items.length < payload.total : false
   const currentRun = syncStatus?.run ?? null
@@ -641,6 +758,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
       label: `${item.value} · ${item.count}`,
     })),
   ]
+  const syncCardPanelId = "exhibition-sync-status-panel"
 
   const openDetail = useCallback((event: MouseEvent<HTMLAnchorElement>, exhibitionId: number) => {
     if (
@@ -655,6 +773,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
     event.preventDefault()
     navigateTo(`/exhibitions/${exhibitionId}`)
   }, [])
+  const showTimeline = year !== null && year < currentYear
 
   if (detailReference !== null) {
     return <ExhibitionDetailView apiBaseUrl={apiBaseUrl} detailReference={detailReference} />
@@ -668,24 +787,36 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
           <h2>全球展览</h2>
           <p>按年份与地域浏览展览记录，数据每日从公开展览目录同步。</p>
         </div>
-        <div className={`exhibition-sync-card${syncActive ? " running" : ""}`}>
-          <div className="exhibition-sync-card-head">
-            <span className="exhibition-sync-state">
-              <i aria-hidden="true" />
-              {syncStateLabel}
-            </span>
-            <span>
-              {worker?.heartbeat_at
-                ? `心跳 ${formatSyncTime(worker.heartbeat_at).replace("更新于 ", "")}`
-                : formatSyncTime(payload?.last_synced_at ?? null)}
-            </span>
-          </div>
-          <div className="exhibition-sync-overall">
-            <div className="exhibition-sync-total">
-              <strong>{overallProgress.toFixed(overallProgress < 10 ? 1 : 0)}%</strong>
-              <span>
-                已同步 {catalogTotal.toLocaleString("zh-CN")} / {discoveredTotal.toLocaleString("zh-CN")}
+        <div className={`exhibition-sync-card${syncActive ? " running" : ""}${syncCardExpanded ? " expanded" : ""}`}>
+          <button
+            type="button"
+            className="exhibition-sync-card-toggle"
+            aria-expanded={syncCardExpanded}
+            aria-controls={syncCardPanelId}
+            onClick={() => setSyncCardExpanded((current) => !current)}
+          >
+            <div className="exhibition-sync-card-head">
+              <span className="exhibition-sync-state">
+                <i aria-hidden="true" />
+                {syncStateLabel}
               </span>
+              <span>
+                {worker?.heartbeat_at
+                  ? `心跳 ${formatSyncTime(worker.heartbeat_at).replace("更新于 ", "")}`
+                  : formatSyncTime(payload?.last_synced_at ?? null)}
+              </span>
+            </div>
+            <div className="exhibition-sync-card-summary">
+              <div className="exhibition-sync-card-summary-main">
+                <strong>{overallProgress.toFixed(overallProgress < 10 ? 1 : 0)}%</strong>
+                <span>
+                  已同步 {catalogTotal.toLocaleString("zh-CN")} / {discoveredTotal.toLocaleString("zh-CN")}
+                </span>
+              </div>
+              <div className="exhibition-sync-card-summary-side">
+                <span>{syncFootnote}</span>
+                <ChevronDown size={16} aria-hidden="true" />
+              </div>
             </div>
             <div
               className="exhibition-sync-progress exhibition-sync-progress-overall"
@@ -697,74 +828,85 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
             >
               <span style={{ width: `${overallProgress}%` }} />
             </div>
-          </div>
-          <div className="exhibition-sync-metrics">
-            <div>
-              <strong>{(backfillRemaining ?? 0).toLocaleString("zh-CN")}</strong>
-              <span>待同步</span>
-            </div>
-            <div>
-              <strong>
-                {syncStatus?.rate_per_minute != null
-                  ? syncStatus.rate_per_minute.toLocaleString("zh-CN", { maximumFractionDigits: 1 })
-                  : "—"}
-              </strong>
-              <span>条 / 分钟</span>
-            </div>
-            <div>
-              <strong>{formatDuration(syncStatus?.eta_seconds ?? null)}</strong>
-              <span>预计完成</span>
-            </div>
-            <div className={worker?.online ? "online" : "offline"}>
-              <strong>{worker?.online ? "在线" : "未连接"}</strong>
-              <span>同步 Worker</span>
-            </div>
-          </div>
-          {currentRun ? (
-            <div className="exhibition-sync-batch">
-              <div className="exhibition-sync-progress-head">
-                <span>{syncActive ? "当前批次" : "最近批次"}</span>
-                <span>{syncStatus?.processed.toLocaleString("zh-CN") ?? 0} / {currentRun.attempted.toLocaleString("zh-CN")} · {syncProgress}%</span>
+          </button>
+
+          <div
+            id={syncCardPanelId}
+            className={`exhibition-sync-card-panel${syncCardExpanded ? " expanded" : ""}`}
+          >
+            <div className="exhibition-sync-card-panel-inner">
+              <div className="exhibition-sync-metrics">
+                <div>
+                  <strong>{(backfillRemaining ?? 0).toLocaleString("zh-CN")}</strong>
+                  <span>待同步</span>
+                </div>
+                <div>
+                  <strong>
+                    {syncStatus?.rate_per_minute != null
+                      ? syncStatus.rate_per_minute.toLocaleString("zh-CN", { maximumFractionDigits: 1 })
+                      : "—"}
+                  </strong>
+                  <span>条 / 分钟</span>
+                </div>
+                <div>
+                  <strong>{formatDuration(syncStatus?.eta_seconds ?? null)}</strong>
+                  <span>预计完成</span>
+                </div>
+                <div className={worker?.online ? "online" : "offline"}>
+                  <strong>{worker?.online ? "在线" : "未连接"}</strong>
+                  <span>同步 Worker</span>
+                </div>
               </div>
-              <div
-                className="exhibition-sync-progress"
-                role="progressbar"
-                aria-label="展览同步进度"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={syncProgress}
-              >
-                <span style={{ width: `${syncProgress}%` }} />
-              </div>
-              <div className="exhibition-sync-counts">
-                <span>发现 {currentRun.discovered.toLocaleString("zh-CN")}</span>
-                <span>新增 {currentRun.created.toLocaleString("zh-CN")}</span>
-                <span>更新 {currentRun.updated.toLocaleString("zh-CN")}</span>
-                {currentRun.failed > 0 ? <span className="failed">失败 {currentRun.failed.toLocaleString("zh-CN")}</span> : null}
-              </div>
-            </div>
-          ) : null}
-          {recentRuns.length > 0 ? (
-            <div className="exhibition-sync-history">
-              <span>最近批次</span>
-              <div>
-                {recentRuns.slice(0, 5).map((run) => (
-                  <i
-                    key={run.id}
-                    className={run.status === "failed" ? "failed" : ""}
-                    title={`新增 ${run.created} · 更新 ${run.updated} · 失败 ${run.failed}`}
+
+              {currentRun ? (
+                <div className="exhibition-sync-batch">
+                  <div className="exhibition-sync-progress-head">
+                    <span>{syncActive ? "当前批次" : "最近批次"}</span>
+                    <span>{syncStatus?.processed.toLocaleString("zh-CN") ?? 0} / {currentRun.attempted.toLocaleString("zh-CN")} · {syncProgress}%</span>
+                  </div>
+                  <div
+                    className="exhibition-sync-progress"
+                    role="progressbar"
+                    aria-label="展览同步进度"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={syncProgress}
                   >
-                    +{run.created.toLocaleString("zh-CN")}
-                  </i>
-                ))}
+                    <span style={{ width: `${syncProgress}%` }} />
+                  </div>
+                  <div className="exhibition-sync-counts">
+                    <span>发现 {currentRun.discovered.toLocaleString("zh-CN")}</span>
+                    <span>新增 {currentRun.created.toLocaleString("zh-CN")}</span>
+                    <span>更新 {currentRun.updated.toLocaleString("zh-CN")}</span>
+                    {currentRun.failed > 0 ? <span className="failed">失败 {currentRun.failed.toLocaleString("zh-CN")}</span> : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {recentRuns.length > 0 ? (
+                <div className="exhibition-sync-history">
+                  <span>最近批次</span>
+                  <div>
+                    {recentRuns.slice(0, 5).map((run) => (
+                      <i
+                        key={run.id}
+                        className={run.status === "failed" ? "failed" : ""}
+                        title={`新增 ${run.created} · 更新 ${run.updated} · 失败 ${run.failed}`}
+                      >
+                        +{run.created.toLocaleString("zh-CN")}
+                      </i>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="exhibition-sync-card-foot">
+                <span>{syncFootnote}</span>
+                <a href="https://art.icity.ly/" target="_blank" rel="noreferrer">
+                  数据来源 iMuseum <ExternalLink size={12} />
+                </a>
               </div>
             </div>
-          ) : null}
-          <div className="exhibition-sync-card-foot">
-            <span>{syncFootnote}</span>
-            <a href="https://art.icity.ly/" target="_blank" rel="noreferrer">
-              数据来源 iMuseum <ExternalLink size={12} />
-            </a>
           </div>
         </div>
       </header>
@@ -776,7 +918,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
           placeholder="搜索展览、场馆或城市"
           prefix={<Search size={15} />}
           value={query}
-          onChange={(event) => setQuery(event.target.value)}
+          onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)}
         />
         <Select
           aria-label="地域"
@@ -788,7 +930,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
               label: `${item.value} · ${item.count}`,
             })),
           ]}
-          onChange={(value) => {
+          onChange={(value: string) => {
             setRegion(value)
             setCity("")
           }}
@@ -823,7 +965,10 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
         <main className="exhibition-results">
           <div className="exhibition-result-summary">
             <strong>{year ? `${year} 年` : "全部年份"}</strong>
-            <span>{region || "全球"} · {payload?.total.toLocaleString("zh-CN") ?? 0} 个展览</span>
+            <span>
+              {region || "全球"} · {payload?.total.toLocaleString("zh-CN") ?? 0} 个展览
+              {showTimeline ? ` · ${timelineRows.length} 个馆 · 时间轴` : " · 卡片混排"}
+            </span>
           </div>
 
           {loading ? (
@@ -833,8 +978,85 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
               <span>展览目录暂时无法加载（{error}）</span>
               <Button size="small" onClick={() => void fetchPage(1)}>重试</Button>
             </div>
-          ) : groupedItems.length === 0 ? (
+          ) : (showTimeline ? timelineRows.length : groupedItems.length) === 0 ? (
             <div className="exhibition-state">当前筛选下暂无展览记录。</div>
+          ) : showTimeline ? (
+            <div className="exhibition-timeline">
+              <div className="exhibition-timeline-head">
+                <div className="exhibition-timeline-head-label">
+                  <span>博物馆</span>
+                  <strong>{timelineRows.length} 馆</strong>
+                </div>
+                <div className="exhibition-timeline-months" aria-hidden="true">
+                  {monthLabels.map((label) => (
+                    <span key={label}>{label}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="exhibition-timeline-list">
+                {timelineRows.map((row) => (
+                  <section className="exhibition-timeline-row" key={row.key}>
+                    <div className="exhibition-timeline-museum">
+                      <strong>{row.museum}</strong>
+                      <span>
+                        {row.city}
+                        {row.region && row.region !== row.city ? ` · ${row.region}` : ""}
+                        {` · ${row.count} 展`}
+                      </span>
+                    </div>
+
+                    <div className="exhibition-timeline-row-body">
+                      <div
+                        className="exhibition-timeline-track"
+                        style={{ minHeight: `${Math.max(row.laneCount, 1) * 72}px` }}
+                      >
+                        <div className="exhibition-timeline-track-grid" aria-hidden="true">
+                          {monthLabels.map((label) => (
+                            <span key={`${row.key}-${label}`} />
+                          ))}
+                        </div>
+
+                        {row.segments.map((segment) => (
+                          <a
+                            key={segment.item.id}
+                            href={`/exhibitions/${segment.item.id}`}
+                            className={`exhibition-timeline-bar ${segment.item.status}`}
+                            onClick={(event) => openDetail(event, segment.item.id)}
+                            style={{
+                              left: `${segment.leftPercent}%`,
+                              width: `${segment.widthPercent}%`,
+                              top: `${segment.lane * 72 + 10}px`,
+                            }}
+                            aria-label={`${segment.item.title}, ${formatDateRange(segment.item)}`}
+                          >
+                            <span className="exhibition-timeline-bar-title">{segment.item.title}</span>
+                            <span className="exhibition-timeline-bar-meta">
+                              {formatDateRange(segment.item)}
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+
+                      {row.undated.length ? (
+                        <div className="exhibition-timeline-undated">
+                          <span>日期待补充</span>
+                          {row.undated.map((item) => (
+                            <a
+                              key={item.id}
+                              href={`/exhibitions/${item.id}`}
+                              onClick={(event) => openDetail(event, item.id)}
+                            >
+                              {item.title}
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </div>
           ) : (
             groupedItems.map(([groupRegion, group]) => (
               <section className="exhibition-region-group" key={groupRegion}>

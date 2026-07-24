@@ -40,14 +40,26 @@
 
 .exhibition-sync-card {
   width: min(560px, 54vw);
-  padding: 14px 16px 12px;
-  border: 1px solid rgb(123 101 69 / 0.16);
+  padding: 10px 12px 10px;
+  /* border: 1px solid rgb(123 101 69 / 0.16); */
   border-radius: 11px;
   background: rgb(255 255 255 / 0.78);
   box-shadow: 0 10px 34px rgb(58 46 30 / 0.055);
   color: var(--ui-text-tertiary);
   font-size: 10px;
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
+}
+
+.exhibition-sync-card-toggle {
+  display: grid;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  gap: 9px;
 }
 
 .exhibition-sync-card-head,
@@ -81,24 +93,48 @@
   animation: exhibition-sync-pulse 1.4s ease-in-out infinite;
 }
 
-.exhibition-sync-total {
+.exhibition-sync-card-summary {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.exhibition-sync-card-summary-main {
   display: flex;
   align-items: baseline;
-  margin: 9px 0 7px;
   gap: 7px;
 }
 
-.exhibition-sync-total strong {
+.exhibition-sync-card-summary-main strong {
   color: var(--ui-text-primary);
   font-family: "Songti SC", "Noto Serif SC", serif;
-  font-size: 27px;
+  font-size: 24px;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   letter-spacing: -0.04em;
 }
 
-.exhibition-sync-overall {
-  margin-bottom: 11px;
+.exhibition-sync-card-summary-main span {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+}
+
+.exhibition-sync-card-summary-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.exhibition-sync-card-summary-side svg {
+  transition: transform 220ms ease;
+}
+
+.exhibition-sync-card.expanded .exhibition-sync-card-summary-side svg {
+  transform: rotate(180deg);
 }
 
 .exhibition-sync-progress-overall {
@@ -107,6 +143,25 @@
 
 .exhibition-sync-progress-overall span {
   background: linear-gradient(90deg, #84623a, #bd8e52 72%, #d2ac76);
+}
+
+.exhibition-sync-card-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 260ms ease;
+}
+
+.exhibition-sync-card-panel.expanded {
+  grid-template-rows: 1fr;
+}
+
+.exhibition-sync-card-panel-inner {
+  overflow: hidden;
+  padding-top: 0;
+}
+
+.exhibition-sync-card.expanded .exhibition-sync-card-panel-inner {
+  padding-top: 12px;
 }
 
 .exhibition-sync-metrics {
@@ -249,7 +304,9 @@
     animation: none;
   }
 
-  .exhibition-sync-progress span {
+  .exhibition-sync-progress span,
+  .exhibition-sync-card-summary-side svg,
+  .exhibition-sync-card-panel {
     transition: none;
   }
 }
@@ -267,6 +324,7 @@
   border-radius: 10px;
   background: rgb(255 255 255 / 0.9);
   box-shadow: 0 8px 28px rgb(20 18 14 / 0.045);
+  -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   gap: 8px;
 }
@@ -379,6 +437,232 @@
   margin-top: 26px;
 }
 
+.exhibition-timeline {
+  margin-top: 22px;
+}
+
+.exhibition-timeline-head,
+.exhibition-timeline-row {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 22px;
+}
+
+.exhibition-timeline-head {
+  position: sticky;
+  top: 112px;
+  z-index: 14;
+  margin-bottom: 18px;
+  padding: 12px 14px 14px;
+  border: 1px solid rgb(123 101 69 / 0.12);
+  border-radius: 12px;
+  box-shadow: 0 14px 30px rgb(47 37 24 / 0.06);
+  background:
+    linear-gradient(180deg, rgb(255 253 248 / 0.98) 0%, rgb(246 242 234 / 0.94) 100%);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.exhibition-timeline-head-label {
+  display: grid;
+  align-content: end;
+  gap: 3px;
+}
+
+.exhibition-timeline-head-label span {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.exhibition-timeline-head-label strong {
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.exhibition-timeline-months,
+.exhibition-timeline-track-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.exhibition-timeline-months {
+  overflow: hidden;
+  border-top: 1px solid var(--ui-line-subtle);
+  border-bottom: 1px solid var(--ui-line-subtle);
+  background: rgb(255 255 255 / 0.56);
+}
+
+.exhibition-timeline-months span {
+  padding: 10px 0;
+  color: #7b6a52;
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.exhibition-timeline-months span + span {
+  border-left: 1px solid rgb(128 111 82 / 0.11);
+}
+
+.exhibition-timeline-list {
+  display: grid;
+  gap: 18px;
+}
+
+.exhibition-timeline-row {
+  align-items: start;
+}
+
+.exhibition-timeline-museum {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+}
+
+.exhibition-timeline-museum strong {
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.exhibition-timeline-museum span {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.exhibition-timeline-row-body {
+  min-width: 0;
+}
+
+.exhibition-timeline-track {
+  position: relative;
+  overflow: hidden;
+  border-top: 1px solid var(--ui-line-subtle);
+  border-bottom: 1px solid var(--ui-line-subtle);
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.58), rgb(255 255 255 / 0.78)),
+    var(--ui-surface-default);
+}
+
+.exhibition-timeline-track-grid {
+  position: absolute;
+  inset: 0;
+}
+
+.exhibition-timeline-track-grid span + span {
+  border-left: 1px solid rgb(128 111 82 / 0.09);
+}
+
+.exhibition-timeline-bar {
+  position: absolute;
+  display: grid;
+  min-width: 0;
+  padding: 10px 12px 9px;
+  border: 1px solid rgb(104 85 58 / 0.15);
+  border-radius: 8px;
+  background: rgb(255 251 245 / 0.82);
+  box-shadow: 0 8px 18px rgb(40 31 22 / 0.04);
+  color: rgb(64 58 50 / 0.86);
+  opacity: 0.74;
+  text-decoration: none;
+  gap: 3px;
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, opacity 160ms ease;
+}
+
+.exhibition-timeline-bar:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 28px rgb(40 31 22 / 0.08);
+  opacity: 1;
+  color: var(--ui-text-primary);
+}
+
+.exhibition-timeline-bar.ongoing {
+  border-color: rgb(69 111 82 / 0.16);
+  background: rgb(244 249 244 / 0.74);
+  color: rgb(60 88 67 / 0.78);
+  opacity: 0.68;
+}
+
+.exhibition-timeline-bar.upcoming {
+  border-color: rgb(156 111 55 / 0.14);
+  background: rgb(252 247 238 / 0.72);
+  color: rgb(123 91 52 / 0.75);
+  opacity: 0.62;
+}
+
+.exhibition-timeline-bar.ended {
+  z-index: 2;
+  border-color: rgb(93 76 52 / 0.32);
+  background:
+    linear-gradient(180deg, rgb(255 252 247 / 0.98), rgb(243 236 224 / 0.98));
+  box-shadow: 0 14px 28px rgb(73 57 36 / 0.12);
+  color: #2c2620;
+  opacity: 1;
+}
+
+.exhibition-timeline-bar.permanent {
+  border-color: rgb(94 82 59 / 0.16);
+  background: rgb(245 241 233 / 0.78);
+  color: rgb(88 74 55 / 0.8);
+  opacity: 0.72;
+}
+
+.exhibition-timeline-bar-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.exhibition-timeline-bar-meta {
+  overflow: hidden;
+  color: var(--ui-text-secondary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-timeline-undated {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  gap: 6px;
+}
+
+.exhibition-timeline-undated > span {
+  color: var(--ui-text-tertiary);
+  font-size: 9px;
+  line-height: 26px;
+}
+
+.exhibition-timeline-undated a {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.7);
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.exhibition-timeline-undated a:hover {
+  border-color: var(--ui-line-strong);
+  color: var(--ui-text-primary);
+}
+
 .exhibition-region-title {
   display: flex;
   align-items: baseline;
@@ -457,6 +741,7 @@
   font-size: 9px;
   font-weight: 650;
   letter-spacing: 0.04em;
+  -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
 
@@ -664,6 +949,7 @@
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.05em;
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
 
@@ -828,7 +1114,10 @@
   border-radius: 10px;
   background: rgb(255 255 255 / 0.84);
   box-shadow: 0 8px 28px rgb(20 18 14 / 0.04);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
+
 
 .exhibition-detail-aside dl {
   display: grid;
@@ -889,6 +1178,12 @@
 }
 
 @media (max-width: 1080px) {
+  .exhibition-timeline-head,
+  .exhibition-timeline-row {
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: 16px;
+  }
+
   .exhibition-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -909,6 +1204,16 @@
   }
 
   .exhibition-sync-card {
+    width: 100%;
+  }
+
+  .exhibition-sync-card-summary {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .exhibition-sync-card-summary-side {
+    justify-content: space-between;
     width: 100%;
   }
 
@@ -933,6 +1238,54 @@
   .exhibition-layout {
     display: block;
     margin-top: 18px;
+  }
+
+  .exhibition-timeline-head,
+  .exhibition-timeline-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .exhibition-timeline-head {
+    position: static;
+    margin-bottom: 10px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .exhibition-timeline-months {
+    margin-left: -2px;
+  }
+
+  .exhibition-timeline-months span {
+    padding: 9px 0;
+    font-size: 9px;
+  }
+
+  .exhibition-timeline-list {
+    gap: 14px;
+  }
+
+  .exhibition-timeline-museum {
+    padding-top: 0;
+  }
+
+  .exhibition-timeline-track {
+    overflow-x: auto;
+  }
+
+  .exhibition-timeline-track-grid,
+  .exhibition-timeline-bar {
+    min-width: 720px;
+  }
+
+  .exhibition-timeline-bar {
+    min-width: 96px;
   }
 
   .exhibition-year-rail {
@@ -996,7 +1349,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .exhibition-card,
-  .exhibition-cover img {
+  .exhibition-cover img,
+  .exhibition-timeline-bar {
     transition: none;
   }
 }
