@@ -54,26 +54,37 @@ Backend health: <http://localhost:8000/api/health\>
 ## 全球展览目录同步
 
 云端使用独立的 `exhibition-sync-worker` 容器执行同步，不占用 API 进程。
-首次启动时 Worker 会按每批 1,000 条持续回填，直到追平全部历史记录；追平后改为
+为避免历史回填拖垮小规格生产服务器，常规 API 部署不会自动启动 Worker；需要同步时
+通过 `exhibition-sync` profile 显式启动：
+
+```bash
+docker compose -f docker-compose.cloud.yml --profile exhibition-sync \
+  up -d exhibition-sync-worker
+```
+
+首次启动时 Worker 会按每批 200 条持续回填，直到追平全部历史记录；追平后改为
 每天北京时间 `03:20` 执行增量同步。同步器遵守
 `art.icity.ly/robots.txt` 暴露的官方 sitemap：刷新仍在进行、即将开始和常设展，
 并按批次回填尚未入库的历史详情。目录只保存展览元数据、来源链接、封面链接和来源页
 公开摘要，不下载或复制详情页全文。
 
-Worker 默认限制为 `0.35` CPU、`512 MiB` 内存、2 个并发请求，并在小批提交之间
+Worker 默认限制为 `0.20` CPU、`512 MiB` 内存、1 个并发请求，并在小批提交之间
 主动让出资源，避免同步任务影响 API。可通过以下命令查看进度：
 
 ```bash
-docker compose -f docker-compose.cloud.yml logs -f exhibition-sync-worker
+docker compose -f docker-compose.cloud.yml --profile exhibition-sync \
+  logs -f exhibition-sync-worker
 ```
 
 如果需要人工执行单轮同步，应先停止独立 Worker，避免重复任务：
 
 ```bash
 docker compose -f docker-compose.cloud.yml stop exhibition-sync-worker
-docker compose -f docker-compose.cloud.yml run --rm exhibition-sync-worker \
+docker compose -f docker-compose.cloud.yml --profile exhibition-sync \
+  run --rm exhibition-sync-worker \
   python scripts/sync_exhibitions.py --mode incremental
-docker compose -f docker-compose.cloud.yml start exhibition-sync-worker
+docker compose -f docker-compose.cloud.yml --profile exhibition-sync \
+  start exhibition-sync-worker
 ```
 
 云端 API 进程禁用手动同步入口；查询接口为

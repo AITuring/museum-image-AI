@@ -1,5 +1,7 @@
-# Cloud deployment (Alibaba Cloud server): databases, API backend, and the
-# resource-isolated exhibition sync worker.
+# Cloud deployment (Alibaba Cloud server): databases and API backend.
+# The exhibition sync worker is opt-in because its initial backfill can consume
+# most of a small production host. Start it explicitly with:
+#   docker compose -f docker-compose.cloud.yml --profile exhibition-sync up -d exhibition-sync-worker
 # The frontend is deployed separately to Vercel (see README "云端部署"). No Chrome /
 # qwen bridge here — that runs on the local machine.
 #
@@ -73,6 +75,8 @@ services:
     restart: unless-stopped
 
   exhibition-sync-worker:
+    profiles:
+      - exhibition-sync
     image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     container_name: museum-cloud-exhibition-sync
     env_file:
@@ -81,15 +85,15 @@ services:
       APP_ROLE: cloud
       EXHIBITION_DATABASE_URL: ${EXHIBITION_DATABASE_URL:-postgresql+psycopg://museum:museum123@exhibitions-postgres:5432/museum_exhibition_db}
       EXHIBITION_SYNC_ENABLED: "true"
-      EXHIBITION_SYNC_CONCURRENCY: ${EXHIBITION_SYNC_CONCURRENCY:-2}
-      EXHIBITION_SYNC_BACKFILL_BATCH_SIZE: ${EXHIBITION_SYNC_BACKFILL_BATCH_SIZE:-1000}
-      EXHIBITION_SYNC_BACKFILL_PAUSE_SECONDS: ${EXHIBITION_SYNC_BACKFILL_PAUSE_SECONDS:-15}
-      EXHIBITION_SYNC_COMMIT_BATCH_SIZE: ${EXHIBITION_SYNC_COMMIT_BATCH_SIZE:-50}
-      EXHIBITION_SYNC_COMMIT_PAUSE_SECONDS: ${EXHIBITION_SYNC_COMMIT_PAUSE_SECONDS:-0.5}
+      EXHIBITION_SYNC_CONCURRENCY: ${EXHIBITION_SYNC_CONCURRENCY:-1}
+      EXHIBITION_SYNC_BACKFILL_BATCH_SIZE: ${EXHIBITION_SYNC_BACKFILL_BATCH_SIZE:-200}
+      EXHIBITION_SYNC_BACKFILL_PAUSE_SECONDS: ${EXHIBITION_SYNC_BACKFILL_PAUSE_SECONDS:-60}
+      EXHIBITION_SYNC_COMMIT_BATCH_SIZE: ${EXHIBITION_SYNC_COMMIT_BATCH_SIZE:-25}
+      EXHIBITION_SYNC_COMMIT_PAUSE_SECONDS: ${EXHIBITION_SYNC_COMMIT_PAUSE_SECONDS:-1}
     command: python scripts/sync_exhibitions.py --daemon
     mem_limit: ${EXHIBITION_SYNC_MEMORY_LIMIT:-512m}
     memswap_limit: ${EXHIBITION_SYNC_MEMORY_SWAP_LIMIT:-768m}
-    cpus: ${EXHIBITION_SYNC_CPU_LIMIT:-0.35}
+    cpus: ${EXHIBITION_SYNC_CPU_LIMIT:-0.20}
     depends_on:
       exhibitions-postgres:
         condition: service_healthy

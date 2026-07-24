@@ -14,6 +14,7 @@ ROLLBACK_IMAGE="${ROLLBACK_IMAGE:-}"
 GHCR_USERNAME="${GHCR_USERNAME:-}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 REPO_SSH_PRIVATE_KEY_B64="${REPO_SSH_PRIVATE_KEY_B64:-}"
+DEPLOY_EXHIBITION_SYNC_WORKER="${DEPLOY_EXHIBITION_SYNC_WORKER:-false}"
 
 DEPLOY_STATE_DIR="$DEPLOY_PATH/.deploy"
 CURRENT_RELEASE_FILE="$DEPLOY_STATE_DIR/current_release.env"
@@ -159,9 +160,19 @@ deploy_release() {
   local image="$2"
 
   export BACKEND_IMAGE="$image"
+  log "Stopping exhibition sync worker before rollback"
+  docker compose -f "$COMPOSE_FILE" stop exhibition-sync-worker || true
   docker compose -f "$COMPOSE_FILE" pull backend
-  docker compose -f "$COMPOSE_FILE" up -d
+  docker compose -f "$COMPOSE_FILE" up -d --wait postgres exhibitions-postgres
+  docker compose -f "$COMPOSE_FILE" up -d --no-deps backend
   wait_for_healthcheck
+
+  if [ "$DEPLOY_EXHIBITION_SYNC_WORKER" = "true" ]; then
+    log "Starting opt-in exhibition sync worker"
+    docker compose -f "$COMPOSE_FILE" --profile exhibition-sync up -d --no-deps exhibition-sync-worker
+  else
+    log "Exhibition sync worker remains stopped"
+  fi
 
   cat >"$CURRENT_RELEASE_FILE" <<EOF
 RELEASE_COMMIT=$release_commit

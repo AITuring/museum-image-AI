@@ -128,6 +128,7 @@ jobs:
           HEALTHCHECK_URL: ${{ secrets.BACKEND_HEALTHCHECK_URL }}
           HEALTHCHECK_RETRIES: "30"
           HEALTHCHECK_INTERVAL: "5"
+          DEPLOY_EXHIBITION_SYNC_WORKER: "false"
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
@@ -135,7 +136,7 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           command_timeout: 40m
           script_stop: true
-          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,DEPLOY_EXHIBITION_SYNC_WORKER
           script: |
             set -euo pipefail
             mkdir -p "$(dirname "$DEPLOY_PATH")"
@@ -143,6 +144,9 @@ jobs:
               git clone "$REPO_URL" "$DEPLOY_PATH"
             fi
             cd "$DEPLOY_PATH"
+            # Relieve a saturated host before git/Docker release work. This
+            # container name is fixed by docker-compose.cloud.yml.
+            docker stop --time 20 museum-cloud-exhibition-sync >/dev/null 2>&1 || true
             git remote set-url origin "$REPO_URL"
             git fetch --prune origin "$BRANCH" --tags
             if [ -n "${DEPLOY_REF:-}" ]; then

@@ -13,6 +13,7 @@ HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-5}"
 GHCR_USERNAME="${GHCR_USERNAME:-}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 REPO_SSH_PRIVATE_KEY_B64="${REPO_SSH_PRIVATE_KEY_B64:-}"
+DEPLOY_EXHIBITION_SYNC_WORKER="${DEPLOY_EXHIBITION_SYNC_WORKER:-false}"
 
 DEPLOY_STATE_DIR="$DEPLOY_PATH/.deploy"
 CURRENT_RELEASE_FILE="$DEPLOY_STATE_DIR/current_release.env"
@@ -156,11 +157,26 @@ deploy_release() {
 
   export BACKEND_IMAGE="$image"
 
+  # A historical exhibition backfill is intentionally not part of an API
+  # release. Stop a worker left running by an older compose definition before
+  # pulling/restarting services so it cannot starve SSH, Docker, or PostgreSQL.
+  log "Stopping exhibition sync worker before deployment"
+  docker compose -f "$COMPOSE_FILE" stop exhibition-sync-worker || true
+
   log "Pulling backend image $image"
   docker compose -f "$COMPOSE_FILE" pull backend
-  log "Starting services with $COMPOSE_FILE"
-  docker compose -f "$COMPOSE_FILE" up -d
+  log "Starting database services"
+  docker compose -f "$COMPOSE_FILE" up -d --wait postgres exhibitions-postgres
+  log "Starting backend API"
+  docker compose -f "$COMPOSE_FILE" up -d --no-deps backend
   wait_for_healthcheck
+
+  if [ "$DEPLOY_EXHIBITION_SYNC_WORKER" = "true" ]; then
+    log "Starting opt-in exhibition sync worker"
+    docker compose -f "$COMPOSE_FILE" --profile exhibition-sync up -d --no-deps exhibition-sync-worker
+  else
+    log "Exhibition sync worker remains stopped (opt in with DEPLOY_EXHIBITION_SYNC_WORKER=true)"
+  fi
 
   write_release_state "$release_commit" "$image"
 }
