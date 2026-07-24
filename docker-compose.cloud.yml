@@ -49,6 +49,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://museum:museum123@postgres:5432/museum_image_db}
       EXHIBITION_DATABASE_URL: ${EXHIBITION_DATABASE_URL:-postgresql+psycopg://museum:museum123@exhibitions-postgres:5432/museum_exhibition_db}
       APP_ENV: ${APP_ENV:-production}
+      IMAGE_VARIANT_CONCURRENCY: ${IMAGE_VARIANT_CONCURRENCY:-1}
     # Cloud role does not need Chrome/Xvfb — run uvicorn directly.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     volumes:
@@ -57,6 +58,11 @@ services:
       # Exposed for the Vercel frontend (via rewrites proxy or direct CORS). Put behind
       # an HTTPS reverse proxy in production.
       - "${BACKEND_PORT:-8000}:8000"
+    # Keep a malformed or unusually large image from starving SSH, PostgreSQL,
+    # and the rest of this small production host.
+    mem_limit: ${BACKEND_MEMORY_LIMIT:-1100m}
+    memswap_limit: ${BACKEND_MEMORY_SWAP_LIMIT:-2500m}
+    cpus: ${BACKEND_CPU_LIMIT:-1.5}
     depends_on:
       postgres:
         condition: service_healthy

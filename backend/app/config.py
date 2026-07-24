@@ -118,6 +118,11 @@ class Settings(BaseSettings):
     exhibition_sync_request_timeout_seconds: int = 30
     exhibition_sync_user_agent: str = "MuseumImageDB-ExhibitionCatalog/1.0"
 
+    # Generating a thumbnail can temporarily use hundreds of MiB when the source
+    # is a high-resolution museum photograph. Keep this deliberately conservative
+    # so a cold gallery cannot exhaust a small cloud instance.
+    image_variant_concurrency: int = 1
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     @property

@@ -193,6 +193,9 @@ IMAGE_VARIANT_CACHE_DIR = DATA_DIR / "image_variants"
 MAX_IMAGE_SOURCE_BYTES = 100 * 1024 * 1024
 IMAGE_VARIANT_MASTER_SIZE = 1280
 IMAGE_VARIANT_LOCKS: dict[str, asyncio.Lock] = {}
+IMAGE_VARIANT_WORK_SEMAPHORE = asyncio.Semaphore(
+    max(1, settings.image_variant_concurrency)
+)
 
 
 def report_debug_event(
@@ -710,6 +713,10 @@ async def load_image_source_bytes(image_url: str) -> bytes:
 
 def render_image_variant(source_bytes: bytes, target_path: Path, size: int) -> None:
     with Image.open(BytesIO(source_bytes)) as source:
+        # JPEG draft mode asks the decoder to load a reduced-resolution image.
+        # This substantially lowers peak memory and CPU for 40–100 MP originals
+        # while preserving more than enough detail for the 1280 px master.
+        source.draft("RGB", (size, size))
         image = ImageOps.exif_transpose(source)
         image.thumbnail((size, size), Image.Resampling.LANCZOS)
         if image.mode != "RGB":
@@ -4496,30 +4503,38 @@ async def get_image_variant(
         image_lock = IMAGE_VARIANT_LOCKS.setdefault(source_key, asyncio.Lock())
         async with image_lock:
             if not cache_path.exists():
-                master_path = (
-                    IMAGE_VARIANT_CACHE_DIR
-                    / f"v2-{source_key}-{IMAGE_VARIANT_MASTER_SIZE}.webp"
-                )
-                try:
-                    if not master_path.exists():
-                        source_bytes = await load_image_source_bytes(url)
-                        await run_in_threadpool(
-                            render_image_variant,
-                            source_bytes,
-                            master_path,
-                            IMAGE_VARIANT_MASTER_SIZE,
+                # A cold gallery can request dozens of different originals at
+                # once. Serialize expensive download/decode work on small cloud
+                # instances so normal API and health requests remain responsive.
+                async with IMAGE_VARIANT_WORK_SEMAPHORE:
+                    if not cache_path.exists():
+                        master_path = (
+                            IMAGE_VARIANT_CACHE_DIR
+                            / f"v2-{source_key}-{IMAGE_VARIANT_MASTER_SIZE}.webp"
                         )
-                    if size != IMAGE_VARIANT_MASTER_SIZE:
-                        await run_in_threadpool(
-                            render_image_variant,
-                            master_path.read_bytes(),
-                            cache_path,
-                            size,
-                        )
-                except HTTPException:
-                    raise
-                except Exception as exc:
-                    raise HTTPException(status_code=422, detail=f"无法生成图片预览：{exc}") from exc
+                        try:
+                            if not master_path.exists():
+                                source_bytes = await load_image_source_bytes(url)
+                                await run_in_threadpool(
+                                    render_image_variant,
+                                    source_bytes,
+                                    master_path,
+                                    IMAGE_VARIANT_MASTER_SIZE,
+                                )
+                            if size != IMAGE_VARIANT_MASTER_SIZE:
+                                await run_in_threadpool(
+                                    render_image_variant,
+                                    master_path.read_bytes(),
+                                    cache_path,
+                                    size,
+                                )
+                        except HTTPException:
+                            raise
+                        except Exception as exc:
+                            raise HTTPException(
+                                status_code=422,
+                                detail=f"无法生成图片预览：{exc}",
+                            ) from exc
 
     return FileResponse(
         cache_path,
