@@ -862,6 +862,77 @@ function toNullableNumber(value: string) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
+function exposureSeconds(value: string | null | undefined) {
+  const text = (value ?? "").trim().toLowerCase().replace(/s$/, "")
+  if (!text) return null
+  if (text.includes("/")) {
+    const [numerator, denominator] = text.split("/", 2).map(Number)
+    return Number.isFinite(numerator) && Number.isFinite(denominator) && denominator !== 0
+      ? numerator / denominator
+      : null
+  }
+  const numeric = Number(text)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function apertureNumber(value: string | null | undefined) {
+  const numeric = Number((value ?? "").trim().toLowerCase().replace(/^f\//, ""))
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function assertWrittenExif(metadata: ImageExifMetadata, form: FormState) {
+  const expectedLatitude = toNullableNumber(form.latitude)
+  const expectedLongitude = toNullableNumber(form.longitude)
+  if (
+    expectedLatitude !== null
+    && expectedLongitude !== null
+    && (
+      metadata.latitude === null
+      || metadata.longitude === null
+      || Math.abs(metadata.latitude - expectedLatitude) > 0.00001
+      || Math.abs(metadata.longitude - expectedLongitude) > 0.00001
+    )
+  ) {
+    throw new Error("本地图片 GPS 写入校验失败")
+  }
+
+  if ((metadata.camera_model ?? "").trim() !== form.cameraModel.trim()) {
+    throw new Error("本地图片相机型号写入校验失败")
+  }
+  if ((metadata.lens_model ?? "").trim() !== form.lensModel.trim()) {
+    throw new Error("本地图片镜头型号写入校验失败")
+  }
+  if (
+    form.capturedAt.trim()
+    && formatCapturedAt(metadata.captured_at) !== formatCapturedAt(form.capturedAt)
+  ) {
+    throw new Error("本地图片拍摄时间写入校验失败")
+  }
+
+  const expectedShutter = exposureSeconds(form.shutterSpeed)
+  const writtenShutter = exposureSeconds(metadata.shutter_speed)
+  if (
+    expectedShutter !== null
+    && (writtenShutter === null || Math.abs(writtenShutter - expectedShutter) > 0.000001)
+  ) {
+    throw new Error("本地图片快门信息写入校验失败")
+  }
+
+  const expectedAperture = apertureNumber(form.aperture)
+  const writtenAperture = apertureNumber(metadata.aperture)
+  if (
+    expectedAperture !== null
+    && (writtenAperture === null || Math.abs(writtenAperture - expectedAperture) > 0.001)
+  ) {
+    throw new Error("本地图片光圈信息写入校验失败")
+  }
+
+  const expectedIso = toNullableNumber(form.iso)
+  if (expectedIso !== null && metadata.iso !== expectedIso) {
+    throw new Error("本地图片 ISO 写入校验失败")
+  }
+}
+
 function fileExtension(name: string) {
   const index = name.lastIndexOf(".")
   return index > 0 ? name.slice(index) : ""
@@ -1587,7 +1658,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     const pickerWindow = window as FilePickerWindow
     if (!pickerWindow.showDirectoryPicker) {
       fileInputRef.current?.click()
-      setSubmitNotice({ type: "error", text: "当前浏览器不支持文件夹读写授权；可继续选择图片并云端入库，原地覆盖请使用最新版 Chrome 或 Edge。" })
+      setSubmitNotice({ type: "error", text: "当前浏览器不支持文件夹读写授权；保存并入库需要同步改名和写回 EXIF，请使用最新版 Chrome 或 Edge。" })
       return
     }
     try {
@@ -1730,7 +1801,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         const seedForm = builtItems.find((item) => hasMeaningfulFormValue(item.form))?.form
         return seedForm ? cloneFormState(seedForm) : current
       })
-      setSubmitNotice({ type: "success", text: `已载入 ${builtItems.length} 张图片到当前页面，尚未上传 OSS；未提交内容会自动保存在本机浏览器。` })
+      setSubmitNotice({
+        type: "success",
+        text: `已载入 ${builtItems.length} 张图片，尚未上传；提交前请点击“授权原文件夹”，保存时会同步修改本地文件名与 EXIF。`,
+      })
     } catch (error) {
       setSubmitNotice({
         type: "error",
@@ -1901,6 +1975,22 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }))
       return false
     }
+    if (!target.fileHandle) {
+      updateItem(itemId, (item) => ({
+        ...item,
+        submitState: "error",
+        submitMessage: "提交前请先点击“授权原文件夹”；保存并入库会同时修改本地文件名和 EXIF。",
+      }))
+      return false
+    }
+    if (target.fileName !== target.originalFileName && !directoryHandle) {
+      updateItem(itemId, (item) => ({
+        ...item,
+        submitState: "error",
+        submitMessage: "目标文件名已修改，请先授权原文件夹，才能在本地完成重命名。",
+      }))
+      return false
+    }
 
     updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null, uploadProgress: 8, uploadStage: "正在准备 EXIF 信息" }))
     try {
@@ -1930,62 +2020,70 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         if (target.form.iso.trim()) data.append("iso", target.form.iso.trim())
       }
 
-      let uploadFile = new File([target.localFile], target.fileName, {
-        type: target.localFile.type,
-        lastModified: target.localFile.lastModified,
+      updateItem(itemId, (item) => ({ ...item, uploadProgress: 16, uploadStage: "正在生成最终 EXIF 图片" }))
+      const exifForm = new FormData()
+      exifForm.append("file", target.localFile)
+      appendMetadata(exifForm)
+      const response = await fetch(`${apiBaseUrl}/api/artifacts/prepare-exif-file`, {
+        method: "POST",
+        body: exifForm,
       })
-      let sourceHash: string | null = null
-      let exifPrepared = false
-      let localWriteSucceeded = false
-      let resolvedWriteHandle = target.fileHandle
-      if (target.fileHandle) {
-        updateItem(itemId, (item) => ({ ...item, uploadProgress: 16, uploadStage: "正在生成可回写的图片" }))
-        const exifForm = new FormData()
-        exifForm.append("file", target.localFile)
-        appendMetadata(exifForm)
-        const response = await fetch(`${apiBaseUrl}/api/artifacts/prepare-exif-file`, {
-          method: "POST",
-          body: exifForm,
-        })
-        if (!response.ok) throw new Error(`本地 EXIF 回写准备失败（HTTP ${response.status}）`)
-        sourceHash = response.headers.get("X-Source-Hash")
-        const editedBlob = await response.blob()
-        exifPrepared = true
-        try {
-          if (directoryHandle && !await verifyWritablePermission(directoryHandle)) {
-            throw new Error("文件夹写入权限已失效，请重新选择照片文件夹")
-          }
-          if (directoryHandle && target.fileName !== target.originalFileName) {
-            try {
-              await directoryHandle.getFileHandle(target.fileName)
-              throw new Error(`文件夹中已存在“${target.fileName}”，请更换目标文件名`)
-            } catch (error) {
-              if (error instanceof Error && error.message.includes("请更换目标文件名")) throw error
-              if ((error as Error).name !== "NotFoundError") throw error
-            }
-            resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName, { create: true })
-          }
-          if (!resolvedWriteHandle) throw new Error("未找到可写入的本地文件")
-          const writable = await resolvedWriteHandle.createWritable()
-          await writable.write(editedBlob)
-          await writable.close()
-          if (directoryHandle && target.fileName !== target.originalFileName) {
-            await directoryHandle.removeEntry(target.originalFileName)
-          }
-          localWriteSucceeded = true
-        } catch (error) {
-          // Browser permission can expire between selection and submit. The
-          // reviewed bytes still continue to cloud ingest below.
-          setSubmitNotice({
-            type: "error",
-            text: error instanceof Error ? `${error.message}；已继续提交更新后的副本到云端` : "本地原图未获写入权限，已继续提交更新后的副本到云端",
-          })
-        }
-        uploadFile = new File([editedBlob], target.fileName, {
-          type: editedBlob.type || target.localFile.type,
-          lastModified: Date.now(),
-        })
+      if (!response.ok) throw new Error(`本地 EXIF 回写准备失败（HTTP ${response.status}）`)
+      const sourceHash = response.headers.get("X-Source-Hash")
+      const editedBlob = await response.blob()
+
+      if (directoryHandle && !await verifyWritablePermission(directoryHandle)) {
+        throw new Error("文件夹写入权限已失效，请重新选择照片文件夹")
       }
+      let resolvedWriteHandle = target.fileHandle
+      if (!await verifyWritablePermission(resolvedWriteHandle)) {
+        throw new Error(`“${target.originalFileName}”的写入权限已失效，请重新授权原文件夹`)
+      }
+      if (directoryHandle && target.fileName !== target.originalFileName) {
+        try {
+          await directoryHandle.getFileHandle(target.fileName)
+          throw new Error(`文件夹中已存在“${target.fileName}”，请更换目标文件名`)
+        } catch (error) {
+          if (error instanceof Error && error.message.includes("请更换目标文件名")) throw error
+          if ((error as Error).name !== "NotFoundError") throw error
+        }
+        resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName, { create: true })
+      }
+
+      updateItem(itemId, (item) => ({ ...item, uploadProgress: 30, uploadStage: "正在改名并写回本地原图" }))
+      const writable = await resolvedWriteHandle.createWritable()
+      await writable.write(editedBlob)
+      await writable.close()
+      if (directoryHandle && target.fileName !== target.originalFileName) {
+        await directoryHandle.removeEntry(target.originalFileName)
+      }
+
+      const writtenFile = await resolvedWriteHandle.getFile()
+      if (writtenFile.name !== target.fileName || writtenFile.size !== editedBlob.size) {
+        throw new Error("本地图片写入校验失败，已停止云端提交")
+      }
+      const verifyForm = new FormData()
+      verifyForm.append("file", writtenFile)
+      const writtenMetadata = await fetchJson<ImageExifMetadata>(`${apiBaseUrl}/api/artifacts/extract-exif-file`, {
+        method: "POST",
+        body: verifyForm,
+      })
+      assertWrittenExif(writtenMetadata, target.form)
+      const uploadFile = new File([writtenFile], target.fileName, {
+        type: editedBlob.type || target.localFile.type,
+        lastModified: writtenFile.lastModified,
+      })
+
+      // The local save is already durable at this point. Keep the refreshed
+      // handle and filename even if the subsequent cloud request fails, so a
+      // retry does not look for the deleted pre-rename file.
+      updateItem(itemId, (item) => ({
+        ...item,
+        localFile: uploadFile,
+        fileHandle: resolvedWriteHandle,
+        originalFileName: item.fileName,
+        originalForm: cloneFormState(item.form),
+      }))
 
       updateItem(itemId, (item) => ({ ...item, uploadProgress: 45, uploadStage: "正在上传 OSS 并写入档案" }))
 
@@ -1993,7 +2091,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       formData.append("file", uploadFile)
       appendMetadata(formData)
       formData.append("tags", JSON.stringify(target.form.tags))
-      if (exifPrepared) formData.append("exif_prepared", "true")
+      formData.append("exif_prepared", "true")
       if (sourceHash) formData.append("source_hash", sourceHash)
       const result = await postFormDataWithProgress<ArtifactSubmitResult>(`${apiBaseUrl}/api/artifacts/exif-submit-file`, formData, (progress) => {
         updateItem(itemId, (item) => ({ ...item, uploadProgress: progress, uploadStage: "正在上传 OSS 并写入档案" }))
@@ -2001,7 +2099,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       updateItem(itemId, (item) => ({
         ...item,
         localFile: uploadFile,
-        fileHandle: localWriteSucceeded ? resolvedWriteHandle : item.fileHandle,
+        fileHandle: resolvedWriteHandle,
         originalFileName: item.fileName,
         originalForm: cloneFormState(item.form),
         submitState: "submitted",
@@ -2009,9 +2107,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           ? (result.duplicate_image_detail || "已用本次校正覆盖云端已有图片。")
           : result.duplicate_image_skipped
           ? (result.duplicate_image_detail || "云端已存在相同原图，本次未重复上传。")
-          : localWriteSucceeded
-          ? "已覆盖本地原图，并同步上传 OSS 与云端数据库"
-          : "已写入云端图片 EXIF 并完成入库；本地原图未覆盖",
+          : "已修改本地文件名与 EXIF，并同步上传 OSS 与云端数据库",
         uploadProgress: 100,
         uploadStage: "已完成",
       }))
@@ -2034,6 +2130,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setSubmittingAll(true)
     setSubmitNotice(null)
     const pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
+    const unboundItems = pendingItems.filter((item) => (
+      !item.fileHandle || (item.fileName !== item.originalFileName && !directoryHandle)
+    ))
+    if (unboundItems.length > 0) {
+      setSubmittingAll(false)
+      setSubmitNotice({
+        type: "error",
+        text: `还有 ${unboundItems.length} 张图片未绑定可写原文件；请先点击“授权原文件夹”，再执行全部入库。`,
+      })
+      return
+    }
     let succeeded = 0
     let failed = 0
     const queue = [...pendingItems]

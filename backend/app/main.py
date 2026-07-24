@@ -1540,9 +1540,6 @@ async def submit_artifact_to_cloud(
         "capture_museum_name": capture_museum_name or "",
         "exhibition_name": normalize_exhibition_name(exhibition_name),
         "catalog_exhibition_source_id": catalog_exhibition_source_id or "",
-        "catalog_exhibition_id": (
-            "" if catalog_exhibition_id is None else str(catalog_exhibition_id)
-        ),
         "capture_location": capture_location or "",
         "latitude": "" if latitude is None else str(latitude),
         "longitude": "" if longitude is None else str(longitude),
@@ -1555,6 +1552,8 @@ async def submit_artifact_to_cloud(
     }
     if existing_artifact_id is not None:
         submit_data["existing_artifact_id"] = str(existing_artifact_id)
+    if catalog_exhibition_id is not None:
+        submit_data["catalog_exhibition_id"] = str(catalog_exhibition_id)
 
     cloud_url = f"{base}{settings.api_prefix}/ingest/artifacts"
     client = cloud_http_client
@@ -2648,6 +2647,12 @@ async def prepare_artifact_exif_file(
     display_location_name: str | None = Form(None),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
+    camera_model: str | None = Form(None),
+    lens_model: str | None = Form(None),
+    captured_at: datetime | None = Form(None),
+    shutter_speed: str | None = Form(None),
+    aperture: str | None = Form(None),
+    iso: int | None = Form(None),
 ) -> Response:
     """Return edited bytes for a user-authorised local overwrite."""
     started_at = time_module.perf_counter()
@@ -2672,6 +2677,12 @@ async def prepare_artifact_exif_file(
         era=era,
         place_of_excavation=Place_of_Excavation,
         display_location_name=display_location_name,
+        camera_model=camera_model,
+        lens_model=lens_model,
+        captured_at=captured_at,
+        shutter_speed=shutter_speed,
+        aperture=aperture,
+        iso=iso,
     )
     await run_in_threadpool(verify_written_gps, image_bytes, latitude, longitude)
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
@@ -2850,6 +2861,12 @@ async def submit_artifact_with_exif_file(
             era=era,
             place_of_excavation=Place_of_Excavation,
             display_location_name=display_location_name,
+            camera_model=camera_model,
+            lens_model=lens_model,
+            captured_at=captured_at,
+            shutter_speed=shutter_speed,
+            aperture=aperture,
+            iso=iso,
         )
     await run_in_threadpool(verify_written_gps, image_bytes, latitude, longitude)
     # #region debug-point B:submit-after-exif

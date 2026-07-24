@@ -129,6 +129,35 @@ def _format_aperture(value: object) -> str | None:
     return f"f/{text}"
 
 
+def _parse_exposure_seconds(value: str | None) -> float | None:
+    text = (_clean_text(value) or "").lower().removesuffix("s").strip()
+    if not text:
+        return None
+    try:
+        if "/" in text:
+            numerator, denominator = text.split("/", 1)
+            seconds = float(numerator) / float(denominator)
+        else:
+            seconds = float(text)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return seconds if seconds > 0 else None
+
+
+def _parse_aperture_number(value: str | None) -> float | None:
+    text = (_clean_text(value) or "").lower().removeprefix("f/").strip()
+    try:
+        aperture = float(text)
+    except (TypeError, ValueError):
+        return None
+    return aperture if aperture > 0 else None
+
+
+def _to_ifd_rational(value: float) -> IFDRational:
+    fraction = Fraction(value).limit_denominator(1_000_000)
+    return IFDRational(fraction.numerator, fraction.denominator)
+
+
 def _gps_to_decimal(coords: object, ref: object) -> float | None:
     if not isinstance(coords, (tuple, list)) or len(coords) != 3:
         return None
@@ -205,6 +234,12 @@ def update_image_exif_metadata(
     era: str | None = None,
     place_of_excavation: str | None = None,
     display_location_name: str | None = None,
+    camera_model: str | None = None,
+    lens_model: str | None = None,
+    captured_at: datetime | None = None,
+    shutter_speed: str | None = None,
+    aperture: str | None = None,
+    iso: int | None = None,
     software_name: str = "museum-image-AI",
 ) -> bytes:
     if not image_bytes:
@@ -252,6 +287,56 @@ def update_image_exif_metadata(
                 exif.pop(TAG_XP_SUBJECT, None)
 
             exif[TAG_SOFTWARE] = software_name
+
+            if camera_model is not None:
+                camera_text = _clean_text(camera_model)
+                if camera_text:
+                    exif[TAG_MODEL] = camera_text
+                else:
+                    exif.pop(TAG_MODEL, None)
+
+            try:
+                exif_ifd = dict(exif.get_ifd(TAG_EXIF_IFD) or {})
+            except Exception:
+                exif_ifd = {}
+            exif_ifd_changed = False
+
+            if lens_model is not None:
+                lens_text = _clean_text(lens_model)
+                if lens_text:
+                    exif_ifd[EXIF_LENS_MODEL] = lens_text
+                else:
+                    exif_ifd.pop(EXIF_LENS_MODEL, None)
+                exif_ifd_changed = True
+
+            if captured_at is not None:
+                captured_text = captured_at.strftime("%Y:%m:%d %H:%M:%S")
+                exif_ifd[EXIF_DATETIME_ORIGINAL] = captured_text
+                exif_ifd[EXIF_DATETIME_DIGITIZED] = captured_text
+                exif_ifd_changed = True
+
+            if shutter_speed is not None:
+                exposure_seconds = _parse_exposure_seconds(shutter_speed)
+                if exposure_seconds is None:
+                    exif_ifd.pop(EXIF_EXPOSURE_TIME, None)
+                else:
+                    exif_ifd[EXIF_EXPOSURE_TIME] = _to_ifd_rational(exposure_seconds)
+                exif_ifd_changed = True
+
+            if aperture is not None:
+                aperture_number = _parse_aperture_number(aperture)
+                if aperture_number is None:
+                    exif_ifd.pop(EXIF_FNUMBER, None)
+                else:
+                    exif_ifd[EXIF_FNUMBER] = _to_ifd_rational(aperture_number)
+                exif_ifd_changed = True
+
+            if iso is not None:
+                exif_ifd[EXIF_ISO] = max(0, int(iso))
+                exif_ifd_changed = True
+
+            if exif_ifd_changed:
+                exif[TAG_EXIF_IFD] = exif_ifd
 
             try:
                 gps_ifd = dict(exif.get_ifd(TAG_GPS_IFD) or {})
