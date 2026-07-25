@@ -986,6 +986,8 @@ def normalize_museum_segment(value: str) -> str:
         return segment
     if segment.endswith("馆藏") and len(segment) > 2:
         return f"{segment[:-2]}馆"
+    if segment.endswith("藏") and segment[:-1].endswith(("博物馆", "博物院", "纪念馆", "美术馆")):
+        return segment[:-1]
     return segment
 
 

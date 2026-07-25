@@ -1282,6 +1282,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   useEffect(() => {
     if (!selectedItem?.fileName.trim()) return
+    if (selectedItem.parsedName?.original_name === selectedItem.fileName) return
     let cancelled = false
     const timer = window.setTimeout(async () => {
       setParsingFileName(true)
