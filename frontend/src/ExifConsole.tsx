@@ -79,6 +79,8 @@ type SubmitNotice = {
   text: string
 }
 
+type UploadActivity = "files" | "directory" | null
+
 type ArtifactSubmitResult = {
   duplicate_image_skipped?: boolean
   duplicate_image_replaced?: boolean
@@ -226,6 +228,18 @@ function formatCapturedAt(value: string | null | undefined) {
   if (!normalized) return ""
   const match = normalized.match(/^(\d{4}-\d{2}-\d{2})[ ](\d{2}:\d{2})(?::(\d{2}))?/)
   return match ? `${match[1]} ${match[2]}:${match[3] ?? "00"}` : normalized.slice(0, 19)
+}
+
+function compactFileName(value: string, maxLength = 38) {
+  const characters = Array.from(value)
+  if (characters.length <= maxLength) return value
+  const tailLength = Math.max(14, Math.floor(maxLength * 0.46))
+  const headLength = Math.max(10, maxLength - tailLength - 1)
+  return `${characters.slice(0, headLength).join("")}…${characters.slice(-tailLength).join("")}`
+}
+
+function indexedFileName(value: string, index: number) {
+  return `${String(Math.max(index, 0) + 1).padStart(2, "0")} · ${compactFileName(value)}`
 }
 
 function isTiffFile(file: File) {
@@ -1126,6 +1140,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [showMuseumSuggestions, setShowMuseumSuggestions] = useState(false)
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadActivity, setUploadActivity] = useState<UploadActivity>(null)
   const [bindingDirectory, setBindingDirectory] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [descriptionProgress, setDescriptionProgress] = useState<string[]>([])
@@ -1142,6 +1157,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [metadataSyncTargetMode, setMetadataSyncTargetMode] = useState<MetadataSyncTargetMode>("others")
   const [metadataSyncSelection, setMetadataSyncSelection] = useState<MetadataSyncSelection>(DEFAULT_METADATA_SYNC_SELECTION)
   const [metadataSyncPreviewOpen, setMetadataSyncPreviewOpen] = useState(false)
+  const [uploadPermissionOpen, setUploadPermissionOpen] = useState(false)
+  const [recentUploadedCount, setRecentUploadedCount] = useState(0)
   const [parsingFileName, setParsingFileName] = useState(false)
   const [submittingAll, setSubmittingAll] = useState(false)
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
@@ -1165,6 +1182,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       gpsCount,
     }
   }, [items])
+
+  const needsDirectoryAuthorization = useMemo(
+    () => items.some((item) => !item.fileHandle || (item.fileName !== item.originalFileName && !directoryHandle)),
+    [directoryHandle, items],
+  )
+
+  const allItemsSubmitted = useMemo(
+    () => items.length > 0 && items.every((item) => item.submitState === "submitted" && changedParts(item).length === 0),
+    [items],
+  )
 
   const batchRenameCount = useMemo(() => items.filter((item) => (
     normalizedFileName(`${batchPrefix}${fileBaseName(item.fileName).split(batchRemove).join("")}${batchSuffix}`, item.fileName) !== item.fileName
@@ -1663,6 +1690,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       return
     }
     try {
+      setUploadActivity("directory")
       setUploading(true)
       const nextDirectoryHandle = await pickerWindow.showDirectoryPicker({ mode: "readwrite" })
       if (!await verifyWritablePermission(nextDirectoryHandle)) {
@@ -1695,6 +1723,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "读取照片文件夹失败" })
     } finally {
       setUploading(false)
+      setUploadActivity(null)
     }
   }
 
@@ -1768,7 +1797,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         text: `${nextDirectoryHandle.name}：${summary.join("，")}；未载入文件夹内其他照片`,
       })
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setSubmitNotice({
+          type: "success",
+          text: "已取消文件夹授权；队列图片仍会保留，可稍后点击图片列表上方的文件夹按钮继续。",
+        })
+        return
+      }
       setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "授权并绑定原文件夹失败" })
     } finally {
       setBindingDirectory(false)
@@ -1781,6 +1816,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       return
     }
 
+    setUploadActivity("files")
     setUploading(true)
     setSubmitNotice(null)
     try {
@@ -1804,8 +1840,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       })
       setSubmitNotice({
         type: "success",
-        text: `已载入 ${builtItems.length} 张图片，尚未上传；提交前请点击“授权原文件夹”，保存时会同步修改本地文件名与 EXIF。`,
+        text: `已读取 ${builtItems.length} 张图片，正在确认原文件写入权限。`,
       })
+      setRecentUploadedCount(builtItems.length)
+      setUploadPermissionOpen(true)
     } catch (error) {
       setSubmitNotice({
         type: "error",
@@ -1813,6 +1851,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       })
     } finally {
       setUploading(false)
+      setUploadActivity(null)
       if (fileInputRef.current) {
         fileInputRef.current.value = ""
       }
@@ -1980,7 +2019,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       updateItem(itemId, (item) => ({
         ...item,
         submitState: "error",
-        submitMessage: "提交前请先点击“授权原文件夹”；保存并入库会同时修改本地文件名和 EXIF。",
+        submitMessage: "提交前请先点击图片列表上方的文件夹按钮并授权原文件；保存并入库会同时修改本地文件名和 EXIF。",
       }))
       return false
     }
@@ -1988,7 +2027,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       updateItem(itemId, (item) => ({
         ...item,
         submitState: "error",
-        submitMessage: "目标文件名已修改，请先授权原文件夹，才能在本地完成重命名。",
+        submitMessage: "目标文件名已修改，请先点击图片列表上方的文件夹按钮授权原文件，才能在本地完成重命名。",
       }))
       return false
     }
@@ -2038,7 +2077,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }
       let resolvedWriteHandle = target.fileHandle
       if (!await verifyWritablePermission(resolvedWriteHandle)) {
-        throw new Error(`“${target.originalFileName}”的写入权限已失效，请重新授权原文件夹`)
+        throw new Error(`“${target.originalFileName}”的写入权限已失效，请点击图片列表上方的文件夹按钮重新授权`)
       }
       if (directoryHandle && target.fileName !== target.originalFileName) {
         try {
@@ -2138,7 +2177,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       setSubmittingAll(false)
       setSubmitNotice({
         type: "error",
-        text: `还有 ${unboundItems.length} 张图片未绑定可写原文件；请先点击“授权原文件夹”，再执行全部入库。`,
+        text: `还有 ${unboundItems.length} 张图片未绑定可写原文件；请先点击图片列表上方的文件夹按钮完成授权，再执行全部入库。`,
       })
       return
     }
@@ -2190,14 +2229,26 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         </div>
         <div className="upload-actions exif-toolbar">
           {directoryHandle ? <Tag color="success">已授权：{directoryHandle.name}</Tag> : null}
-          <Button htmlType="button" type="primary" icon={<ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={handleSelectImages} disabled={uploading}>
-            添加图片
+          <Button
+            htmlType="button"
+            type="primary"
+            icon={uploadActivity === "files"
+              ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+              : <ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />}
+            onClick={handleSelectImages}
+            disabled={uploading}
+          >
+            {uploadActivity === "files" ? "正在读取…" : "添加图片"}
           </Button>
-          <Button htmlType="button" icon={<FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={() => void handleSelectDirectory()} disabled={uploading || bindingDirectory}>
-            {uploading ? "正在载入文件夹…" : "载入文件夹"}
-          </Button>
-          <Button htmlType="button" icon={<FileCheck2 size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={() => void handleBindDirectory()} disabled={items.length === 0 || uploading || bindingDirectory}>
-            {bindingDirectory ? "正在授权…" : "授权原文件夹"}
+          <Button
+            htmlType="button"
+            icon={uploadActivity === "directory"
+              ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+              : <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />}
+            onClick={() => void handleSelectDirectory()}
+            disabled={uploading || bindingDirectory}
+          >
+            {uploadActivity === "directory" ? "正在载入文件夹…" : "载入文件夹"}
           </Button>
         </div>
         <input
@@ -2221,44 +2272,51 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <p className="muted">当前批次 {stats.itemCount} 张，优先处理名称和地点信息</p>
               </div>
               <div className="exif-queue-actions" role="toolbar" aria-label="图片列表操作">
-                <Tooltip title="添加指定图片" mouseEnterDelay={0.45}>
+                <Tooltip title={uploadActivity === "files" ? "正在读取图片" : "添加指定图片"} mouseEnterDelay={0.45}>
                   <Button
                     htmlType="button"
                     type="text"
                     size="small"
                     className="icon-button exif-queue-action"
-                    icon={<ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    icon={uploadActivity === "files"
+                      ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+                      : <ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
                     onClick={handleSelectImages}
                     disabled={uploading}
-                    aria-label="添加图片"
+                    aria-label={uploadActivity === "files" ? "正在读取图片" : "添加图片"}
                   />
                 </Tooltip>
-                <Tooltip title={uploading ? "正在载入文件夹" : "载入文件夹全部照片"} mouseEnterDelay={0.45}>
+                <Tooltip
+                  title={bindingDirectory
+                    ? "正在授权并匹配原文件"
+                    : uploadActivity === "directory"
+                      ? "正在载入文件夹"
+                      : needsDirectoryAuthorization
+                        ? "继续授权队列照片的原文件"
+                        : directoryHandle
+                          ? `已授权：${directoryHandle.name}；点击可载入其他文件夹`
+                          : "载入文件夹全部照片"}
+                  mouseEnterDelay={0.45}
+                >
                   <Button
                     htmlType="button"
                     type="text"
                     size="small"
-                    className="icon-button exif-queue-action"
-                    icon={uploading
+                    className={`icon-button exif-queue-action ${needsDirectoryAuthorization ? "is-required" : directoryHandle ? "is-complete" : ""}`}
+                    icon={bindingDirectory || uploadActivity === "directory"
                       ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                      : <FolderOpen size={15} strokeWidth={1.8} aria-hidden="true" />}
-                    onClick={() => void handleSelectDirectory()}
+                      : directoryHandle && !needsDirectoryAuthorization
+                        ? <Check size={15} strokeWidth={2.1} aria-hidden="true" />
+                        : <FolderOpen size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    onClick={() => void (needsDirectoryAuthorization ? handleBindDirectory() : handleSelectDirectory())}
                     disabled={uploading || bindingDirectory}
-                    aria-label="载入文件夹"
-                  />
-                </Tooltip>
-                <Tooltip title={bindingDirectory ? "正在授权原文件夹" : "只绑定队列照片的原文件"} mouseEnterDelay={0.45}>
-                  <Button
-                    htmlType="button"
-                    type="text"
-                    size="small"
-                    className="icon-button exif-queue-action"
-                    icon={bindingDirectory
-                      ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                      : <FileCheck2 size={15} strokeWidth={1.8} aria-hidden="true" />}
-                    onClick={() => void handleBindDirectory()}
-                    disabled={items.length === 0 || uploading || bindingDirectory}
-                    aria-label="授权原文件夹"
+                    aria-label={bindingDirectory
+                      ? "正在授权原文件夹"
+                      : needsDirectoryAuthorization
+                        ? "授权队列照片的原文件"
+                        : directoryHandle
+                          ? "原文件夹已授权"
+                          : "载入文件夹"}
                   />
                 </Tooltip>
                 <Tooltip title="清空图片列表" mouseEnterDelay={0.45}>
@@ -2273,18 +2331,20 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     aria-label="清空图片列表"
                   />
                 </Tooltip>
-                <Tooltip title={submittingAll ? "正在全部入库" : "全部入库"} mouseEnterDelay={0.45}>
+                <Tooltip title={submittingAll ? "正在全部入库" : allItemsSubmitted ? "当前批次已全部入库" : "全部入库"} mouseEnterDelay={0.45}>
                   <Button
                     htmlType="button"
                     type="primary"
                     size="small"
-                    className="icon-button exif-queue-action exif-queue-action-submit"
+                    className={`icon-button exif-queue-action exif-queue-action-submit ${allItemsSubmitted ? "is-complete" : ""}`}
                     icon={submittingAll
                       ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                      : <CloudUpload size={15} strokeWidth={1.8} aria-hidden="true" />}
+                      : allItemsSubmitted
+                        ? <Check size={15} strokeWidth={2.1} aria-hidden="true" />
+                        : <CloudUpload size={15} strokeWidth={1.8} aria-hidden="true" />}
                     onClick={() => void handleSubmitAll()}
-                    disabled={submittingAll || items.length === 0 || items.every((item) => item.submitState === "submitted" && changedParts(item).length === 0)}
-                    aria-label={submittingAll ? "正在全部入库" : "全部入库"}
+                    disabled={submittingAll || items.length === 0 || allItemsSubmitted}
+                    aria-label={submittingAll ? "正在全部入库" : allItemsSubmitted ? "当前批次已全部入库" : "全部入库"}
                   />
                 </Tooltip>
               </div>
@@ -2356,9 +2416,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <Select
                       value={metadataSyncSourceId || undefined}
                       placeholder="选择包含完整信息的照片"
-                      options={items.map((item) => ({
+                      options={items.map((item, index) => ({
                         value: item.id,
-                        label: item.fileName,
+                        label: indexedFileName(item.fileName, index),
+                        title: item.fileName,
                       }))}
                       onChange={setMetadataSyncSourceId}
                       disabled={items.length === 0}
@@ -2411,7 +2472,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   ))}
                 </div>
                 <div className="metadata-sync-status">
-                  <span>{metadataSyncSource ? `来源：${metadataSyncSource.fileName}` : "尚未选择来源"}</span>
+                  <span title={metadataSyncSource?.fileName}>
+                    {metadataSyncSource
+                      ? `来源：${indexedFileName(metadataSyncSource.fileName, items.findIndex((item) => item.id === metadataSyncSource.id))}`
+                      : "尚未选择来源"}
+                  </span>
                   <strong>{metadataSyncTargets.length} 张目标 · {metadataSyncChangedCount} 项差异</strong>
                 </div>
                 <div className="exif-tool-actions">
@@ -3071,15 +3136,83 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               <h2>从一张文物照片开始</h2>
               <p className="muted">选择图片后，系统会从文件名提取基础信息；只需校对后保存入库。</p>
               <div className="upload-actions exif-empty-actions">
-                <Button htmlType="button" type="primary" icon={<ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={handleSelectImages} disabled={uploading}>添加图片</Button>
-                <Button htmlType="button" icon={<FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />} onClick={() => void handleSelectDirectory()} disabled={uploading}>
-                  {uploading ? "正在载入…" : "载入文件夹"}
+                <Button
+                  htmlType="button"
+                  type="primary"
+                  icon={uploadActivity === "files"
+                    ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+                    : <ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />}
+                  onClick={handleSelectImages}
+                  disabled={uploading}
+                >
+                  {uploadActivity === "files" ? "正在读取…" : "添加图片"}
+                </Button>
+                <Button
+                  htmlType="button"
+                  icon={uploadActivity === "directory"
+                    ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
+                    : <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />}
+                  onClick={() => void handleSelectDirectory()}
+                  disabled={uploading}
+                >
+                  {uploadActivity === "directory" ? "正在载入…" : "载入文件夹"}
                 </Button>
               </div>
             </div>
           )}
         </section>
       </div>
+      <Modal
+        title="图片已读取，继续授权原文件"
+        open={uploadPermissionOpen}
+        centered
+        width={520}
+        destroyOnHidden
+        onCancel={() => {
+          setUploadPermissionOpen(false)
+          setSubmitNotice({
+            type: "success",
+            text: `已读取 ${recentUploadedCount} 张图片；尚未授权原文件，稍后可点击图片列表上方的文件夹按钮继续。`,
+          })
+        }}
+        footer={[
+          <Button
+            key="later"
+            htmlType="button"
+            onClick={() => {
+              setUploadPermissionOpen(false)
+              setSubmitNotice({
+                type: "success",
+                text: `已读取 ${recentUploadedCount} 张图片；尚未授权原文件，稍后可点击图片列表上方的文件夹按钮继续。`,
+              })
+            }}
+          >
+            稍后授权
+          </Button>,
+          <Button
+            key="authorize"
+            htmlType="button"
+            type="primary"
+            loading={bindingDirectory}
+            onClick={() => {
+              setUploadPermissionOpen(false)
+              void handleBindDirectory()
+            }}
+          >
+            选择原文件夹并授权
+          </Button>,
+        ]}
+      >
+        <div className="exif-upload-permission">
+          <p>
+            已读取 {recentUploadedCount} 张图片。为了在保存入库时同时修改本地文件名和 EXIF，
+            请继续选择这些照片所在的文件夹，并允许浏览器读写。
+          </p>
+          <div className="exif-upload-permission-note">
+            刚才选择图片只授予了读取权限，这是浏览器要求的原文件写入确认。系统只会绑定当前队列里的同名照片，不会把文件夹中的其他图片加入队列。
+          </div>
+        </div>
+      </Modal>
       <Modal
         title="确认照片信息同步"
         open={metadataSyncPreviewOpen}
