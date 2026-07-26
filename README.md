@@ -9,6 +9,117 @@ A local-first starter for building a museum artifact image library with React, F
 - Database: PostgreSQL 16 + pgvector
 - Runtime: Docker Compose
 
+## Architecture
+
+项目使用同一套 FastAPI 代码承担本地操作端与云端服务端，通过 `APP_ROLE`
+切换角色。本地端负责图片读取、识别、EXIF 处理和人工校对；云端负责集中存储、
+检索和对外提供图片。全球展览目录使用独立数据库与可选 Worker，避免历史同步任务
+影响核心文物 API。
+
+```mermaid
+flowchart TB
+    User["用户 / 浏览器"]
+    Frontend["React 前端<br/>快速录入 · EXIF · 批量入库<br/>图库 · 博物馆 · 展览目录"]
+
+    User --> Frontend
+
+    subgraph Local["本地操作端 · APP_ROLE=local"]
+        LocalAPI["FastAPI"]
+        Intake["图片与 EXIF 服务<br/>上传 · 读取 · 回写 · 写后校验"]
+        Vision["图片识别编排<br/>Qwen / Doubao · 相似图 · 网页桥"]
+        Research["文物检索 Agent<br/>四字段检索 · 证据整理 · 版本化缓存"]
+        Batch["批量任务<br/>待处理池 · 人工校对 · 去重"]
+        LocalDB[("主 PostgreSQL<br/>文物 · 图片 · 待处理项<br/>Agent 研究记录")]
+        LocalFiles[("本地 data<br/>原图 · 缩略图 · 登录态")]
+
+        LocalAPI --> Intake
+        LocalAPI --> Vision
+        LocalAPI --> Research
+        LocalAPI --> Batch
+        Intake --> LocalFiles
+        Batch --> LocalDB
+        Research --> LocalDB
+    end
+
+    subgraph Cloud["云端服务 · APP_ROLE=cloud"]
+        CloudAPI["FastAPI API"]
+        CloudDB[("主 PostgreSQL<br/>博物馆 · 文物 · 标签 · 图片元数据")]
+        OSS[("阿里云 OSS<br/>图片原文件")]
+        ExhibitionDB[("独立展览 PostgreSQL<br/>目录 · 同步记录 · Worker 状态")]
+        Worker["展览同步 Worker<br/>独立容器 · 按需启用"]
+
+        CloudAPI --> CloudDB
+        CloudAPI --> OSS
+        CloudAPI --> ExhibitionDB
+        Worker --> ExhibitionDB
+    end
+
+    subgraph External["外部能力"]
+        Models["DashScope Qwen<br/>火山引擎 Doubao"]
+        Search["网页检索<br/>DuckDuckGo / Bing"]
+        Reverse["Google Vision<br/>相似图检索"]
+        QianwenWeb["通义网页端<br/>Chrome + Playwright 桥"]
+        GooglePhotos["Google Photos Picker"]
+        IMuseum["iMuseum sitemap / 公开展览页"]
+    end
+
+    Frontend -->|"本地开发 / 操作"| LocalAPI
+    Frontend -->|"云端浏览 / 管理"| CloudAPI
+    Batch -->|"审核后 HTTPS 提交"| CloudAPI
+    Vision --> Models
+    Vision --> Search
+    Vision --> Reverse
+    Vision --> QianwenWeb
+    Research --> Models
+    Research --> Search
+    Batch --> GooglePhotos
+    IMuseum --> Worker
+
+    FutureKB["未来：专业 PDF 知识库 Provider<br/>上传 · OCR · 分块 · 混合检索 · 页码引用"]
+    FutureKB -.->|"预留接口，当前未实现"| Research
+
+    classDef future fill:#fafafa,stroke:#999,stroke-width:1px,stroke-dasharray:6 4,color:#666;
+    class FutureKB future;
+```
+
+### Core data flows
+
+```mermaid
+flowchart LR
+    subgraph TextFlow["快速录入 · 不上传图片"]
+        Fields["名称 · 年代<br/>博物馆 · 出土地点"]
+        Agent["文物检索 Agent"]
+        Evidence["研究报告与来源证据<br/>research_id"]
+        Writers["Qwen / Doubao<br/>分别生成候选描述"]
+        ReviewText["用户对比并确认"]
+
+        Fields --> Agent --> Evidence --> Writers --> ReviewText
+    end
+
+    subgraph ImageFlow["图片入库"]
+        Sources["本地文件夹<br/>Google Photos"]
+        Prepare["读取 EXIF<br/>source_hash 去重"]
+        Pending["待处理池"]
+        Identify["图片识别与相似图检索"]
+        ReviewImage["人工校对"]
+        Verify["写入 EXIF<br/>重新读取验证"]
+        Submit["提交云端"]
+
+        Sources --> Prepare --> Pending --> Identify --> ReviewImage --> Verify --> Submit
+    end
+
+    ReviewText -.->|"可作为文物元数据"| ReviewImage
+    Submit --> OSS2[("OSS 图片")]
+    Submit --> DB2[("主库元数据")]
+    OSS2 --> Gallery["图库 / 博物馆浏览 / 图片代理"]
+    DB2 --> Gallery
+```
+
+图中的 PDF 知识库是扩展边界，不是当前运行组件。当前只提供
+`KnowledgeProvider` 协议与可追溯证据字段；后续实现知识库时，可以替换 Provider，
+而不改变快速录入、Agent API 和描述生成调用方。详细约定见
+[`backend/app/artifact_research/README.md`](backend/app/artifact_research/README.md)。
+
 ## Project Structure
 
 ```text
