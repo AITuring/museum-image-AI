@@ -38,8 +38,18 @@ type DescriptionCandidate = {
   description: string
   tags: string[]
   reasoning: string | null
+  research_summary?: string | null
+  field_warnings?: string[]
+  search_hits?: DescriptionSearchHit[]
   status: string
   error: string | null
+}
+
+type DescriptionSearchHit = {
+  title: string
+  url: string
+  snippet: string
+  source: string | null
 }
 
 type GeneratedDescription = {
@@ -64,6 +74,7 @@ type ExhibitionRecommendation = {
   source_id: string
   title: string
   city: string
+  museum_name: string | null
   venue: string | null
   address: string | null
   start_date: string | null
@@ -498,7 +509,12 @@ function ExhibitionRecommendationPicker({
       <div className="exhibition-option">
         <strong>{item.title}</strong>
         <span>
-          {[item.city, item.venue, formatRecommendationDate(item)].filter(Boolean).join(" · ")}
+          {Array.from(
+            new Set(
+              [item.city, item.museum_name, item.venue, formatRecommendationDate(item)]
+                .filter((value): value is string => Boolean(value)),
+            ),
+          ).join(" · ")}
         </span>
         {item.match_reasons.length ? <small>{item.match_reasons.join("；")}</small> : null}
       </div>
@@ -550,7 +566,7 @@ function ExhibitionRecommendationPicker({
       {error ? <span className="field-help error">{error}</span> : null}
       {!error && recommendations.length > 0 ? (
         <span className="field-help">
-          已结合拍摄日期、GPS 邻近场馆和地点文字排序，常设展会持续参与推荐。
+          已按展出地点筛选，并结合拍摄日期排序；匹配地点的常设展也会持续参与推荐。
         </span>
       ) : null}
     </div>
@@ -860,7 +876,13 @@ function uniqueTags(tags: string[]) {
 }
 
 function ensureCandidates(value: DescriptionCandidate[] | undefined | null): DescriptionCandidate[] {
-  return Array.isArray(value) ? value : []
+  return Array.isArray(value)
+    ? value.map((candidate) => ({
+        ...candidate,
+        field_warnings: ensureStringList(candidate.field_warnings),
+        search_hits: Array.isArray(candidate.search_hits) ? candidate.search_hits : [],
+      }))
+    : []
 }
 
 function ensureStringList(value: string[] | undefined | null): string[] {
@@ -3024,9 +3046,37 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                               <summary>查看模型依据</summary>
                               <pre className="exif-model-reasoning">{candidate.reasoning || candidate.error || "暂无依据返回"}</pre>
                             </details>
+                            {candidate.research_summary ? (
+                              <details className="exif-model-details">
+                                <summary>查看联网核验报告</summary>
+                                <pre className="exif-model-reasoning">{candidate.research_summary}</pre>
+                              </details>
+                            ) : null}
                             {candidate.status === "success" ? (
                               <>
+                                {(candidate.field_warnings?.length ?? 0) > 0 ? (
+                                  <div className="exif-field-warnings">
+                                    <strong>字段需要复核</strong>
+                                    {candidate.field_warnings?.map((warning) => <p key={warning}>{warning}</p>)}
+                                  </div>
+                                ) : null}
                                 <p className="result-desc">{candidate.description || "暂无描述"}</p>
+                                {(candidate.search_hits?.length ?? 0) > 0 ? (
+                                  <details className="exif-model-details exif-research-sources">
+                                    <summary>查看检索来源（{candidate.search_hits?.length}）</summary>
+                                    <div className="exif-source-list">
+                                      {candidate.search_hits?.map((hit, index) => (
+                                        <article key={hit.url}>
+                                          <a href={hit.url} target="_blank" rel="noreferrer">
+                                            [{index + 1}] {hit.title}
+                                          </a>
+                                          {hit.source ? <span>{hit.source}</span> : null}
+                                          {hit.snippet ? <p>{hit.snippet}</p> : null}
+                                        </article>
+                                      ))}
+                                    </div>
+                                  </details>
+                                ) : null}
                                 <div className="result-meta">
                                   {candidate.tags.length > 0 ? candidate.tags.map((tag) => (
                                     <Tag key={tag}>{tag}</Tag>

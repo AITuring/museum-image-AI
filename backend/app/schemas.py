@@ -238,12 +238,22 @@ class ArtifactDescriptionGenerateRequest(BaseModel):
     Place_of_Excavation: str | None = None
 
 
+class SearchHitRead(BaseModel):
+    title: str
+    url: str
+    snippet: str = ""
+    source: str | None = None
+
+
 class ArtifactDescriptionCandidateRead(BaseModel):
     provider: str
     model: str
     description: str = ""
     tags: list[str] = Field(default_factory=list)
     reasoning: str | None = None
+    research_summary: str | None = None
+    field_warnings: list[str] = Field(default_factory=list)
+    search_hits: list[SearchHitRead] = Field(default_factory=list)
     status: str = "success"
     error: str | None = None
 
@@ -276,13 +286,6 @@ class ExifArtifactSubmitRequest(BaseModel):
 class VisionAnalyzeRequest(BaseModel):
     image_urls: list[str] = Field(default_factory=list)
     image_name: str | None = None
-
-
-class SearchHitRead(BaseModel):
-    title: str
-    url: str
-    snippet: str = ""
-    source: str | None = None
 
 
 class VisionCandidateRead(BaseModel):

@@ -2588,6 +2588,49 @@ label.field,
   white-space: pre-wrap;
 }
 
+.exif-field-warnings {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklch, var(--ui-warning) 35%, var(--app-border));
+  border-radius: 10px;
+  background: var(--ui-warning-muted);
+  color: color-mix(in oklch, var(--app-fg) 82%, var(--ui-warning));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.exif-field-warnings p {
+  margin: 0;
+}
+
+.exif-source-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 10px 10px;
+}
+
+.exif-source-list article {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.exif-source-list a {
+  overflow-wrap: anywhere;
+  color: var(--app-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.exif-source-list span,
+.exif-source-list p {
+  margin: 0;
+  color: var(--app-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .exif-model-card > .ant-btn {
   justify-self: start;
 }

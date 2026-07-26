@@ -144,6 +144,7 @@ from app.vision import (
     generate_artifact_descriptions_parallel,
     get_enabled_providers,
     request_provider_analysis,
+    sanitize_generated_tags,
     stream_provider_analysis,
 )
 from app.web_bridge import (
@@ -1675,11 +1676,24 @@ async def generate_artifact_description_payload(
                 continue
 
             description = optional_text(str(result.get("description", ""))) or fallback_description
-            tags = [
-                str(tag).strip()
-                for tag in result.get("tags", [])
-                if str(tag).strip()
+            tags = sanitize_generated_tags(
+                [
+                    str(tag).strip()
+                    for tag in result.get("tags", [])
+                    if str(tag).strip()
+                ],
+                name,
+                era,
+                museum_name,
+            )
+            field_warnings = [
+                str(warning).strip()
+                for warning in result.get("field_warnings", [])
+                if str(warning).strip()
             ]
+            search_hits = item.get("search_hits", [])
+            if not isinstance(search_hits, list):
+                search_hits = []
             candidate = ArtifactDescriptionCandidateRead(
                 provider=str(provider.name),
                 model=str(provider.model),
@@ -1687,6 +1701,9 @@ async def generate_artifact_description_payload(
                 tags=tags,
                 reasoning=optional_text(str(result.get("reasoning", "")))
                 or optional_text(str(item.get("reasoning", ""))),
+                research_summary=optional_text(str(item.get("research_summary", ""))),
+                field_warnings=field_warnings,
+                search_hits=search_hits,
                 status="success",
             )
             candidates.append(candidate)
@@ -2597,8 +2614,9 @@ async def generate_artifact_description_stream_file_api(
     async def event_generator():
         phases = [
             "已读取名称、年代、博物馆与出土地点",
-            "正在补充历史背景、器物特征与研究信息",
-            "正在检查信息完整性并组织编目描述与标签",
+            "正在检索博物馆、政府与考古资料",
+            "正在交叉核对馆藏归属、出土记录与文物细节",
+            "正在组织带来源依据的编目描述与标签",
         ]
         yield f"data: {json.dumps({'type': 'progress', 'message': phases[0]}, ensure_ascii=False)}\n\n"
         task = asyncio.create_task(generate_artifact_description_payload(
@@ -3561,6 +3579,15 @@ def normalize_catalog_match_text(value: str | None) -> str:
     return re.sub(r"[\W_]+", "", (value or "").casefold(), flags=re.UNICODE)
 
 
+def looks_like_catalog_institution(value: str) -> bool:
+    return bool(
+        re.search(
+            r"(博物馆|博物院|美术馆|艺术馆|纪念馆|科技馆|展览馆|陈列馆|文化馆|图书馆)$",
+            value,
+        )
+    )
+
+
 def is_long_running_catalog_exhibition(
     item: CatalogExhibition | ExhibitionRecommendationRead,
 ) -> bool:
@@ -3786,6 +3813,7 @@ def recommend_exhibition_catalog(
         score = 0
         reasons: list[str] = []
         matched_distance: float | None = None
+        matched_location = False
         if capture_date is not None:
             score += 70
             if candidate.is_permanent:
@@ -3799,19 +3827,23 @@ def recommend_exhibition_catalog(
             reasons.append("名称或地点符合搜索")
 
         field_values = {
-            "展馆": normalize_catalog_match_text(candidate.venue),
+            "展馆": normalize_catalog_match_text(candidate.museum_name),
+            "展厅": normalize_catalog_match_text(candidate.venue),
             "地址": normalize_catalog_match_text(candidate.address),
             "城市": normalize_catalog_match_text(candidate.city),
+            "地区": normalize_catalog_match_text(candidate.region),
         }
         for hint, hint_reason, distance in location_hints:
             normalized_hint = normalize_catalog_match_text(hint)
             if len(normalized_hint) < 2:
                 continue
+            institution_hint = looks_like_catalog_institution(normalized_hint)
             matched_label = next(
                 (
                     label
                     for label, field_value in field_values.items()
                     if field_value
+                    and (not institution_hint or label not in {"城市", "地区"})
                     and (
                         normalized_hint in field_value
                         or field_value in normalized_hint
@@ -3821,13 +3853,22 @@ def recommend_exhibition_catalog(
             )
             if matched_label is None:
                 continue
-            score += {"展馆": 65, "地址": 50, "城市": 35}[matched_label]
+            matched_location = True
+            score += {
+                "展馆": 140,
+                "展厅": 110,
+                "地址": 90,
+                "城市": 70,
+                "地区": 50,
+            }[matched_label]
             reason = f"{matched_label}与{hint_reason}"
             if reason not in reasons:
                 reasons.append(reason)
             if distance is not None:
                 matched_distance = distance
 
+        if location_hints and not matched_location:
+            continue
         scored.append(
             (
                 score,

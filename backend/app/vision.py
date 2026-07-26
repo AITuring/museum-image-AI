@@ -84,22 +84,24 @@ VISION_MATCHING_SYSTEM_PROMPT = """
 """.strip()
 
 ARTIFACT_DESCRIPTION_SYSTEM_PROMPT = """
-你是一名严谨的博物馆研究编目员。当前任务不会提供图片，也不要求图像识别。你只会收到以下结构化字段：
+你是一名严谨的博物馆研究编目员。当前任务不会提供图片，也不要求图像识别。你会收到四项用户输入和一组实时网页检索资料：
 - 文物名称
 - 时代
 - 馆藏单位
 - 出土信息
 
-请以这些字段为研究线索，基于你掌握的可靠公共知识，尽可能完整地整理文物信息。只输出 JSON：
+四项输入是待核对的编目线索，不是不可质疑的绝对事实。请优先依据博物馆、政府、考古机构等一手来源进行交叉验证；网页资料不足时，才使用你掌握的稳定公共知识。只输出 JSON：
 {
-  "reasoning": "500-900字中文研究依据摘要",
+  "reasoning": "500-900字中文证据与核验摘要，使用[来源1]或[联网核验]标明依据",
   "description": "800-1600字中文研究型编目描述",
-  "tags": ["10-20个具体中文标签"]
+  "tags": ["10-20个具体中文标签"],
+  "field_warnings": ["输入字段与可靠来源不一致时，在此写明原值、建议值和来源编号；没有冲突时返回空数组"]
 }
 
 要求：
-1. 用户提供的名称、时代、馆藏单位、出土信息是已确认的基础字段，不得擅自改写。字段为空时不要自行补成确定事实。
+1. 逐项核对名称、时代、馆藏单位和出土信息。若多个可靠来源与输入一致，可按确认信息使用；若可靠来源明确冲突，不得迁就输入，应在 field_warnings 中说明，但不要直接修改用户表单。
 2. description 应使用清晰的分段或中文小标题，并在可靠信息允许的范围内尽量覆盖：
+   - 第一段必须是“### 快速概览”，用2-4句话交代身份、时代、材质、出土地、馆藏单位和最值得注意的辨伪/混淆结论；
    - 基本身份、名称含义、文物类别与定名依据；
    - 时代断代、历史背景、文化区域及相关制度或社会语境；
    - 材质、尺寸或尺度特征、器形结构、构图、纹饰、铭文、工艺与制作方法；
@@ -107,10 +109,25 @@ ARTIFACT_DESCRIPTION_SYSTEM_PROMPT = """
    - 出土时间和地点、遗址或墓葬背景、地层与伴出器物；输入不足时明确待核；
    - 收藏、入藏、流传、著录、修复、展览与研究情况；无法确认的具体编号或事件不得虚构；
    - 同类器比较、学术认识、历史价值以及仍存在的争议或待考问题。
-3. 不能仅为凑字数重复基础字段，不要使用“具有重要价值”“工艺精湛”等没有事实支撑的套话。具体尺寸、编号、发现年份、墓葬编号、人名、文献名等只有在高度确定时才能写入。
-4. reasoning 是展示给人工复核的研究依据摘要，不是内部思维链。它应逐项说明：哪些内容直接来自用户字段，哪些属于可稳定确认的通行知识，哪些是依据名称、时代或出土信息作出的有限推定，哪些信息仍需查证；同时检查名称、年代、馆藏和出土信息之间是否存在明显冲突。
-5. tags 返回 10-20 个中文标签，优先覆盖器类、材质、工艺、形制、纹样、题材、用途、文化区域、出土背景、墓葬/遗址背景和学术特征。不要重复文物名称、时代、馆藏单位，也不要生成“文物”“博物馆”“艺术品”等泛标签。
-6. 信息完整性优先于文字华丽；有可靠知识时充分展开，没有把握时明确写“待核”或省略，不得把推测包装成事实，不得编造检索过程或来源。
+3. 具体尺寸、文物等级、发现年份、墓葬编号、入藏编号、人名和文献名等细节，必须由所给网页来源或联网核验报告明确支持；在 description 和 reasoning 中紧邻事实标注[来源N]或[联网核验]。不得捏造来源编号，也不要引用未提供的网页。当“可直接访问的网页资料”为空时，绝对不得使用[来源N]，只能使用[联网核验]。严禁给出没有来源支持的尺寸、重量、年份或数值范围，即使标成“推测”也不可以。
+4. 对同名或同出土地的不同藏品保持警惕。来源若指向不同藏馆、不同尺寸或不同文物，应明确说明可能存在同类器混淆，不得把两件文物的信息拼接成一件。
+5. “某轮搜索未查到”只代表该轮没有新证据，不等于反证，也不构成字段冲突。若另一份核验报告已经给出正面来源或多来源印证，应保留已核实结论；只有来源明确给出互相排斥的事实时，才能写入 field_warnings。
+6. field_warnings 只报告会影响入库字段的实质冲突，例如两个可靠来源分别给出不同馆藏单位、时代或出土地。不要把“缺少尺寸”“没有公开编号”“某轮未搜到”写成字段错误。
+7. 不能仅为凑字数重复基础字段，不要使用“具有重要价值”“工艺精湛”等没有事实支撑的套话。优先写这件文物独有的可核验细节，通用时代背景应压缩。
+8. reasoning 是展示给人工复核的证据摘要，不是内部思维链。它应逐项说明：哪些内容来自用户输入，哪些由哪条网页资料支持，哪些仅属通行知识或有限推定，哪些仍需查证；同时给出字段一致性结论和来源可靠性判断。
+9. tags 返回 10-20 个中文标签，优先覆盖器类、材质、工艺、形制、纹样、题材、用途、文化区域、出土背景、墓葬/遗址背景和学术特征。不要重复文物名称、时代、馆藏单位，也不要生成“文物”“博物馆”“艺术品”等泛标签。
+10. 信息完整性优先于文字华丽；有可靠资料时充分展开，没有把握时明确写“待核”或省略，不得把推测包装成事实。
+""".strip()
+
+ARTIFACT_RESEARCH_SYSTEM_PROMPT = """
+你是一名博物馆藏品资料研究员。请使用联网搜索核验用户提供的文物名称、时代、馆藏单位和出土信息。
+
+研究要求：
+1. 优先查找博物馆官网、政府文博机构和考古机构；若官网没有公开完整藏品目录，可使用博物馆官方账号、正式展览介绍、权威媒体、公开出版物和多个相互印证的可靠二手来源。不要因为官网未收录就断言文物不存在或字段错误。
+2. 特别检查是否存在名称相近、材质不同、同地点出土但分藏不同博物馆的文物，禁止把多件文物的尺寸、发现时间、文物等级和外观细节混在一起。
+3. 尽可能查明：规范名称、材质、尺寸、发现/出土时间、准确地点、馆藏归属、文物等级、外观细节、工艺、保存状态和历史背景。
+4. 明确列出支持每项关键事实的来源名称；能获得链接时一并给出链接。单一非官方来源只能作为线索，两个以上独立来源一致时可以标记为“多来源印证”。多个来源冲突时分别陈述，不要强行下结论。
+5. 这是提供给后续编目模型的证据报告，不要写空泛鉴赏文字。未查到的项目直接标记“未查到可靠来源”。
 """.strip()
 
 @dataclass
@@ -127,6 +144,21 @@ class SearchHit:
     url: str
     snippet: str = ""
     source: str | None = None
+
+
+def format_research_sources(search_hits: list[SearchHit]) -> str:
+    if not search_hits:
+        return "未检索到可用网页资料。只能使用稳定的公共知识，并应明确标注所有待核信息。"
+
+    lines: list[str] = []
+    for index, hit in enumerate(search_hits, start=1):
+        lines.append(f"[来源{index}] {hit.title}")
+        lines.append(f"[来源{index}] URL：{hit.url}")
+        if hit.source:
+            lines.append(f"[来源{index}] 网站：{hit.source}")
+        if hit.snippet:
+            lines.append(f"[来源{index}] 摘要：{hit.snippet}")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -378,6 +410,29 @@ def clean_search_term(value: str) -> str:
     return " ".join(cleaned.split())
 
 
+def build_artifact_description_search_queries(
+    *,
+    artifact_name: str,
+    era: str | None = None,
+    museum_name: str | None = None,
+    place_of_excavation: str | None = None,
+) -> list[str]:
+    name = clean_search_term(artifact_name)
+    era_value = clean_search_term(era or "")
+    museum = clean_search_term(museum_name or "")
+    excavation = clean_search_term(place_of_excavation or "")
+
+    raw_queries = [
+        " ".join(part for part in [name, excavation, museum, era_value] if part),
+        " ".join(part for part in [name, excavation, "出土 馆藏"] if part),
+        " ".join(part for part in [name, museum, "藏品"] if part),
+        " ".join(part for part in [name, "尺寸 发现 文物等级"] if part),
+        " ".join(part for part in [name, excavation, "考古"] if part),
+        " ".join(part for part in [name, "博物院 博物馆"] if part),
+    ]
+    return list(dict.fromkeys(query for query in raw_queries if query))[:6]
+
+
 def expand_search_queries(search_queries: list[str]) -> list[str]:
     expanded: list[str] = []
     for raw_query in search_queries:
@@ -574,6 +629,8 @@ def build_artifact_description_payload(
     era: str | None = None,
     museum_name: str | None = None,
     place_of_excavation: str | None = None,
+    search_hits: list[SearchHit] | None = None,
+    research_summary: str | None = None,
 ) -> dict[str, object]:
     facts = {
         "artifact_name": artifact_name.strip(),
@@ -585,8 +642,10 @@ def build_artifact_description_payload(
         {
             "type": "text",
             "text": (
-                "以下是本次任务的全部输入，不包含图片。请仅依据这些已确认字段和你能可靠确认的公共知识，生成尽可能完整的研究依据摘要、编目描述和标签；不要改写基础字段，也不要假装观察过图片：\n"
-                f"{json.dumps(facts, ensure_ascii=False, indent=2)}"
+                "本次任务不包含图片。请先核对四项输入，再根据来源证据生成尽可能完整的研究依据摘要、编目描述、标签和字段冲突提示；不要假装观察过图片。\n\n"
+                f"用户输入：\n{json.dumps(facts, ensure_ascii=False, indent=2)}\n\n"
+                f"千问联网核验报告：\n{research_summary or '联网核验未返回可用报告。'}\n\n"
+                f"可直接访问的网页资料：\n{format_research_sources(search_hits or [])}"
             ),
         }
     ]
@@ -616,6 +675,8 @@ async def generate_artifact_description_for_provider(
     era: str | None = None,
     museum_name: str | None = None,
     place_of_excavation: str | None = None,
+    search_hits: list[SearchHit] | None = None,
+    research_summary: str | None = None,
 ) -> dict[str, object]:
     payload = build_artifact_description_payload(
         provider,
@@ -625,6 +686,8 @@ async def generate_artifact_description_for_provider(
         era=era,
         museum_name=museum_name,
         place_of_excavation=place_of_excavation,
+        search_hits=search_hits,
+        research_summary=research_summary,
     )
     data = await request_chat_completion(provider, payload)
     result = parse_json_response(extract_message_text(data))
@@ -636,7 +699,92 @@ async def generate_artifact_description_for_provider(
         "provider": provider,
         "result": result,
         "reasoning": reasoning,
+        "search_hits": serialize_search_hits(search_hits or []),
+        "research_summary": research_summary or "",
     }
+
+
+_ARTIFACT_RESEARCH_CACHE: "OrderedDict[str, str]" = OrderedDict()
+_ARTIFACT_RESEARCH_CACHE_MAX = 256
+
+
+async def request_qwen_artifact_research(
+    providers: list[VisionProvider],
+    *,
+    artifact_name: str,
+    era: str | None = None,
+    museum_name: str | None = None,
+    place_of_excavation: str | None = None,
+) -> str:
+    qwen_provider = next((provider for provider in providers if provider.name == "qwen"), None)
+    if qwen_provider is None:
+        return ""
+
+    facts = {
+        "artifact_name": artifact_name.strip(),
+        "era": (era or "").strip(),
+        "museum_name": (museum_name or "").strip(),
+        "Place_of_Excavation": (place_of_excavation or "").strip(),
+    }
+    cache_key = hashlib.sha256(
+        json.dumps(
+            {"model": qwen_provider.model, **facts},
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    cached = _ARTIFACT_RESEARCH_CACHE.get(cache_key)
+    if cached is not None:
+        _ARTIFACT_RESEARCH_CACHE.move_to_end(cache_key)
+        return cached
+
+    facts_text = json.dumps(facts, ensure_ascii=False, indent=2)
+    research_questions = [
+        (
+            "请先用完整名称、出土地点和馆藏单位联网搜索，再拆分关键词继续搜索。"
+            "重点回答：这组字段对应的是哪一件文物？是否存在同地点出土但材质不同、分藏不同博物馆的同名或近名文物？"
+            "逐件列出材质、馆藏单位和可区分特征，判断用户字段是否自洽。不要把不同文物合并。\n\n"
+            f"待核线索：\n{facts_text}"
+        ),
+        (
+            "请联网搜索以下文物的详细资料。重点寻找尺寸、重量、发现或出土年份、出土经过、文物等级、"
+            "面部与冠饰细节、制作工艺、残损状况、展览或著录信息。每项具体细节都写明来源名称；"
+            "若搜索到近似文物，必须先核对材质与馆藏单位，不能把近似文物的细节移植过来。\n\n"
+            f"待核线索：\n{facts_text}"
+        ),
+    ]
+
+    async def run_research(question: str) -> str:
+        payload: dict[str, object] = {
+            "model": qwen_provider.model,
+            "messages": [
+                {"role": "system", "content": ARTIFACT_RESEARCH_SYSTEM_PROMPT},
+                {"role": "user", "content": question},
+            ],
+            "enable_search": True,
+            "search_options": {"search_strategy": "max"},
+            "temperature": 0.1,
+            "max_tokens": 2200,
+        }
+        data = await request_chat_completion(qwen_provider, payload)
+        return extract_message_text(data).strip()
+
+    outcomes = await asyncio.gather(
+        *(run_research(question) for question in research_questions),
+        return_exceptions=True,
+    )
+    sections: list[str] = []
+    section_labels = ["身份与馆藏核验", "细节与出土信息核验"]
+    for label, outcome in zip(section_labels, outcomes, strict=True):
+        if isinstance(outcome, str) and outcome:
+            sections.append(f"## {label}\n{outcome}")
+    research_summary = "\n\n".join(sections)
+    if research_summary:
+        _ARTIFACT_RESEARCH_CACHE[cache_key] = research_summary
+        _ARTIFACT_RESEARCH_CACHE.move_to_end(cache_key)
+        while len(_ARTIFACT_RESEARCH_CACHE) > _ARTIFACT_RESEARCH_CACHE_MAX:
+            _ARTIFACT_RESEARCH_CACHE.popitem(last=False)
+    return research_summary
 
 
 async def generate_artifact_descriptions_parallel(
@@ -652,6 +800,29 @@ async def generate_artifact_descriptions_parallel(
     if not providers:
         raise RuntimeError("未配置可用的大模型，无法生成描述。")
 
+    search_queries = build_artifact_description_search_queries(
+        artifact_name=artifact_name,
+        era=era,
+        museum_name=museum_name,
+        place_of_excavation=place_of_excavation,
+    )
+    search_result, research_result = await asyncio.gather(
+        search_candidate_artifacts(
+            search_queries,
+            expand_queries=False,
+        ),
+        request_qwen_artifact_research(
+            providers,
+            artifact_name=artifact_name,
+            era=era,
+            museum_name=museum_name,
+            place_of_excavation=place_of_excavation,
+        ),
+        return_exceptions=True,
+    )
+    search_hits = search_result if isinstance(search_result, list) else []
+    research_summary = research_result if isinstance(research_result, str) else ""
+
     tasks = [
         generate_artifact_description_for_provider(
             provider,
@@ -661,6 +832,8 @@ async def generate_artifact_descriptions_parallel(
             era=era,
             museum_name=museum_name,
             place_of_excavation=place_of_excavation,
+            search_hits=search_hits,
+            research_summary=research_summary,
         )
         for provider in providers
     ]
@@ -793,12 +966,15 @@ async def fetch_duckduckgo_query(client: httpx.AsyncClient, query: str) -> list[
 async def search_candidate_artifacts(
     search_queries: list[str],
     deadline_seconds: float = 25.0,
+    *,
+    expand_queries: bool = True,
 ) -> list[SearchHit]:
     backend = (settings.vision_search_backend or "duckduckgo").strip().lower()
     if backend == "none":
         return []
 
-    queries = expand_search_queries([query.strip() for query in search_queries if query.strip()])
+    cleaned_queries = [query.strip() for query in search_queries if query.strip()]
+    queries = expand_search_queries(cleaned_queries) if expand_queries else cleaned_queries[:8]
     if not queries:
         return []
 

@@ -22,16 +22,22 @@ def exhibition(
     start_date: date | None,
     end_date: date | None,
     is_permanent: bool = False,
+    region: str = "中国大陆",
+    city: str = "济南",
+    museum_name: str = "山东博物馆",
+    venue: str = "山东博物馆",
+    address: str | None = None,
 ) -> CatalogExhibition:
     return CatalogExhibition(
         source_id=source_id,
         source_url=f"https://example.com/events/{source_id}",
         title=title,
-        region="中国大陆",
-        city="济南",
+        region=region,
+        city=city,
         city_slug="jinan",
-        museum_name="山东博物馆",
-        venue="山东博物馆",
+        museum_name=museum_name,
+        venue=venue,
+        address=address,
         description="测试展览详情",
         start_date=start_date,
         end_date=end_date,
@@ -132,6 +138,89 @@ class ExhibitionRecommendationTests(unittest.TestCase):
             item for item in recommendations if item.source_id == "long-running"
         )
         self.assertIn("拍摄日期在长期展期内", long_running.match_reasons)
+
+    def test_explicit_location_excludes_distant_date_matches(self) -> None:
+        self.catalog_db.add_all(
+            [
+                exhibition(
+                    "inner-mongolia",
+                    "草原文明展",
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 12, 31),
+                    region="中国大陆",
+                    city="呼和浩特",
+                    museum_name="内蒙古博物院",
+                    venue="二层展厅",
+                ),
+                exhibition(
+                    "tokyo",
+                    "东京特展",
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 12, 31),
+                    region="日本",
+                    city="东京",
+                    museum_name="东京国立博物馆",
+                ),
+                exhibition(
+                    "kunming",
+                    "昆明特展",
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 12, 31),
+                    city="昆明",
+                    museum_name="云南省博物馆",
+                ),
+                exhibition(
+                    "inner-mongolia-other-museum",
+                    "内蒙古其他场馆同期展",
+                    start_date=date(2026, 1, 1),
+                    end_date=date(2026, 12, 31),
+                    city="内蒙古",
+                    museum_name="包头博物馆",
+                ),
+            ]
+        )
+        self.catalog_db.commit()
+
+        recommendations = recommend_exhibition_catalog(
+            captured_at=datetime(2026, 6, 1, 12, 0, 0),
+            latitude=None,
+            longitude=None,
+            location="内蒙古博物院",
+            q=None,
+            limit=10,
+            catalog_db=self.catalog_db,
+            artifact_db=self.artifact_db,
+        )
+
+        self.assertEqual(
+            [item.source_id for item in recommendations],
+            ["inner-mongolia"],
+        )
+        self.assertIn("展馆与EXIF 地点一致", recommendations[0].match_reasons)
+
+    def test_unknown_location_does_not_return_unrelated_date_matches(self) -> None:
+        self.catalog_db.add(
+            exhibition(
+                "unrelated",
+                "无关特展",
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 12, 31),
+            )
+        )
+        self.catalog_db.commit()
+
+        recommendations = recommend_exhibition_catalog(
+            captured_at=datetime(2026, 6, 1, 12, 0, 0),
+            latitude=None,
+            longitude=None,
+            location="内蒙古博物院",
+            q=None,
+            limit=10,
+            catalog_db=self.catalog_db,
+            artifact_db=self.artifact_db,
+        )
+
+        self.assertEqual(recommendations, [])
 
     def test_live_sync_status_reports_catalog_and_run_progress(self) -> None:
         now = datetime.now(timezone.utc)

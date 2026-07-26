@@ -1,7 +1,15 @@
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
-from app.vision import VisionProvider, build_artifact_description_payload
+from app.vision import (
+    ARTIFACT_DESCRIPTION_SYSTEM_PROMPT,
+    SearchHit,
+    VisionProvider,
+    build_artifact_description_payload,
+    build_artifact_description_search_queries,
+    request_qwen_artifact_research,
+)
 
 
 class ArtifactDescriptionPromptTests(unittest.TestCase):
@@ -19,6 +27,15 @@ class ArtifactDescriptionPromptTests(unittest.TestCase):
             era="汉代",
             museum_name="测试博物馆",
             place_of_excavation="测试墓葬出土",
+            research_summary="联网核验确认该文物由测试博物馆收藏。",
+            search_hits=[
+                SearchHit(
+                    title="测试博物馆官方藏品页",
+                    url="https://museum.example/artifact",
+                    snippet="该文物于1982年出土。",
+                    source="museum.example",
+                )
+            ],
         )
 
         user_content = payload["messages"][1]["content"]  # type: ignore[index]
@@ -27,7 +44,56 @@ class ArtifactDescriptionPromptTests(unittest.TestCase):
         self.assertNotIn("image_url", str(user_content))
         self.assertIn("测试文物", user_content[0]["text"])
         self.assertIn("不包含图片", user_content[0]["text"])
+        self.assertIn("[来源1] 测试博物馆官方藏品页", user_content[0]["text"])
+        self.assertIn("https://museum.example/artifact", user_content[0]["text"])
+        self.assertIn("联网核验确认该文物", user_content[0]["text"])
         self.assertEqual(payload["max_tokens"], 4096)
+        self.assertIn("### 快速概览", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn("不等于反证", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn("严禁给出没有来源支持的尺寸", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+
+    def test_description_search_queries_cover_identity_and_detail_checks(self) -> None:
+        queries = build_artifact_description_search_queries(
+            artifact_name="灰陶菩萨头像",
+            era="辽代",
+            museum_name="内蒙古博物院",
+            place_of_excavation="呼和浩特市白塔遗址出土",
+        )
+
+        self.assertTrue(any("灰陶菩萨头像" in query and "白塔遗址" in query for query in queries))
+        self.assertTrue(any("尺寸" in query and "文物等级" in query for query in queries))
+        self.assertTrue(any("内蒙古博物院" in query and "藏品" in query for query in queries))
+
+
+class ArtifactResearchTests(unittest.IsolatedAsyncioTestCase):
+    async def test_qwen_research_enables_web_search(self) -> None:
+        provider = VisionProvider(
+            name="qwen",
+            base_url="https://example.invalid",
+            api_key="test-key",
+            model="qwen3.7-plus",
+        )
+        response = {"choices": [{"message": {"content": "联网核验结果"}}]}
+
+        with patch(
+            "app.vision.request_chat_completion",
+            new=AsyncMock(return_value=response),
+        ) as request:
+            result = await request_qwen_artifact_research(
+                [provider],
+                artifact_name="灰陶菩萨头像",
+                era="辽代",
+                museum_name="内蒙古博物院",
+                place_of_excavation="呼和浩特市白塔遗址出土",
+            )
+
+        self.assertIn("## 身份与馆藏核验", result)
+        self.assertIn("## 细节与出土信息核验", result)
+        self.assertEqual(request.await_count, 2)
+        for call in request.await_args_list:
+            payload = call.args[1]
+            self.assertIs(payload["enable_search"], True)
+            self.assertEqual(payload["search_options"]["search_strategy"], "max")
 
 
 if __name__ == "__main__":
