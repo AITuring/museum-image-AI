@@ -1584,8 +1584,17 @@ label.field,
 
 .metadata-sync-presets {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 2px;
   margin: 8px -4px 0;
+}
+
+.metadata-sync-presets > span {
+  margin: 0 4px;
+  color: var(--app-soft);
+  font-size: 9px;
+  font-weight: 500;
 }
 
 .metadata-sync-presets .ant-btn {
@@ -1595,55 +1604,88 @@ label.field,
   font-size: 10px;
 }
 
-.metadata-sync-scopes {
+.metadata-sync-field-groups {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 6px;
+  gap: 7px;
+  margin-top: 8px;
 }
 
-.metadata-sync-scope {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 7px;
+.metadata-sync-field-group {
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--app-border);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--app-card);
-  cursor: pointer;
-  transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-.metadata-sync-scope:hover {
-  border-color: var(--ui-line-strong);
-}
-
-.metadata-sync-scope.is-selected {
-  border-color: color-mix(in oklch, var(--app-primary) 35%, var(--app-border));
-  background: color-mix(in oklch, var(--app-primary) 4%, var(--app-card));
-}
-
-.metadata-sync-scope > span:last-child {
+.metadata-sync-field-group > header {
   display: grid;
-  min-width: 0;
   gap: 2px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--app-border);
 }
 
-.metadata-sync-scope strong {
+.metadata-sync-field-group > header strong {
+  color: var(--app-fg);
   font-size: 10px;
-  font-weight: 600;
-  line-height: 1.3;
+  font-weight: 650;
 }
 
-.metadata-sync-scope small {
-  overflow: hidden;
+.metadata-sync-field-group > header span {
   color: var(--app-soft);
   font-size: 9px;
   line-height: 1.35;
+}
+
+.metadata-sync-field-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 6px;
+  padding-top: 6px;
+}
+
+.metadata-sync-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 25px;
+  gap: 6px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  color: var(--app-soft);
+  cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.metadata-sync-field:hover {
+  background: var(--app-muted);
+  color: var(--app-fg);
+}
+
+.metadata-sync-field.is-selected {
+  background: color-mix(in oklch, var(--app-primary) 6%, var(--app-card));
+  color: var(--app-fg);
+}
+
+.metadata-sync-field > span {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.metadata-sync-field .ant-switch {
+  flex: 0 0 auto;
+}
+
+.metadata-sync-field-groups.is-preview {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.metadata-sync-field-groups.is-preview .metadata-sync-field-group {
+  padding: 9px;
 }
 
 .metadata-sync-status {
@@ -1674,8 +1716,55 @@ label.field,
 
 .metadata-sync-preview {
   display: grid;
+  max-height: calc(100vh - 220px);
   gap: 14px;
+  overflow-y: auto;
+  padding-right: 3px;
   padding-top: 4px;
+}
+
+.metadata-sync-preview-fields {
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: color-mix(in oklch, var(--app-card) 82%, var(--app-muted));
+}
+
+.metadata-sync-preview-fields-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.metadata-sync-preview-fields-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.metadata-sync-preview-fields-head strong {
+  color: var(--app-fg);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.metadata-sync-preview-fields-head span {
+  color: var(--app-soft);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.metadata-sync-preview-fields-head > span {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: var(--app-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.metadata-sync-preview-fields > .metadata-sync-presets {
+  margin-top: 6px;
 }
 
 .metadata-sync-preview-summary {
@@ -1721,12 +1810,9 @@ label.field,
 
 .metadata-sync-preview-targets {
   display: grid;
-  max-height: min(54vh, 520px);
   align-content: start;
   grid-auto-rows: max-content;
   gap: 10px;
-  overflow-y: auto;
-  padding-right: 3px;
 }
 
 .metadata-sync-preview-target {
@@ -3629,6 +3715,16 @@ label.field,
 }
 
 @media (max-width: 960px) {
+  .metadata-sync-field-groups.is-preview {
+    grid-template-columns: 1fr;
+  }
+
+  .metadata-sync-preview-fields-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
   .metadata-sync-preview-summary {
     grid-template-columns: 1fr;
   }

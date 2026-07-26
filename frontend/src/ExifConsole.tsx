@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
-import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Tag, Tooltip } from "antd"
+import { AutoComplete, Button, Card, Input, Modal, Segmented, Select, Switch, Tag, Tooltip } from "antd"
 import {
   ArrowRight,
   Camera,
@@ -148,9 +148,20 @@ type FormState = {
   tags: string[]
 }
 
-type MetadataSyncScopeKey = "location" | "camera" | "exposure" | "time" | "content"
+type MetadataSyncFieldKey =
+  | "displayLocation"
+  | "exhibition"
+  | "gps"
+  | "cameraModel"
+  | "lensModel"
+  | "shutterSpeed"
+  | "aperture"
+  | "iso"
+  | "capturedAt"
+  | "description"
+  | "tags"
 type MetadataSyncTargetMode = "current" | "others"
-type MetadataSyncSelection = Record<MetadataSyncScopeKey, boolean>
+type MetadataSyncSelection = Record<MetadataSyncFieldKey, boolean>
 type MetadataSyncDiffRow = {
   label: string
   targetValue: string
@@ -159,24 +170,114 @@ type MetadataSyncDiffRow = {
   willClearTarget: boolean
 }
 
-const METADATA_SYNC_SCOPES: Array<{
-  key: MetadataSyncScopeKey
+const METADATA_SYNC_GROUPS: Array<{
+  key: string
   title: string
   description: string
+  fields: Array<{
+    key: MetadataSyncFieldKey
+    label: string
+  }>
 }> = [
-  { key: "location", title: "地点与 GPS", description: "展出地点、对应展览与经纬度" },
-  { key: "camera", title: "相机与镜头", description: "相机型号与镜头型号" },
-  { key: "exposure", title: "拍摄参数", description: "快门、光圈与 ISO" },
-  { key: "time", title: "拍摄时间", description: "原始拍摄日期与时间" },
-  { key: "content", title: "描述与标签", description: "文物描述与标签，默认不选择" },
+  {
+    key: "location",
+    title: "地点与展览",
+    description: "同一批照片通常可以复用",
+    fields: [
+      { key: "displayLocation", label: "展出地点" },
+      { key: "exhibition", label: "对应展览" },
+      { key: "gps", label: "经纬度" },
+    ],
+  },
+  {
+    key: "camera",
+    title: "相机与拍摄参数",
+    description: "默认不同步，保留每张照片的原始 EXIF",
+    fields: [
+      { key: "cameraModel", label: "相机型号" },
+      { key: "lensModel", label: "镜头型号" },
+      { key: "shutterSpeed", label: "快门" },
+      { key: "aperture", label: "光圈" },
+      { key: "iso", label: "ISO" },
+    ],
+  },
+  {
+    key: "content",
+    title: "时间与内容",
+    description: "需要完全一致时再开启",
+    fields: [
+      { key: "capturedAt", label: "拍摄时间" },
+      { key: "description", label: "描述" },
+      { key: "tags", label: "标签" },
+    ],
+  },
 ]
 
 const DEFAULT_METADATA_SYNC_SELECTION: MetadataSyncSelection = {
-  location: true,
-  camera: true,
-  exposure: true,
-  time: true,
-  content: false,
+  displayLocation: true,
+  exhibition: true,
+  gps: true,
+  cameraModel: false,
+  lensModel: false,
+  shutterSpeed: false,
+  aperture: false,
+  iso: false,
+  capturedAt: false,
+  description: false,
+  tags: false,
+}
+
+const METADATA_SYNC_FIELD_COUNT = METADATA_SYNC_GROUPS.reduce(
+  (count, group) => count + group.fields.length,
+  0,
+)
+
+function metadataSyncSelectionFor(fields: MetadataSyncFieldKey[]): MetadataSyncSelection {
+  const enabled = new Set(fields)
+  return Object.fromEntries(
+    METADATA_SYNC_GROUPS
+      .flatMap((group) => group.fields)
+      .map((field) => [field.key, enabled.has(field.key)]),
+  ) as MetadataSyncSelection
+}
+
+function MetadataSyncFieldControls({
+  selection,
+  onChange,
+  context,
+}: {
+  selection: MetadataSyncSelection
+  onChange: (field: MetadataSyncFieldKey, checked: boolean) => void
+  context: "sidebar" | "preview"
+}) {
+  return (
+    <div className={`metadata-sync-field-groups is-${context}`}>
+      {METADATA_SYNC_GROUPS.map((group) => (
+        <section key={group.key} className="metadata-sync-field-group">
+          <header>
+            <strong>{group.title}</strong>
+            <span>{group.description}</span>
+          </header>
+          <div className="metadata-sync-field-list">
+            {group.fields.map((field) => (
+              <label
+                key={field.key}
+                className={`metadata-sync-field ${selection[field.key] ? "is-selected" : ""}`}
+              >
+                <span>{field.label}</span>
+                <Switch
+                  size="small"
+                  checked={selection[field.key]}
+                  onChange={(checked) => onChange(field.key, checked)}
+                  aria-label={`同步${field.label}`}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
 }
 
 type ImageExifMetadata = {
@@ -435,18 +536,26 @@ function FormSectionHeader({ icon: Icon, title, description }: {
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
   if (!response.ok) {
-    let message = `HTTP ${response.status}`
-    try {
-      const payload = (await response.json()) as { detail?: string }
-      if (payload.detail) {
-        message = payload.detail
-      }
-    } catch {
-      // ignore non-json errors
-    }
-    throw new Error(message)
+    throw new Error(await responseErrorMessage(response))
   }
   return (await response.json()) as T
+}
+
+async function responseErrorMessage(response: Response, prefix?: string) {
+  let detail = `HTTP ${response.status}`
+  try {
+    const payload = (await response.json()) as { detail?: string }
+    if (payload.detail) detail = payload.detail
+  } catch {
+    // Keep the HTTP fallback for non-JSON proxy/server errors.
+  }
+  return prefix ? `${prefix}：${detail}` : detail
+}
+
+function waitForRetry(delayMs: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs)
+  })
 }
 
 function formatRecommendationDate(item: ExhibitionRecommendation) {
@@ -776,37 +885,39 @@ function metadataSyncValue(value: string | string[]) {
 function buildMetadataSyncDiffRows(
   target: FormState,
   source: FormState,
-  scope: MetadataSyncScopeKey,
+  field: MetadataSyncFieldKey,
 ): MetadataSyncDiffRow[] {
-  const fields: Array<{ label: string; target: string | string[]; source: string | string[] }> = scope === "location"
-    ? [
-        { label: "展出地点", target: target.displayLocationName, source: source.displayLocationName },
-        { label: "对应展览", target: target.exhibitionName, source: source.exhibitionName },
-        {
-          label: "展览目录关联",
-          target: target.catalogExhibitionSourceId,
-          source: source.catalogExhibitionSourceId,
-        },
-        { label: "纬度", target: target.latitude, source: source.latitude },
-        { label: "经度", target: target.longitude, source: source.longitude },
-      ]
-    : scope === "camera"
+  const fields: Array<{ label: string; target: string | string[]; source: string | string[] }> = field === "displayLocation"
+    ? [{ label: "展出地点", target: target.displayLocationName, source: source.displayLocationName }]
+    : field === "exhibition"
       ? [
-          { label: "相机型号", target: target.cameraModel, source: source.cameraModel },
-          { label: "镜头型号", target: target.lensModel, source: source.lensModel },
+          { label: "对应展览", target: target.exhibitionName, source: source.exhibitionName },
+          {
+            label: "展览目录关联",
+            target: target.catalogExhibitionSourceId,
+            source: source.catalogExhibitionSourceId,
+          },
         ]
-      : scope === "exposure"
+      : field === "gps"
         ? [
-            { label: "快门", target: target.shutterSpeed, source: source.shutterSpeed },
-            { label: "光圈", target: target.aperture, source: source.aperture },
-            { label: "ISO", target: target.iso, source: source.iso },
+            { label: "纬度", target: target.latitude, source: source.latitude },
+            { label: "经度", target: target.longitude, source: source.longitude },
           ]
-      : scope === "time"
-          ? [{ label: "拍摄时间", target: formatCapturedAt(target.capturedAt), source: formatCapturedAt(source.capturedAt) }]
-          : [
-              { label: "描述", target: target.description, source: source.description },
-              { label: "标签", target: target.tags, source: source.tags },
-            ]
+        : field === "cameraModel"
+          ? [{ label: "相机型号", target: target.cameraModel, source: source.cameraModel }]
+          : field === "lensModel"
+            ? [{ label: "镜头型号", target: target.lensModel, source: source.lensModel }]
+            : field === "shutterSpeed"
+              ? [{ label: "快门", target: target.shutterSpeed, source: source.shutterSpeed }]
+              : field === "aperture"
+                ? [{ label: "光圈", target: target.aperture, source: source.aperture }]
+                : field === "iso"
+                  ? [{ label: "ISO", target: target.iso, source: source.iso }]
+                  : field === "capturedAt"
+                    ? [{ label: "拍摄时间", target: formatCapturedAt(target.capturedAt), source: formatCapturedAt(source.capturedAt) }]
+                    : field === "description"
+                      ? [{ label: "描述", target: target.description, source: source.description }]
+                      : [{ label: "标签", target: target.tags, source: source.tags }]
 
   return fields.map((field) => {
     const targetValue = metadataSyncValue(field.target)
@@ -829,28 +940,26 @@ function applySourceMetadata(
 ): FormState {
   return {
     ...target,
-    ...(selection.location ? {
+    ...(selection.displayLocation ? {
       displayLocationName: source.displayLocationName,
+    } : {}),
+    ...(selection.exhibition ? {
       exhibitionName: source.exhibitionName,
       catalogExhibitionId: source.catalogExhibitionId,
       catalogExhibitionSourceId: source.catalogExhibitionSourceId,
+    } : {}),
+    ...(selection.gps ? {
       latitude: source.latitude,
       longitude: source.longitude,
     } : {}),
-    ...(selection.camera ? {
-      cameraModel: source.cameraModel,
-      lensModel: source.lensModel,
-    } : {}),
-    ...(selection.exposure ? {
-      shutterSpeed: source.shutterSpeed,
-      aperture: source.aperture,
-      iso: source.iso,
-    } : {}),
-    ...(selection.time ? { capturedAt: source.capturedAt } : {}),
-    ...(selection.content ? {
-      description: source.description,
-      tags: [...source.tags],
-    } : {}),
+    ...(selection.cameraModel ? { cameraModel: source.cameraModel } : {}),
+    ...(selection.lensModel ? { lensModel: source.lensModel } : {}),
+    ...(selection.shutterSpeed ? { shutterSpeed: source.shutterSpeed } : {}),
+    ...(selection.aperture ? { aperture: source.aperture } : {}),
+    ...(selection.iso ? { iso: source.iso } : {}),
+    ...(selection.capturedAt ? { capturedAt: source.capturedAt } : {}),
+    ...(selection.description ? { description: source.description } : {}),
+    ...(selection.tags ? { tags: [...source.tags] } : {}),
   }
 }
 
@@ -1379,12 +1488,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   }, [items, metadataSyncSource, metadataSyncTargetMode, selectedItem])
 
   const metadataSyncDiffs = useMemo(() => metadataSyncTargets.map((target) => {
-    const rows = METADATA_SYNC_SCOPES
-      .filter((scope) => metadataSyncSelection[scope.key])
-      .flatMap((scope) => buildMetadataSyncDiffRows(target.form, metadataSyncSource?.form ?? EMPTY_FORM, scope.key))
+    const rows = METADATA_SYNC_GROUPS
+      .flatMap((group) => group.fields)
+      .filter((field) => metadataSyncSelection[field.key])
+      .flatMap((field) => buildMetadataSyncDiffRows(target.form, metadataSyncSource?.form ?? EMPTY_FORM, field.key))
       .filter((row) => row.changed)
     return { target, rows }
   }), [metadataSyncSelection, metadataSyncSource, metadataSyncTargets])
+
+  const metadataSyncSelectedCount = useMemo(
+    () => Object.values(metadataSyncSelection).filter(Boolean).length,
+    [metadataSyncSelection],
+  )
 
   const metadataSyncChangedCount = useMemo(
     () => metadataSyncDiffs.reduce((count, entry) => count + entry.rows.length, 0),
@@ -1644,12 +1759,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setSubmitNotice({ type: "success", text: "已带入当前图片的展出地点与 GPS，可继续微调后应用到全部图片" })
   }
 
-  function selectMetadataSyncPreset(preset: "location" | "capture" | "all") {
-    setMetadataSyncSelection(preset === "location"
-      ? { location: true, camera: false, exposure: false, time: false, content: false }
-      : preset === "capture"
-        ? { location: false, camera: true, exposure: true, time: true, content: false }
-        : { location: true, camera: true, exposure: true, time: true, content: true })
+  function selectMetadataSyncPreset(preset: "default" | "location" | "content" | "all" | "none") {
+    setMetadataSyncSelection(preset === "default"
+      ? { ...DEFAULT_METADATA_SYNC_SELECTION }
+      : preset === "location"
+        ? metadataSyncSelectionFor(["displayLocation", "exhibition", "gps"])
+        : preset === "content"
+          ? metadataSyncSelectionFor(["description", "tags"])
+          : metadataSyncSelectionFor(
+              preset === "all"
+                ? METADATA_SYNC_GROUPS.flatMap((group) => group.fields.map((field) => field.key))
+                : [],
+            ))
   }
 
   function openMetadataSyncPreview() {
@@ -1658,7 +1779,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       return
     }
     if (!Object.values(metadataSyncSelection).some(Boolean)) {
-      setSubmitNotice({ type: "error", text: "请至少选择一组需要同步的信息" })
+      setSubmitNotice({ type: "error", text: "请至少开启一项需要同步的信息" })
       return
     }
     if (metadataSyncTargets.length === 0) {
@@ -1680,7 +1801,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
     setMetadataSyncSourceId(selectedItem.id)
     setMetadataSyncTargetMode("others")
-    selectMetadataSyncPreset("all")
+    if (!Object.values(metadataSyncSelection).some(Boolean)) {
+      selectMetadataSyncPreset("default")
+    }
     setMetadataSyncPreviewOpen(true)
   }
 
@@ -2308,6 +2431,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
     updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null, uploadProgress: 8, uploadStage: "正在准备 EXIF 信息" }))
     try {
+      // A retry click is a fresh user gesture, so request write permission
+      // before any network request can consume that activation.
+      if (directoryHandle && !await verifyWritablePermission(directoryHandle)) {
+        throw new Error("文件夹写入权限未授权，请重新选择照片文件夹")
+      }
+      if (!await verifyWritablePermission(target.fileHandle)) {
+        throw new Error(`“${target.originalFileName}”的写入权限未授权，请点击图片列表上方的文件夹按钮重新授权`)
+      }
+
+      const latestLocalFile = await target.fileHandle.getFile()
       const latitude = toNullableNumber(target.form.latitude)
       const longitude = toNullableNumber(target.form.longitude)
       const appendMetadata = (data: FormData) => {
@@ -2334,21 +2467,35 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         if (target.form.iso.trim()) data.append("iso", target.form.iso.trim())
       }
 
-      updateItem(itemId, (item) => ({ ...item, uploadProgress: 16, uploadStage: "正在生成最终 EXIF 图片" }))
-      const exifForm = new FormData()
-      exifForm.append("file", target.localFile)
-      appendMetadata(exifForm)
-      const response = await fetch(`${apiBaseUrl}/api/artifacts/prepare-exif-file`, {
-        method: "POST",
-        body: exifForm,
-      })
-      if (!response.ok) throw new Error(`本地 EXIF 回写准备失败（HTTP ${response.status}）`)
+      let response: Response | null = null
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const useCleanExif = attempt === 3
+        updateItem(itemId, (item) => ({
+          ...item,
+          uploadProgress: 13 + attempt * 3,
+          uploadStage: useCleanExif
+            ? "正在使用兼容模式重建 EXIF（第 3/3 次）"
+            : `正在生成最终 EXIF 图片（第 ${attempt}/3 次）`,
+        }))
+        const exifForm = new FormData()
+        exifForm.append("file", latestLocalFile)
+        appendMetadata(exifForm)
+        if (useCleanExif) exifForm.append("clean_exif", "true")
+        response = await fetch(`${apiBaseUrl}/api/artifacts/prepare-exif-file`, {
+          method: "POST",
+          body: exifForm,
+        })
+        if (response.ok) break
+
+        const message = await responseErrorMessage(response, "本地 EXIF 回写准备失败")
+        if (attempt === 3) throw new Error(`已重试 3 次，${message}`)
+        await waitForRetry(350 * attempt)
+      }
+      if (!response?.ok) throw new Error("本地 EXIF 回写准备失败")
       const sourceHash = response.headers.get("X-Source-Hash")
+      const cleanRewriteUsed = response.headers.get("X-Exif-Rewrite-Mode") === "clean"
       const editedBlob = await response.blob()
 
-      if (directoryHandle && !await verifyWritablePermission(directoryHandle)) {
-        throw new Error("文件夹写入权限已失效，请重新选择照片文件夹")
-      }
       let resolvedWriteHandle = target.fileHandle
       if (directoryHandle && target.fileName !== target.originalFileName) {
         try {
@@ -2416,9 +2563,34 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       formData.append("tags", JSON.stringify(target.form.tags))
       formData.append("exif_prepared", "true")
       if (sourceHash) formData.append("source_hash", sourceHash)
-      const result = await postFormDataWithProgress<ArtifactSubmitResult>(`${apiBaseUrl}/api/artifacts/exif-submit-file`, formData, (progress) => {
-        updateItem(itemId, (item) => ({ ...item, uploadProgress: progress, uploadStage: "正在上传 OSS 并写入档案" }))
-      })
+      let result: ArtifactSubmitResult | null = null
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          updateItem(itemId, (item) => ({
+            ...item,
+            uploadStage: `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
+          }))
+          result = await postFormDataWithProgress<ArtifactSubmitResult>(
+            `${apiBaseUrl}/api/artifacts/exif-submit-file`,
+            formData,
+            (progress) => {
+              updateItem(itemId, (item) => ({
+                ...item,
+                uploadProgress: progress,
+                uploadStage: `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
+              }))
+            },
+          )
+          break
+        } catch (error) {
+          if (attempt === 3) {
+            const message = error instanceof Error ? error.message : "未知错误"
+            throw new Error(`云端提交已重试 3 次：${message}`, { cause: error })
+          }
+          await waitForRetry(700 * attempt)
+        }
+      }
+      if (!result) throw new Error("云端提交失败")
       updateItem(itemId, (item) => ({
         ...item,
         localFile: uploadFile,
@@ -2430,7 +2602,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           ? (result.duplicate_image_detail || "已用本次校正覆盖云端已有图片。")
           : result.duplicate_image_skipped
           ? (result.duplicate_image_detail || "云端已存在相同原图，本次未重复上传。")
-          : "已修改本地文件名与 EXIF，并同步上传 OSS 与云端数据库",
+          : cleanRewriteUsed
+            ? "已通过兼容模式重建 EXIF，并同步上传 OSS 与云端数据库"
+            : "已修改本地文件名与 EXIF，并同步上传 OSS 与云端数据库",
         uploadProgress: 100,
         uploadStage: "已完成",
       }))
@@ -2686,7 +2860,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <summary>
                   <span className="exif-tool-summary-copy">
                     <strong>从照片同步信息</strong>
-                    <small>地点、展览、相机、镜头与拍摄参数</small>
+                    <small>逐项选择要复用的地点、时间、参数与内容</small>
                   </span>
                   <span className="exif-tool-summary-meta">
                     <span className="exif-tool-summary-count">{items.length > 1 ? `${items.length - 1} 张可同步` : "至少需要 2 张"}</span>
@@ -2733,34 +2907,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   />
                 </div>
                 <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("location")}>只选地点</Button>
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("capture")}>只选拍摄信息</Button>
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("all")}>选择全部</Button>
+                  <span>快捷选择</span>
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("default")}>默认</Button>
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("location")}>地点</Button>
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("content")}>内容</Button>
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("all")}>全部</Button>
+                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
                 </div>
-                <div className="metadata-sync-scopes">
-                  {METADATA_SYNC_SCOPES.map((scope) => (
-                    <label key={scope.key} className={`metadata-sync-scope ${metadataSyncSelection[scope.key] ? "is-selected" : ""}`}>
-                      <Checkbox
-                        checked={metadataSyncSelection[scope.key]}
-                        onChange={(event) => setMetadataSyncSelection((current) => ({
-                          ...current,
-                          [scope.key]: event.target.checked,
-                        }))}
-                      />
-                      <span>
-                        <strong>{scope.title}</strong>
-                        <small>{scope.description}</small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                <MetadataSyncFieldControls
+                  context="sidebar"
+                  selection={metadataSyncSelection}
+                  onChange={(field, checked) => setMetadataSyncSelection((current) => ({
+                    ...current,
+                    [field]: checked,
+                  }))}
+                />
                 <div className="metadata-sync-status">
                   <span title={metadataSyncSource?.fileName}>
                     {metadataSyncSource
                       ? `来源：${indexedFileName(metadataSyncSource.fileName, items.findIndex((item) => item.id === metadataSyncSource.id))}`
                       : "尚未选择来源"}
                   </span>
-                  <strong>{metadataSyncTargets.length} 张目标 · {metadataSyncChangedCount} 项差异</strong>
+                  <strong>{metadataSyncSelectedCount}/{METADATA_SYNC_FIELD_COUNT} 字段 · {metadataSyncChangedCount} 项差异</strong>
                 </div>
                 <div className="exif-tool-actions">
                   <Button
@@ -2898,9 +3066,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       size="small"
                       className="exif-retry"
                       icon={<RefreshCw size={13} strokeWidth={2} aria-hidden="true" />}
-                      onClick={() => void submitOne(item.id)}
-                    >
-                      重试
+                    onClick={() => void submitOne(item.id)}
+                  >
+                      授权并重试
                     </Button>
                   ) : null}
                   <Button
@@ -3529,7 +3697,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   onClick={() => void submitOne(selectedItem.id)}
                   disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}
                 >
-                  {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : selectedItem.submitState === "error" ? "重试入库" : "保存并入库"}
+                  {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : selectedItem.submitState === "error" ? "授权并重试" : "保存并入库"}
                 </Button>
               </div>
             </form>
@@ -3633,6 +3801,31 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         ]}
       >
         <div className="metadata-sync-preview">
+          <section className="metadata-sync-preview-fields">
+            <div className="metadata-sync-preview-fields-head">
+              <div>
+                <strong>选择同步内容</strong>
+                <span>相机、拍摄参数与时间默认关闭，避免覆盖每张照片自己的 EXIF。</span>
+              </div>
+              <span>{metadataSyncSelectedCount}/{METADATA_SYNC_FIELD_COUNT} 项已开启</span>
+            </div>
+            <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
+              <span>快捷选择</span>
+              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("default")}>恢复默认</Button>
+              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("location")}>只选地点</Button>
+              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("content")}>只选内容</Button>
+              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("all")}>全部开启</Button>
+              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
+            </div>
+            <MetadataSyncFieldControls
+              context="preview"
+              selection={metadataSyncSelection}
+              onChange={(field, checked) => setMetadataSyncSelection((current) => ({
+                ...current,
+                [field]: checked,
+              }))}
+            />
+          </section>
           <div className="metadata-sync-preview-summary">
             <div>
               <span>来源照片</span>

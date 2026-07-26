@@ -48,6 +48,10 @@ class ImageExifData:
         return asdict(self)
 
 
+class ImageExifWriteError(RuntimeError):
+    """Raised when requested EXIF metadata cannot be serialized into the image."""
+
+
 def image_content_fingerprint(image_bytes: bytes) -> str | None:
     """Return a perceptual fingerprint that stays stable across EXIF rewrites."""
     if not image_bytes:
@@ -241,13 +245,28 @@ def update_image_exif_metadata(
     aperture: str | None = None,
     iso: int | None = None,
     software_name: str = "museum-image-AI",
+    reset_existing_exif: bool = False,
+    raise_on_error: bool = False,
 ) -> bytes:
     if not image_bytes:
         return image_bytes
 
     try:
         with Image.open(BytesIO(image_bytes)) as image:
-            exif = image.getexif()
+            source_format = image.format or "JPEG"
+            if reset_existing_exif:
+                try:
+                    output_image = ImageOps.exif_transpose(image)
+                except Exception:
+                    # The pixel stream may be valid even when the orientation
+                    # tag or another original IFD is malformed.
+                    image.load()
+                    output_image = image.copy()
+                if source_format.upper() == "JPEG" and output_image.mode not in {"RGB", "L", "CMYK"}:
+                    output_image = output_image.convert("RGB")
+            else:
+                output_image = image
+            exif = Image.Exif() if reset_existing_exif else image.getexif()
             title_text = _clean_text(artifact_name)
             description_text = _clean_text(description)
             subject_text = _compose_subject_text(
@@ -355,32 +374,36 @@ def update_image_exif_metadata(
 
             output = BytesIO()
             save_kwargs = {
-                "format": image.format or "JPEG",
+                "format": source_format,
                 "exif": exif.tobytes(),
             }
             if image.info.get("icc_profile"):
                 save_kwargs["icc_profile"] = image.info["icc_profile"]
 
             try:
-                if (image.format or "").upper() == "JPEG":
-                    image.save(
+                if source_format.upper() == "JPEG":
+                    output_image.save(
                         output,
                         quality="keep",
                         subsampling="keep",
                         **save_kwargs,
                     )
                 else:
-                    image.save(output, **save_kwargs)
+                    output_image.save(output, **save_kwargs)
             except Exception:
                 output = BytesIO()
                 fallback_kwargs = dict(save_kwargs)
-                if (image.format or "").upper() == "JPEG":
-                    image.save(output, quality=95, subsampling=0, **fallback_kwargs)
+                if source_format.upper() == "JPEG":
+                    output_image.save(output, quality=95, subsampling=0, **fallback_kwargs)
                 else:
-                    image.save(output, **fallback_kwargs)
+                    output_image.save(output, **fallback_kwargs)
 
             return output.getvalue()
-    except Exception:
+    except Exception as exc:
+        if raise_on_error:
+            raise ImageExifWriteError(
+                f"{type(exc).__name__}: {exc}",
+            ) from exc
         return image_bytes
 
 

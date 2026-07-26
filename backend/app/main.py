@@ -65,6 +65,7 @@ from app.exhibition_service import (
 )
 from app.exif_utils import (
     ImageExifData,
+    ImageExifWriteError,
     extract_exif_and_preview_from_file,
     extract_exif_metadata,
     fingerprint_distance,
@@ -2830,6 +2831,7 @@ async def prepare_artifact_exif_file(
     shutter_speed: str | None = Form(None),
     aperture: str | None = Form(None),
     iso: int | None = Form(None),
+    clean_exif: bool = Form(False),
 ) -> Response:
     """Return edited bytes for a user-authorised local overwrite."""
     started_at = time_module.perf_counter()
@@ -2843,24 +2845,42 @@ async def prepare_artifact_exif_file(
         era=era,
         Place_of_Excavation=Place_of_Excavation,
     )
-    image_bytes = await run_in_threadpool(
-        update_image_exif_metadata,
-        original_bytes,
-        artifact_name=name,
-        description=description_text,
-        latitude=latitude,
-        longitude=longitude,
-        museum_name=museum_name,
-        era=era,
-        place_of_excavation=Place_of_Excavation,
-        display_location_name=display_location_name,
-        camera_model=camera_model,
-        lens_model=lens_model,
-        captured_at=captured_at,
-        shutter_speed=shutter_speed,
-        aperture=aperture,
-        iso=iso,
-    )
+    try:
+        image_bytes = await run_in_threadpool(
+            update_image_exif_metadata,
+            original_bytes,
+            artifact_name=name,
+            description=description_text,
+            latitude=latitude,
+            longitude=longitude,
+            museum_name=museum_name,
+            era=era,
+            place_of_excavation=Place_of_Excavation,
+            display_location_name=display_location_name,
+            camera_model=camera_model,
+            lens_model=lens_model,
+            captured_at=captured_at,
+            shutter_speed=shutter_speed,
+            aperture=aperture,
+            iso=iso,
+            reset_existing_exif=clean_exif,
+            raise_on_error=True,
+        )
+    except ImageExifWriteError as exc:
+        logger.warning(
+            "EXIF prepare failed for %s (clean=%s): %s",
+            file.filename,
+            clean_exif,
+            exc,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "兼容模式仍无法重写这张图片，请重新导出为标准 JPEG 后再试。"
+                if clean_exif
+                else "原始 EXIF 结构无法直接重写，正在等待兼容模式重试。"
+            ),
+        ) from exc
     await run_in_threadpool(verify_written_gps, image_bytes, latitude, longitude)
     content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
     elapsed_ms = (time_module.perf_counter() - started_at) * 1000
@@ -2870,6 +2890,7 @@ async def prepare_artifact_exif_file(
         media_type=content_type,
         headers={
             "X-Source-Hash": source_hash,
+            "X-Exif-Rewrite-Mode": "clean" if clean_exif else "preserve",
             "Server-Timing": f'exif;dur={elapsed_ms:.1f};desc="EXIF prepare"',
         },
     )
