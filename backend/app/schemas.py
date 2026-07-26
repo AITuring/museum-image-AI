@@ -254,6 +254,11 @@ class ArtifactFieldWarningRead(BaseModel):
     source_refs: list[str] = Field(default_factory=list)
 
 
+class ArtifactVerifiedClaimRead(BaseModel):
+    text: str
+    source_refs: list[str] = Field(default_factory=list)
+
+
 class ArtifactDescriptionCandidateRead(BaseModel):
     provider: str
     model: str
@@ -262,6 +267,7 @@ class ArtifactDescriptionCandidateRead(BaseModel):
     reasoning: str | None = None
     research_summary: str | None = None
     field_warnings: list[ArtifactFieldWarningRead] = Field(default_factory=list)
+    verified_claims: list[ArtifactVerifiedClaimRead] = Field(default_factory=list)
     search_hits: list[SearchHitRead] = Field(default_factory=list)
     status: str = "success"
     error: str | None = None

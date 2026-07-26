@@ -55,6 +55,8 @@ class ArtifactDescriptionPromptTests(unittest.TestCase):
         self.assertIn("禁止 Markdown 标题", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
         self.assertIn("350-700字", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
         self.assertIn('"field": "artifact_name | era | museum_name | place_of_excavation"', ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn('"verified_claims"', ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn("description 不得重复这些事实", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
         self.assertIn("不等于反证", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
         self.assertIn("不得捏造来源编号", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
 

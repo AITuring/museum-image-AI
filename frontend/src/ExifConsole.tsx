@@ -40,9 +40,15 @@ type DescriptionCandidate = {
   reasoning: string | null
   research_summary?: string | null
   field_warnings?: ArtifactFieldWarning[]
+  verified_claims?: VerifiedClaim[]
   search_hits?: DescriptionSearchHit[]
   status: string
   error: string | null
+}
+
+type VerifiedClaim = {
+  text: string
+  source_refs: string[]
 }
 
 type ArtifactFieldWarning = {
@@ -198,6 +204,7 @@ type ExifWorkbenchItem = {
   candidates: DescriptionCandidate[]
   unavailableProviders: string[]
   descriptionMeta: string | null
+  verificationDecisions?: Record<string, "accepted" | "rejected">
   submitState: "idle" | "submitting" | "submitted" | "error"
   submitMessage: string | null
   uploadProgress: number
@@ -896,12 +903,44 @@ function uniqueTags(tags: string[]) {
 
 function ensureCandidates(value: DescriptionCandidate[] | undefined | null): DescriptionCandidate[] {
   return Array.isArray(value)
-    ? value.map((candidate) => ({
-        ...candidate,
-        field_warnings: ensureFieldWarnings(candidate.field_warnings),
-        search_hits: Array.isArray(candidate.search_hits) ? candidate.search_hits : [],
-      }))
+    ? value.map((candidate) => {
+        const normalized = normalizeVerifiedClaims(candidate.description, candidate.verified_claims)
+        return {
+          ...candidate,
+          description: normalized.description,
+          field_warnings: ensureFieldWarnings(candidate.field_warnings),
+          verified_claims: normalized.claims,
+          search_hits: Array.isArray(candidate.search_hits) ? candidate.search_hits : [],
+        }
+      })
     : []
+}
+
+function normalizeVerifiedClaims(description: string, value: unknown) {
+  const claims: VerifiedClaim[] = Array.isArray(value)
+    ? value.flatMap((item) => {
+        if (!item || typeof item !== "object") return []
+        const claim = item as Partial<VerifiedClaim>
+        const text = String(claim.text || "").replace(/\[(?:联网核验|来源\d+)\]/g, "").trim()
+        if (!text) return []
+        return [{
+          text: /[。！？]$/.test(text) ? text : `${text}。`,
+          source_refs: ensureStringList(claim.source_refs),
+        }]
+      })
+    : []
+  const legacyPattern = /([^。！？\n]+?)\[联网核验\]([。！？]?)/g
+  const cleanDescription = description.replace(legacyPattern, (_match, rawClaim: string, punctuation: string) => {
+    const text = rawClaim.trim().replace(/^[，,；;\s]+/, "")
+    if (text) {
+      const normalizedText = `${text}${punctuation || "。"}`
+      if (!claims.some((claim) => claim.text === normalizedText)) {
+        claims.push({ text: normalizedText, source_refs: ["联网核验"] })
+      }
+    }
+    return ""
+  }).replace(/\[联网核验\]/g, "").replace(/\n{3,}/g, "\n\n").trim()
+  return { description: cleanDescription, claims }
 }
 
 function ensureFieldWarnings(value: unknown): ArtifactFieldWarning[] {
@@ -2119,12 +2158,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }
       if (!generated) throw new Error("模型未返回可用结果")
 
+      const nextCandidates = ensureCandidates(generated.candidates)
+      const preferredDescription = nextCandidates.find(
+        (candidate) => candidate.provider === generated.provider
+          && candidate.model === generated.model
+          && candidate.status === "success",
+      )?.description ?? normalizeVerifiedClaims(generated.description, []).description
       const nextSharedForm: FormState = {
         ...cloneFormState(resolvedForm),
-        description: generated.description,
+        description: preferredDescription,
         tags: [...resolvedForm.tags],
       }
-      const nextCandidates = ensureCandidates(generated.candidates)
       const nextUnavailableProviders = ensureStringList(generated.unavailable_providers)
       const nextMeta = isSharedTarget
         ? `共享描述采用：${generated.provider} / ${generated.model}${generated.research_id ? ` · 研究 ${generated.research_id.slice(0, 8)}` : ""}`
@@ -2138,6 +2182,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           candidates: nextCandidates,
           unavailableProviders: nextUnavailableProviders,
           descriptionMeta: nextMeta,
+          verificationDecisions: {},
           submitState: item.submitState === "submitted" ? "idle" : item.submitState,
           submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
         })))
@@ -2150,12 +2195,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           ...item,
           form: {
             ...item.form,
-            description: generated.description,
+            description: preferredDescription,
             tags: [...item.form.tags],
           },
           candidates: nextCandidates,
           unavailableProviders: nextUnavailableProviders,
           descriptionMeta: nextMeta,
+          verificationDecisions: {},
         }))
         setSubmitNotice({ type: "success", text: "已根据名称、年代、博物馆与出土地点生成完整描述" })
       }
@@ -2197,6 +2243,33 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           : uniqueTags([...item.form.tags, tag]),
       },
     }))
+  }
+
+  function reviewVerifiedClaim(claim: VerifiedClaim, decision: "accepted" | "rejected") {
+    if (!selectedItem) return
+    updateItem(selectedItem.id, (item) => {
+      const withoutClaim = item.form.description
+        .replace(claim.text, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim()
+      const description = decision === "accepted"
+        ? [withoutClaim, claim.text].filter(Boolean).join(withoutClaim ? "\n\n" : "")
+        : withoutClaim
+      return {
+        ...item,
+        form: { ...item.form, description },
+        verificationDecisions: {
+          ...(item.verificationDecisions ?? {}),
+          [claim.text]: decision,
+        },
+      }
+    })
+    setSubmitNotice({
+      type: "success",
+      text: decision === "accepted"
+        ? "已将这条联网核验内容加入最终正文"
+        : "已从最终正文移除这条联网核验内容",
+    })
   }
 
   async function submitOne(itemId: string): Promise<boolean> {
@@ -2277,18 +2350,21 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         throw new Error("文件夹写入权限已失效，请重新选择照片文件夹")
       }
       let resolvedWriteHandle = target.fileHandle
-      if (!await verifyWritablePermission(resolvedWriteHandle)) {
-        throw new Error(`“${target.originalFileName}”的写入权限已失效，请点击图片列表上方的文件夹按钮重新授权`)
-      }
       if (directoryHandle && target.fileName !== target.originalFileName) {
         try {
-          await directoryHandle.getFileHandle(target.fileName)
-          throw new Error(`文件夹中已存在“${target.fileName}”，请更换目标文件名`)
+          // A previous attempt may have completed the local rename and only
+          // failed during cloud submission. Reuse and overwrite that target
+          // instead of treating it as a duplicate.
+          resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName)
         } catch (error) {
-          if (error instanceof Error && error.message.includes("请更换目标文件名")) throw error
           if ((error as Error).name !== "NotFoundError") throw error
+          if (!await verifyWritablePermission(resolvedWriteHandle)) {
+            throw new Error(`“${target.originalFileName}”的写入权限已失效，请点击图片列表上方的文件夹按钮重新授权`)
+          }
+          resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName, { create: true })
         }
-        resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName, { create: true })
+      } else if (!await verifyWritablePermission(resolvedWriteHandle)) {
+        throw new Error(`“${target.originalFileName}”的写入权限已失效，请点击图片列表上方的文件夹按钮重新授权`)
       }
 
       updateItem(itemId, (item) => ({ ...item, uploadProgress: 30, uploadStage: "正在改名并写回本地原图" }))
@@ -2296,7 +2372,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       await writable.write(editedBlob)
       await writable.close()
       if (directoryHandle && target.fileName !== target.originalFileName) {
-        await directoryHandle.removeEntry(target.originalFileName)
+        try {
+          await directoryHandle.removeEntry(target.originalFileName)
+        } catch (error) {
+          // Retrying after a successful local rename is normal: the old source
+          // name has already disappeared, while the target file is durable.
+          if ((error as Error).name !== "NotFoundError") throw error
+        }
       }
 
       const writtenFile = await resolvedWriteHandle.getFile()
@@ -2955,7 +3037,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         应用到全部图片
                       </Button>
                       <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription("shared")} disabled={generating}>
-                        {generating ? "并行生成中..." : "并行生成共享描述"}
+                        并行生成共享描述
                       </Button>
                     </div>
                     <p className="field-help">当前会同步到 {items.length || 0} 张图片，建议先统一名称和地点，再批量生成共享描述。</p>
@@ -3206,7 +3288,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <div className="ui-card-content form-section-body">
                       <div className="upload-actions exif-model-actions">
                         <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
-                          {generating ? "正在生成…" : "生成描述"}
+                          生成描述
                         </Button>
                         {selectedItem.descriptionMeta ? <p className="muted">{selectedItem.descriptionMeta}</p> : null}
                       </div>
@@ -3280,6 +3362,52 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                                   description={candidate.description || "暂无描述"}
                                   warnings={candidate.field_warnings ?? []}
                                 />
+                                {(candidate.verified_claims?.length ?? 0) > 0 ? (
+                                  <div className="verified-claim-list">
+                                    {candidate.verified_claims
+                                      ?.filter((claim) => selectedItem.verificationDecisions?.[claim.text] !== "rejected")
+                                      .map((claim) => {
+                                        const accepted = selectedItem.verificationDecisions?.[claim.text] === "accepted"
+                                        return (
+                                          <article key={claim.text} className={accepted ? "is-accepted" : ""}>
+                                            <div className="verified-claim-copy">
+                                              <div className="verified-claim-tags">
+                                                <Tag color="blue">联网核验</Tag>
+                                                {claim.source_refs
+                                                  .filter((source) => source !== "联网核验")
+                                                  .map((source) => <Tag key={source}>{source}</Tag>)}
+                                              </div>
+                                              <p>{claim.text}</p>
+                                            </div>
+                                            <div className="verified-claim-actions">
+                                              <Tooltip title="内容正确，加入最终正文">
+                                                <Button
+                                                  htmlType="button"
+                                                  type={accepted ? "primary" : "default"}
+                                                  shape="circle"
+                                                  size="small"
+                                                  aria-label="确认联网核验内容并加入正文"
+                                                  icon={<Check size={14} />}
+                                                  onClick={() => reviewVerifiedClaim(claim, "accepted")}
+                                                />
+                                              </Tooltip>
+                                              <Tooltip title="内容错误，从最终正文删除">
+                                                <Button
+                                                  htmlType="button"
+                                                  danger
+                                                  shape="circle"
+                                                  size="small"
+                                                  aria-label="否认联网核验内容并删除"
+                                                  icon={<X size={14} />}
+                                                  onClick={() => reviewVerifiedClaim(claim, "rejected")}
+                                                />
+                                              </Tooltip>
+                                            </div>
+                                          </article>
+                                        )
+                                      })}
+                                  </div>
+                                ) : null}
                                 {(candidate.search_hits?.length ?? 0) > 0 ? (
                                   <details className="exif-model-details exif-research-sources">
                                     <summary>查看检索来源（{candidate.search_hits?.length}）</summary>

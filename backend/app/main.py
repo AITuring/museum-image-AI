@@ -105,6 +105,7 @@ from app.schemas import (
     ArtifactDescriptionGenerateRead,
     ArtifactDescriptionGenerateRequest,
     ArtifactFieldWarningRead,
+    ArtifactVerifiedClaimRead,
     ArtifactImageAttach,
     ArtifactMatchRead,
     ArtifactImageRead,
@@ -935,6 +936,55 @@ def normalize_artifact_field_warnings(
             )
         )
     return normalized
+
+
+def normalize_verified_claims(
+    raw_claims: object,
+    description: str,
+) -> tuple[str, list[ArtifactVerifiedClaimRead]]:
+    claims: list[ArtifactVerifiedClaimRead] = []
+    if isinstance(raw_claims, list):
+        for item in raw_claims:
+            if isinstance(item, dict):
+                text_value = optional_text(str(item.get("text", "")))
+                refs = item.get("source_refs", [])
+            else:
+                text_value = optional_text(str(item))
+                refs = []
+            if text_value is None:
+                continue
+            clean_text = re.sub(r"\[(?:联网核验|来源\d+)\]", "", text_value).strip()
+            if clean_text and clean_text[-1] not in "。！？":
+                clean_text += "。"
+            source_refs = [
+                str(ref).strip()
+                for ref in refs
+                if isinstance(ref, (str, int)) and str(ref).strip()
+            ] if isinstance(refs, list) else []
+            if clean_text and not any(existing.text == clean_text for existing in claims):
+                claims.append(ArtifactVerifiedClaimRead(text=clean_text, source_refs=source_refs))
+
+    legacy_pattern = re.compile(r"([^。！？\n]+?)\[联网核验\]([。！？]?)")
+
+    def remove_legacy_marker(match: re.Match[str]) -> str:
+        claim = match.group(1).strip(" ，,；;")
+        punctuation = match.group(2) or "。"
+        clean_text = f"{claim}{punctuation}" if claim else ""
+        if clean_text and not any(existing.text == clean_text for existing in claims):
+            claims.append(
+                ArtifactVerifiedClaimRead(
+                    text=clean_text,
+                    source_refs=["联网核验"],
+                )
+            )
+        return ""
+
+    clean_description = legacy_pattern.sub(remove_legacy_marker, description)
+    clean_description = re.sub(r"\[联网核验\]", "", clean_description)
+    clean_description = re.sub(r"[ \t]+", " ", clean_description)
+    clean_description = re.sub(r"\n{3,}", "\n\n", clean_description)
+    clean_description = re.sub(r"^[，,；;。\s]+", "", clean_description).strip()
+    return clean_description, claims
 
 
 def normalize_place_of_excavation(value: str | None) -> str | None:
@@ -1789,6 +1839,11 @@ async def generate_artifact_description_payload(
                 continue
 
             description = optional_text(str(result.get("description", ""))) or fallback_description
+            description, verified_claims = normalize_verified_claims(
+                result.get("verified_claims", []),
+                description,
+            )
+            description = description or fallback_description
             tags = sanitize_generated_tags(
                 [
                     str(tag).strip()
@@ -1818,6 +1873,7 @@ async def generate_artifact_description_payload(
                 or optional_text(str(item.get("reasoning", ""))),
                 research_summary=optional_text(str(item.get("research_summary", ""))),
                 field_warnings=field_warnings,
+                verified_claims=verified_claims,
                 search_hits=search_hits,
                 status="success",
             )

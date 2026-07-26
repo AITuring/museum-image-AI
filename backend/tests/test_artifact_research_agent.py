@@ -142,6 +142,19 @@ class ArtifactResearchAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(warnings[0].suggested_value, "万部华严经塔遗址出土")
         self.assertEqual(warnings[0].source_refs, ["来源1"])
 
+    async def test_legacy_web_verification_markers_become_reviewable_claims(self) -> None:
+        from app import main
+
+        description, claims = main.normalize_verified_claims(
+            [],
+            "灰陶菩萨头像为辽代佛教造像。仅存头部，颈部以下残缺[联网核验]。面容丰润。",
+        )
+
+        self.assertEqual(description, "灰陶菩萨头像为辽代佛教造像。面容丰润。")
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0].text, "仅存头部，颈部以下残缺。")
+        self.assertEqual(claims[0].source_refs, ["联网核验"])
+
 
 if __name__ == "__main__":
     unittest.main()

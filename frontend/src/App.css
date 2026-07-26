@@ -2720,6 +2720,62 @@ label.field,
   white-space: pre-wrap;
 }
 
+.verified-claim-list {
+  display: grid;
+  gap: 7px;
+}
+
+.verified-claim-list > article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in oklch, #2563eb 24%, var(--app-border));
+  border-radius: 10px;
+  background: color-mix(in oklch, #eff6ff 72%, white);
+}
+
+.verified-claim-list > article.is-accepted {
+  border-color: color-mix(in oklch, #16a34a 30%, var(--app-border));
+  background: color-mix(in oklch, #f0fdf4 74%, white);
+}
+
+.verified-claim-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.verified-claim-copy p {
+  margin: 0;
+  color: var(--app-fg);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.verified-claim-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.verified-claim-tags .ant-tag {
+  margin: 0;
+  font-size: 9px;
+  line-height: 18px;
+}
+
+.verified-claim-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.verified-claim-actions .ant-btn {
+  display: inline-grid;
+  place-items: center;
+}
+
 .selectable-model-tags {
   gap: 6px;
 }
