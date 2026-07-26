@@ -1636,7 +1636,7 @@ async def generate_artifact_description_payload(
     )
     try:
         raw_results, unavailable_providers = await generate_artifact_descriptions_parallel(
-            image_urls=image_urls,
+            image_urls=[],
             data_dir=DATA_DIR,
             artifact_name=name,
             era=era,
@@ -2577,15 +2577,8 @@ async def generate_artifact_description_file_api(
     era: str | None = Form(None),
     Place_of_Excavation: str | None = Form(None),
 ) -> ArtifactDescriptionGenerateRead:
-    image_urls: list[str] = []
-    if file is not None:
-        image_bytes = await file.read()
-        if image_bytes:
-            content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
-            image_urls = [f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"]
-
     return await generate_artifact_description_payload(
-        image_urls=image_urls,
+        image_urls=[],
         museum_name=museum_name,
         name=name,
         era=era,
@@ -2601,22 +2594,15 @@ async def generate_artifact_description_stream_file_api(
     era: str | None = Form(None),
     Place_of_Excavation: str | None = Form(None),
 ) -> StreamingResponse:
-    image_urls: list[str] = []
-    if file is not None:
-        image_bytes = await file.read()
-        if image_bytes:
-            content_type = file.content_type or mimetypes.guess_type(file.filename or "")[0] or "image/jpeg"
-            image_urls = [f"data:{content_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"]
-
     async def event_generator():
         phases = [
-            "已读取文件名与已确认字段，正在建立编目线索",
-            "正在观察图像中的材质、器形、纹饰与文字线索",
-            "正在组织可核查的研究描述与特征标签",
+            "已读取名称、年代、博物馆与出土地点",
+            "正在补充历史背景、器物特征与研究信息",
+            "正在检查信息完整性并组织编目描述与标签",
         ]
         yield f"data: {json.dumps({'type': 'progress', 'message': phases[0]}, ensure_ascii=False)}\n\n"
         task = asyncio.create_task(generate_artifact_description_payload(
-            image_urls=image_urls,
+            image_urls=[],
             museum_name=museum_name,
             name=name,
             era=era,

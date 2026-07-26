@@ -1880,27 +1880,25 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     setSubmitNotice(null)
   }
 
-  async function handleGenerateDescription() {
+  async function handleGenerateDescription(target: "selected" | "shared" = "selected") {
     if (!selectedItem) {
       return
     }
+    const isSharedTarget = target === "shared"
     const fallbackName = selectedItem.parsedName?.artifact_name || fileBaseName(selectedItem.fileName)
-    // A filename edit always belongs to the current image. Shared fields are
-    // only applied after the operator explicitly chooses “应用到全部图片”.
-    const targetForm = selectedItem.form
+    const targetForm = isSharedTarget ? sharedForm : selectedItem.form
     const resolvedForm = targetForm.name.trim() ? targetForm : { ...targetForm, name: fallbackName }
     if (!resolvedForm.name.trim()) return
     if (!targetForm.name.trim()) {
-      if (items.length > 1) setSharedForm((current) => ({ ...current, name: resolvedForm.name }))
+      if (isSharedTarget) setSharedForm((current) => ({ ...current, name: resolvedForm.name }))
       else updateSelectedForm({ name: resolvedForm.name })
     }
 
     setGenerating(true)
-    setDescriptionProgress(["准备研究线索…"])
+    setDescriptionProgress(["正在整理名称、年代、博物馆与出土地点…"])
     setSubmitNotice(null)
     try {
       const descriptionForm = new FormData()
-      descriptionForm.append("file", selectedItem.localFile)
       descriptionForm.append("museum_name", resolvedForm.museumName.trim())
       descriptionForm.append("name", resolvedForm.name.trim())
       descriptionForm.append("era", resolvedForm.era.trim())
@@ -1939,11 +1937,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }
       const nextCandidates = ensureCandidates(generated.candidates)
       const nextUnavailableProviders = ensureStringList(generated.unavailable_providers)
-      const nextMeta = items.length > 1
+      const nextMeta = isSharedTarget
         ? `共享描述采用：${generated.provider} / ${generated.model}`
         : `默认采用：${generated.provider} / ${generated.model}`
 
-      if (items.length > 1) {
+      if (isSharedTarget) {
         setSharedForm(nextSharedForm)
         setItems((current) => current.map((item) => ({
           ...item,
@@ -1956,7 +1954,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         })))
         setSubmitNotice({
           type: "success",
-          text: `已按同一文物多图模式并行请求千问和豆包，并把共享描述应用到 ${items.length} 张图片`,
+          text: `已根据共享字段并行请求千问和豆包，并把完整描述应用到 ${items.length} 张图片`,
         })
       } else {
         updateItem(selectedItem.id, (item) => ({
@@ -1970,7 +1968,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           unavailableProviders: nextUnavailableProviders,
           descriptionMeta: nextMeta,
         }))
-        setSubmitNotice({ type: "success", text: "已基于文件名解析字段并行请求千问和豆包，并回填默认描述" })
+        setSubmitNotice({ type: "success", text: "已根据名称、年代、博物馆与出土地点生成完整描述" })
       }
     } catch (error) {
       setSubmitNotice({
@@ -2753,7 +2751,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <Button htmlType="button" type="default" onClick={applySharedToAll} disabled={items.length === 0}>
                         应用到全部图片
                       </Button>
-                      <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
+                      <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription("shared")} disabled={generating}>
                         {generating ? "并行生成中..." : "并行生成共享描述"}
                       </Button>
                     </div>

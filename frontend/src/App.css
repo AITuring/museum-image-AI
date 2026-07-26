@@ -2537,6 +2537,7 @@ label.field,
   max-width: 100%;
 }
 
+.exif-model-card .result-desc,
 .exif-model-card .error-text,
 .exif-model-card .exif-model-reasoning {
   overflow-wrap: anywhere;
