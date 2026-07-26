@@ -52,9 +52,11 @@ class ArtifactDescriptionPromptTests(unittest.TestCase):
         self.assertIn("https://museum.example/artifact", user_content[0]["text"])
         self.assertIn("联网核验确认该文物", user_content[0]["text"])
         self.assertEqual(payload["max_tokens"], 4096)
-        self.assertIn("### 快速概览", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn("禁止 Markdown 标题", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn("350-700字", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn('"field": "artifact_name | era | museum_name | place_of_excavation"', ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
         self.assertIn("不等于反证", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
-        self.assertIn("严禁给出没有来源支持的尺寸", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
+        self.assertIn("不得捏造来源编号", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
 
     def test_description_search_queries_cover_identity_and_detail_checks(self) -> None:
         queries = build_artifact_search_queries(

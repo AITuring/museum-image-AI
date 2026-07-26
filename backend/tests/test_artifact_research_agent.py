@@ -118,6 +118,30 @@ class ArtifactResearchAgentTests(unittest.IsolatedAsyncioTestCase):
             "Agent 核验报告",
         )
 
+    async def test_quick_entry_returns_locatable_field_warning(self) -> None:
+        from app import main
+
+        warnings = main.normalize_artifact_field_warnings(
+            [{
+                "field": "place_of_excavation",
+                "label": "出土地点",
+                "input_value": "白塔遗址出土",
+                "suggested_value": "万部华严经塔遗址出土",
+                "reason": "官方资料使用更规范的遗址名称。",
+                "source_refs": ["来源1"],
+            }],
+            artifact_name="测试文物",
+            era="辽代",
+            museum_name="测试博物馆",
+            place_of_excavation="白塔遗址出土",
+        )
+
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0].field, "place_of_excavation")
+        self.assertEqual(warnings[0].input_value, "白塔遗址出土")
+        self.assertEqual(warnings[0].suggested_value, "万部华严经塔遗址出土")
+        self.assertEqual(warnings[0].source_refs, ["来源1"])
+
 
 if __name__ == "__main__":
     unittest.main()

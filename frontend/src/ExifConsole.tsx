@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
 import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Tag, Tooltip } from "antd"
 import {
@@ -39,10 +39,28 @@ type DescriptionCandidate = {
   tags: string[]
   reasoning: string | null
   research_summary?: string | null
-  field_warnings?: string[]
+  field_warnings?: ArtifactFieldWarning[]
   search_hits?: DescriptionSearchHit[]
   status: string
   error: string | null
+}
+
+type ArtifactFieldWarning = {
+  field: "artifact_name" | "era" | "museum_name" | "place_of_excavation" | string
+  label: string
+  input_value: string
+  suggested_value: string | null
+  reason: string
+  source_refs: string[]
+}
+
+type LiveProviderState = {
+  model: string
+  status: "running" | "complete" | "error"
+  reasoning: string
+  message: string
+  descriptionLength: number
+  tagCount: number
 }
 
 type DescriptionSearchHit = {
@@ -880,14 +898,83 @@ function ensureCandidates(value: DescriptionCandidate[] | undefined | null): Des
   return Array.isArray(value)
     ? value.map((candidate) => ({
         ...candidate,
-        field_warnings: ensureStringList(candidate.field_warnings),
+        field_warnings: ensureFieldWarnings(candidate.field_warnings),
         search_hits: Array.isArray(candidate.search_hits) ? candidate.search_hits : [],
       }))
     : []
 }
 
+function ensureFieldWarnings(value: unknown): ArtifactFieldWarning[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return []
+    const warning = item as Partial<ArtifactFieldWarning>
+    if (!warning.field || !warning.reason) return []
+    return [{
+      field: String(warning.field),
+      label: String(warning.label || warning.field),
+      input_value: String(warning.input_value || ""),
+      suggested_value: warning.suggested_value ? String(warning.suggested_value) : null,
+      reason: String(warning.reason),
+      source_refs: ensureStringList(warning.source_refs),
+    }]
+  })
+}
+
 function ensureStringList(value: string[] | undefined | null): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+}
+
+function warningDetail(warning: ArtifactFieldWarning) {
+  const suggestion = warning.suggested_value
+    ? `建议值：${warning.suggested_value}。`
+    : ""
+  const sources = warning.source_refs.length > 0
+    ? `依据：${warning.source_refs.join("、")}。`
+    : ""
+  return `${warning.reason}${suggestion}${sources}`
+}
+
+function FieldReviewBadge({ warning }: { warning?: ArtifactFieldWarning }) {
+  if (!warning) return null
+  return (
+    <Tooltip title={warningDetail(warning)}>
+      <span className="field-review-badge">需要复核</span>
+    </Tooltip>
+  )
+}
+
+function AnnotatedDescription({
+  description,
+  warnings,
+}: {
+  description: string
+  warnings: ArtifactFieldWarning[]
+}) {
+  const markers = warnings.flatMap((warning) => {
+    const values = [warning.suggested_value, warning.input_value]
+      .map((value) => value?.trim())
+      .filter((value): value is string => Boolean(value))
+    const value = values.find((candidate) => description.includes(candidate))
+    return value ? [{ warning, value, index: description.indexOf(value) }] : []
+  }).sort((left, right) => left.index - right.index)
+
+  if (markers.length === 0) return <p className="result-desc">{description || "暂无描述"}</p>
+
+  const parts: ReactNode[] = []
+  let cursor = 0
+  markers.forEach(({ warning, value, index }, markerIndex) => {
+    if (index < cursor) return
+    parts.push(description.slice(cursor, index + value.length))
+    parts.push(
+      <Tooltip key={`${warning.field}-${markerIndex}`} title={warningDetail(warning)}>
+        <span className="inline-review-badge">需要复核</span>
+      </Tooltip>,
+    )
+    cursor = index + value.length
+  })
+  parts.push(description.slice(cursor))
+  return <p className="result-desc annotated-description">{parts}</p>
 }
 
 function researchSourceUrl(apiBaseUrl: string, url: string) {
@@ -1172,6 +1259,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [bindingDirectory, setBindingDirectory] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [descriptionProgress, setDescriptionProgress] = useState<string[]>([])
+  const [liveResearchSummary, setLiveResearchSummary] = useState("")
+  const [liveProviders, setLiveProviders] = useState<Record<string, LiveProviderState>>({})
   const [batchPrefix, setBatchPrefix] = useState("")
   const [batchSuffix, setBatchSuffix] = useState("")
   const [batchRemove, setBatchRemove] = useState("")
@@ -1196,6 +1285,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
   )
+  const activeFieldWarnings = useMemo(() => {
+    if (!selectedItem) return []
+    const activeCandidate = ensureCandidates(selectedItem.candidates).find(
+      (candidate) => candidate.status === "success"
+        && candidate.description === selectedItem.form.description,
+    )
+    return activeCandidate?.field_warnings ?? []
+  }, [selectedItem])
+
+  function warningForField(field: ArtifactFieldWarning["field"]) {
+    return activeFieldWarnings.find((warning) => warning.field === field)
+  }
 
   const stats = useMemo(() => {
     const describedCount = items.filter((item) =>
@@ -1924,6 +2025,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
     setGenerating(true)
     setDescriptionProgress(["正在整理名称、年代、博物馆与出土地点…"])
+    setLiveResearchSummary("")
+    setLiveProviders({})
     setSubmitNotice(null)
     try {
       const descriptionForm = new FormData()
@@ -1948,10 +2051,68 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         pending = lines.pop() ?? ""
         for (const line of lines) {
           if (!line.startsWith("data:")) continue
-          const event = JSON.parse(line.slice(5).trim()) as { type: string; message?: string; result?: GeneratedDescription }
+          const event = JSON.parse(line.slice(5).trim()) as {
+            type: string
+            message?: string
+            result?: GeneratedDescription
+            provider?: string
+            model?: string
+            reasoning?: string
+            summary?: string
+            description_length?: number
+            tag_count?: number
+          }
           if (event.type === "progress" && event.message) {
             const message = event.message
             setDescriptionProgress((current) => current.includes(message) ? current : [...current, message])
+          }
+          if (event.type === "research_start" && event.message) {
+            setDescriptionProgress((current) => current.includes(event.message!) ? current : [...current, event.message!])
+          }
+          if (event.type === "research_complete") {
+            if (event.message) {
+              setDescriptionProgress((current) => current.includes(event.message!) ? current : [...current, event.message!])
+            }
+            setLiveResearchSummary(event.summary || "")
+          }
+          if (event.type === "provider_start" && event.provider) {
+            setLiveProviders((current) => ({
+              ...current,
+              [event.provider!]: {
+                model: event.model || "",
+                status: "running",
+                reasoning: "",
+                message: "正在阅读检索证据并组织描述…",
+                descriptionLength: 0,
+                tagCount: 0,
+              },
+            }))
+          }
+          if (event.type === "provider_complete" && event.provider) {
+            setLiveProviders((current) => ({
+              ...current,
+              [event.provider!]: {
+                model: event.model || current[event.provider!]?.model || "",
+                status: "complete",
+                reasoning: event.reasoning || "",
+                message: "核验摘要与候选描述已返回",
+                descriptionLength: event.description_length || 0,
+                tagCount: event.tag_count || 0,
+              },
+            }))
+          }
+          if (event.type === "provider_error" && event.provider) {
+            setLiveProviders((current) => ({
+              ...current,
+              [event.provider!]: {
+                model: event.model || current[event.provider!]?.model || "",
+                status: "error",
+                reasoning: "",
+                message: event.message || "模型调用失败",
+                descriptionLength: 0,
+                tagCount: 0,
+              },
+            }))
           }
           if (event.type === "result" && event.result) generated = event.result
         }
@@ -1961,7 +2122,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       const nextSharedForm: FormState = {
         ...cloneFormState(resolvedForm),
         description: generated.description,
-        tags: uniqueTags([...resolvedForm.tags, ...ensureStringList(generated.tags)]),
+        tags: [...resolvedForm.tags],
       }
       const nextCandidates = ensureCandidates(generated.candidates)
       const nextUnavailableProviders = ensureStringList(generated.unavailable_providers)
@@ -1990,7 +2151,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           form: {
             ...item.form,
             description: generated.description,
-            tags: uniqueTags([...item.form.tags, ...ensureStringList(generated.tags)]),
+            tags: [...item.form.tags],
           },
           candidates: nextCandidates,
           unavailableProviders: nextUnavailableProviders,
@@ -2017,11 +2178,25 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       form: {
         ...item.form,
         description: candidate.description,
-        tags: uniqueTags([...item.form.tags, ...candidate.tags]),
+        tags: [...item.form.tags],
       },
       descriptionMeta: `当前采用：${candidate.provider} / ${candidate.model}`,
     }))
-    setSubmitNotice({ type: "success", text: `已采用 ${candidate.provider} 的运行结果` })
+    setSubmitNotice({ type: "success", text: `已采用 ${candidate.provider} 的描述；标签仍可跨模型单独点选` })
+  }
+
+  function toggleCandidateTag(tag: string) {
+    if (!selectedItem) return
+    const selected = selectedItem.form.tags.includes(tag)
+    updateItem(selectedItem.id, (item) => ({
+      ...item,
+      form: {
+        ...item.form,
+        tags: selected
+          ? item.form.tags.filter((entry) => entry !== tag)
+          : uniqueTags([...item.form.tags, tag]),
+      },
+    }))
   }
 
   async function submitOne(itemId: string): Promise<boolean> {
@@ -2828,7 +3003,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <div className="ui-card-content form-section-body">
                       <div className="field-row">
                         <label className="field">
-                          <span>馆藏单位</span>
+                          <span>馆藏单位 <FieldReviewBadge warning={warningForField("museum_name")} /></span>
                           <AutoComplete
                             value={selectedItem.form.museumName}
                             options={museumSuggestions.map((museum) => ({
@@ -2853,7 +3028,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </label>
 
                         <label className="field">
-                          <span>文物名称</span>
+                          <span>文物名称 <FieldReviewBadge warning={warningForField("artifact_name")} /></span>
                           <Input
                             value={selectedItem.form.name}
                             placeholder="例如：夫妇宴享行乐图"
@@ -2864,7 +3039,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
                       <div className="field-row">
                         <label className="field">
-                          <span>时代</span>
+                          <span>时代 <FieldReviewBadge warning={warningForField("era")} /></span>
                           <Input
                             value={selectedItem.form.era}
                             placeholder="例如：隋代"
@@ -2873,7 +3048,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </label>
 
                         <label className="field">
-                          <span>出土地</span>
+                          <span>出土地 <FieldReviewBadge warning={warningForField("place_of_excavation")} /></span>
                           <Input
                             value={selectedItem.form.placeOfExcavation}
                             placeholder="例如：1976年嘉祥英山一号隋墓出土"
@@ -3036,9 +3211,50 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         {selectedItem.descriptionMeta ? <p className="muted">{selectedItem.descriptionMeta}</p> : null}
                       </div>
                       {generating ? (
-                        <div className="research-trace" aria-live="polite">
-                          {descriptionProgress.map((step) => <span key={step}>{step}</span>)}
-                          <span className="research-trace-waiting">模型正在生成研究结果…</span>
+                        <div className="research-live-panel" aria-live="polite">
+                          <div className="research-live-head">
+                            <span className="research-orbit" aria-hidden="true"><Sparkles size={16} /></span>
+                            <div>
+                              <strong>正在核验与生成</strong>
+                              <span>检索 Agent 和两个模型的进度会实时更新</span>
+                            </div>
+                            <Loader2 className="research-live-spinner" size={18} aria-hidden="true" />
+                          </div>
+                          <div className="research-trace">
+                            {descriptionProgress.map((step, index) => (
+                              <span key={step} className={index === descriptionProgress.length - 1 ? "is-active" : "is-done"}>
+                                {index < descriptionProgress.length - 1 ? <Check size={12} /> : <Loader2 size={12} />}
+                                {step}
+                              </span>
+                            ))}
+                          </div>
+                          {liveResearchSummary ? (
+                            <details className="live-reasoning" open>
+                              <summary>Agent 实时核验摘要</summary>
+                              <p>{liveResearchSummary}</p>
+                            </details>
+                          ) : null}
+                          {Object.keys(liveProviders).length > 0 ? (
+                            <div className="live-provider-grid">
+                              {Object.entries(liveProviders).map(([provider, state]) => (
+                                <article key={provider} className={`live-provider is-${state.status}`}>
+                                  <header>
+                                    <strong>{provider}</strong>
+                                    <span>{state.model}</span>
+                                  </header>
+                                  <p>{state.message}</p>
+                                  {state.reasoning ? <pre>{state.reasoning}</pre> : (
+                                    <div className="reasoning-skeleton" aria-hidden="true">
+                                      <i /><i /><i />
+                                    </div>
+                                  )}
+                                  {state.status === "complete" ? (
+                                    <small>{state.descriptionLength} 字描述 · {state.tagCount} 个标签</small>
+                                  ) : null}
+                                </article>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       ) : null}
                       <div className="exif-model-grid">
@@ -3060,13 +3276,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                             ) : null}
                             {candidate.status === "success" ? (
                               <>
-                                {(candidate.field_warnings?.length ?? 0) > 0 ? (
-                                  <div className="exif-field-warnings">
-                                    <strong>字段需要复核</strong>
-                                    {candidate.field_warnings?.map((warning) => <p key={warning}>{warning}</p>)}
-                                  </div>
-                                ) : null}
-                                <p className="result-desc">{candidate.description || "暂无描述"}</p>
+                                <AnnotatedDescription
+                                  description={candidate.description || "暂无描述"}
+                                  warnings={candidate.field_warnings ?? []}
+                                />
                                 {(candidate.search_hits?.length ?? 0) > 0 ? (
                                   <details className="exif-model-details exif-research-sources">
                                     <summary>查看检索来源（{candidate.search_hits?.length}）</summary>
@@ -3083,13 +3296,23 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                                     </div>
                                   </details>
                                 ) : null}
-                                <div className="result-meta">
+                                <div className="result-meta selectable-model-tags">
                                   {candidate.tags.length > 0 ? candidate.tags.map((tag) => (
-                                    <Tag key={tag}>{tag}</Tag>
+                                    <button
+                                      key={tag}
+                                      type="button"
+                                      className={selectedItem.form.tags.includes(tag) ? "is-selected" : ""}
+                                      aria-pressed={selectedItem.form.tags.includes(tag)}
+                                      onClick={() => toggleCandidateTag(tag)}
+                                    >
+                                      {selectedItem.form.tags.includes(tag) ? <Check size={12} /> : <span>＋</span>}
+                                      {tag}
+                                    </button>
                                   )) : <span>暂无标签</span>}
                                 </div>
+                                {candidate.tags.length > 0 ? <p className="model-tag-help">点击任意模型标签，可加入或移出最终标签。</p> : null}
                                 <Button className="exif-candidate-apply" htmlType="button" type="primary" icon={<Check size={14} aria-hidden="true" />} onClick={() => applyCandidate(candidate)}>
-                                  采用此版本
+                                  采用此描述
                                 </Button>
                               </>
                             ) : <p className="error-text">{candidate.error || "模型调用失败"}</p>}

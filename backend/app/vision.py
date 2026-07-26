@@ -8,6 +8,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
+from typing import Awaitable, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
@@ -92,31 +93,32 @@ ARTIFACT_DESCRIPTION_SYSTEM_PROMPT = """
 
 四项输入是待核对的编目线索，不是不可质疑的绝对事实。请优先依据博物馆、政府、考古机构等一手来源进行交叉验证；网页资料不足时，才使用你掌握的稳定公共知识。只输出 JSON：
 {
-  "reasoning": "500-900字中文证据与核验摘要，使用[来源1]或[联网核验]标明依据",
-  "description": "800-1600字中文研究型编目描述",
-  "tags": ["10-20个具体中文标签"],
-  "field_warnings": ["输入字段与可靠来源不一致时，在此写明原值、建议值和来源编号；没有冲突时返回空数组"]
+  "reasoning": "完整但精炼的中文证据与核验摘要，使用[来源1]或[联网核验]标明依据",
+  "description": "350-700字简洁流畅的连续中文编目正文",
+  "tags": ["6-12个具体中文标签"],
+  "field_warnings": [
+    {
+      "field": "artifact_name | era | museum_name | place_of_excavation",
+      "label": "文物名称 | 时代 | 馆藏单位 | 出土地点",
+      "input_value": "用户输入原值",
+      "suggested_value": "可靠来源支持的建议值；没有明确建议时为null",
+      "reason": "需要复核的具体原因",
+      "source_refs": ["来源1"]
+    }
+  ]
 }
 
 要求：
-1. 逐项核对名称、时代、馆藏单位和出土信息。若多个可靠来源与输入一致，可按确认信息使用；若可靠来源明确冲突，不得迁就输入，应在 field_warnings 中说明，但不要直接修改用户表单。
-2. description 应使用清晰的分段或中文小标题，并在可靠信息允许的范围内尽量覆盖：
-   - 第一段必须是“### 快速概览”，用2-4句话交代身份、时代、材质、出土地、馆藏单位和最值得注意的辨伪/混淆结论；
-   - 基本身份、名称含义、文物类别与定名依据；
-   - 时代断代、历史背景、文化区域及相关制度或社会语境；
-   - 材质、尺寸或尺度特征、器形结构、构图、纹饰、铭文、工艺与制作方法；
-   - 原始功能、使用场景、礼仪/宗教/日常用途及象征意义；
-   - 出土时间和地点、遗址或墓葬背景、地层与伴出器物；输入不足时明确待核；
-   - 收藏、入藏、流传、著录、修复、展览与研究情况；无法确认的具体编号或事件不得虚构；
-   - 同类器比较、学术认识、历史价值以及仍存在的争议或待考问题。
-3. 具体尺寸、文物等级、发现年份、墓葬编号、入藏编号、人名和文献名等细节，必须由所给网页来源或联网核验报告明确支持；在 description 和 reasoning 中紧邻事实标注[来源N]或[联网核验]。不得捏造来源编号，也不要引用未提供的网页。当“可直接访问的网页资料”为空时，绝对不得使用[来源N]，只能使用[联网核验]。严禁给出没有来源支持的尺寸、重量、年份或数值范围，即使标成“推测”也不可以。
-4. 对同名或同出土地的不同藏品保持警惕。来源若指向不同藏馆、不同尺寸或不同文物，应明确说明可能存在同类器混淆，不得把两件文物的信息拼接成一件。
-5. “某轮搜索未查到”只代表该轮没有新证据，不等于反证，也不构成字段冲突。若另一份核验报告已经给出正面来源或多来源印证，应保留已核实结论；只有来源明确给出互相排斥的事实时，才能写入 field_warnings。
-6. field_warnings 只报告会影响入库字段的实质冲突，例如两个可靠来源分别给出不同馆藏单位、时代或出土地。不要把“缺少尺寸”“没有公开编号”“某轮未搜到”写成字段错误。
-7. 不能仅为凑字数重复基础字段，不要使用“具有重要价值”“工艺精湛”等没有事实支撑的套话。优先写这件文物独有的可核验细节，通用时代背景应压缩。
-8. reasoning 是展示给人工复核的证据摘要，不是内部思维链。它应逐项说明：哪些内容来自用户输入，哪些由哪条网页资料支持，哪些仅属通行知识或有限推定，哪些仍需查证；同时给出字段一致性结论和来源可靠性判断。
-9. tags 返回 10-20 个中文标签，优先覆盖器类、材质、工艺、形制、纹样、题材、用途、文化区域、出土背景、墓葬/遗址背景和学术特征。不要重复文物名称、时代、馆藏单位，也不要生成“文物”“博物馆”“艺术品”等泛标签。
-10. 信息完整性优先于文字华丽；有可靠资料时充分展开，没有把握时明确写“待核”或省略，不得把推测包装成事实。
+1. 逐项核对名称、时代、馆藏单位和出土信息。若可靠来源明确冲突，不得迁就输入，应输出结构化 field_warnings，但不要直接修改用户表单。
+2. description 只能输出连续自然段，禁止 Markdown 标题、列表、表格、“快速概览”“基本信息”等栏目名。文字要像博物馆藏品说明一样简洁、顺畅，避免论文式堆砌。
+3. description 优先保留这件文物独有且可核实的信息：身份与定名、时代和地域背景、材质形制与工艺、用途或宗教语境、出土遗址、馆藏与研究价值。没有可靠证据的尺寸、编号、发现年份等内容直接省略，不要为了“完整”罗列大量“待核”项目。
+4. 若某个输入字段需要复核，description 仍在对应语义位置自然叙述该信息；前端会根据 field_warnings 在该处显示“需要复核”标记。field_warnings 必须准确填写字段键、原值、建议值、原因和来源，不得只返回一段无法定位的总说明。
+5. 具体尺寸、文物等级、发现年份、墓葬编号、入藏编号、人名和文献名等细节，必须由所给网页来源或联网核验报告明确支持；在 description 和 reasoning 中紧邻事实标注[来源N]或[联网核验]。不得捏造来源编号，也不要引用未提供的网页。当“可直接访问的网页资料”为空时，绝对不得使用[来源N]，只能使用[联网核验]。
+6. 对同名或同出土地的不同藏品保持警惕。来源若指向不同藏馆、不同尺寸或不同文物，应明确说明可能存在同类器混淆，不得把两件文物的信息拼接成一件。
+7. “某轮搜索未查到”只代表该轮没有新证据，不等于反证，也不构成字段冲突。只有来源明确给出互相排斥的事实时，才能写入 field_warnings；不要把“缺少尺寸”“没有公开编号”写成字段错误。
+8. reasoning 是展示给人工复核的证据摘要，不是不可审计的内部思维链。它应逐项说明输入、证据、有限推定、待查点、字段一致性和来源可靠性，信息充分但避免重复正文。
+9. tags 返回 6-12 个中文标签，优先覆盖器类、材质、工艺、形制、纹样、题材、用途、文化区域和遗址背景。不要重复文物名称、时代、馆藏单位，也不要生成“文物”“博物馆”“艺术品”等泛标签。
+10. 不要使用“具有重要价值”“工艺精湛”等无事实支撑的套话，不得把推测包装成事实。
 """.strip()
 
 @dataclass
@@ -680,25 +682,60 @@ async def generate_artifact_descriptions_parallel(
     place_of_excavation: str | None = None,
     search_hits: list[SearchHit] | None = None,
     research_summary: str | None = None,
+    event_callback: Callable[[dict[str, object]], Awaitable[None]] | None = None,
 ) -> tuple[list[dict[str, object]], list[str]]:
     providers, unavailable = get_description_providers()
     if not providers:
         raise RuntimeError("未配置可用的大模型，无法生成描述。")
 
-    tasks = [
-        generate_artifact_description_for_provider(
-            provider,
-            image_urls=image_urls,
-            data_dir=data_dir,
-            artifact_name=artifact_name,
-            era=era,
-            museum_name=museum_name,
-            place_of_excavation=place_of_excavation,
-            search_hits=search_hits or [],
-            research_summary=research_summary,
-        )
-        for provider in providers
-    ]
+    async def run_provider(provider: VisionProvider) -> dict[str, object]:
+        if event_callback is not None:
+            await event_callback({
+                "type": "provider_start",
+                "provider": provider.name,
+                "model": provider.model,
+            })
+        try:
+            result = await generate_artifact_description_for_provider(
+                provider,
+                image_urls=image_urls,
+                data_dir=data_dir,
+                artifact_name=artifact_name,
+                era=era,
+                museum_name=museum_name,
+                place_of_excavation=place_of_excavation,
+                search_hits=search_hits or [],
+                research_summary=research_summary,
+            )
+        except Exception as exc:
+            if event_callback is not None:
+                await event_callback({
+                    "type": "provider_error",
+                    "provider": provider.name,
+                    "model": provider.model,
+                    "message": str(exc),
+                })
+            raise
+        if event_callback is not None:
+            generated = result.get("result")
+            generated_dict = generated if isinstance(generated, dict) else {}
+            await event_callback({
+                "type": "provider_complete",
+                "provider": provider.name,
+                "model": provider.model,
+                "reasoning": str(
+                    generated_dict.get("reasoning")
+                    or result.get("reasoning")
+                    or ""
+                ).strip(),
+                "description_length": len(str(generated_dict.get("description", ""))),
+                "tag_count": len(generated_dict.get("tags", []))
+                if isinstance(generated_dict.get("tags"), list)
+                else 0,
+            })
+        return result
+
+    tasks = [run_provider(provider) for provider in providers]
     settled = await asyncio.gather(*tasks, return_exceptions=True)
 
     results: list[dict[str, object]] = []

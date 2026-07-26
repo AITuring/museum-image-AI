@@ -15,7 +15,7 @@ from io import BytesIO
 from uuid import uuid4
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import BinaryIO
+from typing import Awaitable, BinaryIO, Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -104,6 +104,7 @@ from app.schemas import (
     ArtifactDescriptionCandidateRead,
     ArtifactDescriptionGenerateRead,
     ArtifactDescriptionGenerateRequest,
+    ArtifactFieldWarningRead,
     ArtifactImageAttach,
     ArtifactMatchRead,
     ArtifactImageRead,
@@ -851,6 +852,89 @@ def build_capture_tags(camera_model: str | None, lens_model: str | None) -> list
 def optional_text(value: str | None) -> str | None:
     text_value = (value or "").strip()
     return text_value or None
+
+
+def normalize_artifact_field_warnings(
+    raw_warnings: object,
+    *,
+    artifact_name: str,
+    era: str | None,
+    museum_name: str | None,
+    place_of_excavation: str | None,
+) -> list[ArtifactFieldWarningRead]:
+    if not isinstance(raw_warnings, list):
+        return []
+
+    field_defaults = {
+        "artifact_name": ("文物名称", artifact_name),
+        "era": ("时代", era or ""),
+        "museum_name": ("馆藏单位", museum_name or ""),
+        "place_of_excavation": ("出土地点", place_of_excavation or ""),
+    }
+    aliases = {
+        "name": "artifact_name",
+        "artifact": "artifact_name",
+        "Place_of_Excavation": "place_of_excavation",
+        "excavation": "place_of_excavation",
+        "museum": "museum_name",
+    }
+    normalized: list[ArtifactFieldWarningRead] = []
+    for item in raw_warnings:
+        if isinstance(item, dict):
+            raw_field = str(item.get("field", "")).strip()
+            field = aliases.get(raw_field, raw_field)
+            if field not in field_defaults:
+                continue
+            default_label, default_value = field_defaults[field]
+            reason = optional_text(str(item.get("reason", "")))
+            if reason is None:
+                continue
+            refs = item.get("source_refs", [])
+            normalized.append(
+                ArtifactFieldWarningRead(
+                    field=field,
+                    label=optional_text(str(item.get("label", ""))) or default_label,
+                    input_value=optional_text(str(item.get("input_value", ""))) or default_value,
+                    suggested_value=optional_text(
+                        str(item["suggested_value"])
+                        if item.get("suggested_value") is not None
+                        else None
+                    ),
+                    reason=reason,
+                    source_refs=[
+                        str(ref).strip()
+                        for ref in refs
+                        if isinstance(ref, (str, int)) and str(ref).strip()
+                    ] if isinstance(refs, list) else [],
+                )
+            )
+            continue
+
+        reason = optional_text(str(item))
+        if reason is None:
+            continue
+        lowered = reason.casefold()
+        if "出土" in reason or "遗址" in reason:
+            field = "place_of_excavation"
+        elif "馆藏" in reason or "博物馆" in reason or "博物院" in reason:
+            field = "museum_name"
+        elif "时代" in reason or "年代" in reason:
+            field = "era"
+        elif "名称" in reason or "定名" in reason:
+            field = "artifact_name"
+        else:
+            logger.info("ignored unlocatable field warning: %s", lowered)
+            continue
+        label, input_value = field_defaults[field]
+        normalized.append(
+            ArtifactFieldWarningRead(
+                field=field,
+                label=label,
+                input_value=input_value,
+                reason=reason,
+            )
+        )
+    return normalized
 
 
 def normalize_place_of_excavation(value: str | None) -> str | None:
@@ -1632,6 +1716,7 @@ async def generate_artifact_description_payload(
     name: str,
     era: str | None,
     Place_of_Excavation: str | None,
+    event_callback: Callable[[dict[str, object]], Awaitable[None]] | None = None,
 ) -> ArtifactDescriptionGenerateRead:
     fallback_description = build_fallback_description(
         museum_name=museum_name,
@@ -1640,6 +1725,11 @@ async def generate_artifact_description_payload(
         Place_of_Excavation=Place_of_Excavation,
     )
     try:
+        if event_callback is not None:
+            await event_callback({
+                "type": "research_start",
+                "message": "文物检索 Agent 正在规划查询并核对四项字段",
+            })
         research = await run_artifact_research(
             ArtifactResearchRequest(
                 artifact_name=name,
@@ -1648,6 +1738,14 @@ async def generate_artifact_description_payload(
                 place_of_excavation=Place_of_Excavation,
             )
         )
+        if event_callback is not None:
+            await event_callback({
+                "type": "research_complete",
+                "message": "联网检索与交叉核验完成",
+                "research_id": research.research_id,
+                "summary": research.research_summary,
+                "source_count": len(research.web_sources) + len(research.knowledge_sources),
+            })
         raw_results, unavailable_providers = await generate_artifact_descriptions_parallel(
             image_urls=[],
             data_dir=DATA_DIR,
@@ -1657,6 +1755,7 @@ async def generate_artifact_description_payload(
             place_of_excavation=Place_of_Excavation,
             search_hits=prompt_sources(research),
             research_summary=research.research_summary,
+            event_callback=event_callback,
         )
         candidates: list[ArtifactDescriptionCandidateRead] = []
         preferred_candidate: ArtifactDescriptionCandidateRead | None = None
@@ -1700,11 +1799,13 @@ async def generate_artifact_description_payload(
                 era,
                 museum_name,
             )
-            field_warnings = [
-                str(warning).strip()
-                for warning in result.get("field_warnings", [])
-                if str(warning).strip()
-            ]
+            field_warnings = normalize_artifact_field_warnings(
+                result.get("field_warnings", []),
+                artifact_name=name,
+                era=era,
+                museum_name=museum_name,
+                place_of_excavation=Place_of_Excavation,
+            )
             search_hits = item.get("search_hits", [])
             if not isinstance(search_hits, list):
                 search_hits = []
@@ -2628,28 +2729,26 @@ async def generate_artifact_description_stream_file_api(
     Place_of_Excavation: str | None = Form(None),
 ) -> StreamingResponse:
     async def event_generator():
-        phases = [
-            "已读取名称、年代、博物馆与出土地点",
-            "正在检索博物馆、政府与考古资料",
-            "正在交叉核对馆藏归属、出土记录与文物细节",
-            "正在组织带来源依据的编目描述与标签",
-        ]
-        yield f"data: {json.dumps({'type': 'progress', 'message': phases[0]}, ensure_ascii=False)}\n\n"
+        event_queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+        async def emit(event: dict[str, object]) -> None:
+            await event_queue.put(event)
+
+        yield f"data: {json.dumps({'type': 'progress', 'message': '已读取名称、年代、博物馆与出土地点'}, ensure_ascii=False)}\n\n"
         task = asyncio.create_task(generate_artifact_description_payload(
             image_urls=[],
             museum_name=museum_name,
             name=name,
             era=era,
             Place_of_Excavation=Place_of_Excavation,
+            event_callback=emit,
         ))
-        phase_index = 1
-        while not task.done():
+        while not task.done() or not event_queue.empty():
             try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=1.2)
+                event = await asyncio.wait_for(event_queue.get(), timeout=1.0)
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             except asyncio.TimeoutError:
-                if phase_index < len(phases):
-                    yield f"data: {json.dumps({'type': 'progress', 'message': phases[phase_index]}, ensure_ascii=False)}\n\n"
-                    phase_index += 1
+                yield f"data: {json.dumps({'type': 'heartbeat'}, ensure_ascii=False)}\n\n"
         result = await task
         yield f"data: {json.dumps({'type': 'result', 'result': result.model_dump()}, ensure_ascii=False)}\n\n"
 

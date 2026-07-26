@@ -245,6 +245,15 @@ class SearchHitRead(BaseModel):
     source: str | None = None
 
 
+class ArtifactFieldWarningRead(BaseModel):
+    field: str
+    label: str
+    input_value: str = ""
+    suggested_value: str | None = None
+    reason: str
+    source_refs: list[str] = Field(default_factory=list)
+
+
 class ArtifactDescriptionCandidateRead(BaseModel):
     provider: str
     model: str
@@ -252,7 +261,7 @@ class ArtifactDescriptionCandidateRead(BaseModel):
     tags: list[str] = Field(default_factory=list)
     reasoning: str | None = None
     research_summary: str | None = None
-    field_warnings: list[str] = Field(default_factory=list)
+    field_warnings: list[ArtifactFieldWarningRead] = Field(default_factory=list)
     search_hits: list[SearchHitRead] = Field(default_factory=list)
     status: str = "success"
     error: str | None = None
