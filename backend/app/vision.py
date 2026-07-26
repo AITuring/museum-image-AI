@@ -119,17 +119,6 @@ ARTIFACT_DESCRIPTION_SYSTEM_PROMPT = """
 10. 信息完整性优先于文字华丽；有可靠资料时充分展开，没有把握时明确写“待核”或省略，不得把推测包装成事实。
 """.strip()
 
-ARTIFACT_RESEARCH_SYSTEM_PROMPT = """
-你是一名博物馆藏品资料研究员。请使用联网搜索核验用户提供的文物名称、时代、馆藏单位和出土信息。
-
-研究要求：
-1. 优先查找博物馆官网、政府文博机构和考古机构；若官网没有公开完整藏品目录，可使用博物馆官方账号、正式展览介绍、权威媒体、公开出版物和多个相互印证的可靠二手来源。不要因为官网未收录就断言文物不存在或字段错误。
-2. 特别检查是否存在名称相近、材质不同、同地点出土但分藏不同博物馆的文物，禁止把多件文物的尺寸、发现时间、文物等级和外观细节混在一起。
-3. 尽可能查明：规范名称、材质、尺寸、发现/出土时间、准确地点、馆藏归属、文物等级、外观细节、工艺、保存状态和历史背景。
-4. 明确列出支持每项关键事实的来源名称；能获得链接时一并给出链接。单一非官方来源只能作为线索，两个以上独立来源一致时可以标记为“多来源印证”。多个来源冲突时分别陈述，不要强行下结论。
-5. 这是提供给后续编目模型的证据报告，不要写空泛鉴赏文字。未查到的项目直接标记“未查到可靠来源”。
-""".strip()
-
 @dataclass
 class VisionProvider:
     name: str
@@ -410,29 +399,6 @@ def clean_search_term(value: str) -> str:
     return " ".join(cleaned.split())
 
 
-def build_artifact_description_search_queries(
-    *,
-    artifact_name: str,
-    era: str | None = None,
-    museum_name: str | None = None,
-    place_of_excavation: str | None = None,
-) -> list[str]:
-    name = clean_search_term(artifact_name)
-    era_value = clean_search_term(era or "")
-    museum = clean_search_term(museum_name or "")
-    excavation = clean_search_term(place_of_excavation or "")
-
-    raw_queries = [
-        " ".join(part for part in [name, excavation, museum, era_value] if part),
-        " ".join(part for part in [name, excavation, "出土 馆藏"] if part),
-        " ".join(part for part in [name, museum, "藏品"] if part),
-        " ".join(part for part in [name, "尺寸 发现 文物等级"] if part),
-        " ".join(part for part in [name, excavation, "考古"] if part),
-        " ".join(part for part in [name, "博物院 博物馆"] if part),
-    ]
-    return list(dict.fromkeys(query for query in raw_queries if query))[:6]
-
-
 def expand_search_queries(search_queries: list[str]) -> list[str]:
     expanded: list[str] = []
     for raw_query in search_queries:
@@ -704,89 +670,6 @@ async def generate_artifact_description_for_provider(
     }
 
 
-_ARTIFACT_RESEARCH_CACHE: "OrderedDict[str, str]" = OrderedDict()
-_ARTIFACT_RESEARCH_CACHE_MAX = 256
-
-
-async def request_qwen_artifact_research(
-    providers: list[VisionProvider],
-    *,
-    artifact_name: str,
-    era: str | None = None,
-    museum_name: str | None = None,
-    place_of_excavation: str | None = None,
-) -> str:
-    qwen_provider = next((provider for provider in providers if provider.name == "qwen"), None)
-    if qwen_provider is None:
-        return ""
-
-    facts = {
-        "artifact_name": artifact_name.strip(),
-        "era": (era or "").strip(),
-        "museum_name": (museum_name or "").strip(),
-        "Place_of_Excavation": (place_of_excavation or "").strip(),
-    }
-    cache_key = hashlib.sha256(
-        json.dumps(
-            {"model": qwen_provider.model, **facts},
-            ensure_ascii=False,
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
-    cached = _ARTIFACT_RESEARCH_CACHE.get(cache_key)
-    if cached is not None:
-        _ARTIFACT_RESEARCH_CACHE.move_to_end(cache_key)
-        return cached
-
-    facts_text = json.dumps(facts, ensure_ascii=False, indent=2)
-    research_questions = [
-        (
-            "请先用完整名称、出土地点和馆藏单位联网搜索，再拆分关键词继续搜索。"
-            "重点回答：这组字段对应的是哪一件文物？是否存在同地点出土但材质不同、分藏不同博物馆的同名或近名文物？"
-            "逐件列出材质、馆藏单位和可区分特征，判断用户字段是否自洽。不要把不同文物合并。\n\n"
-            f"待核线索：\n{facts_text}"
-        ),
-        (
-            "请联网搜索以下文物的详细资料。重点寻找尺寸、重量、发现或出土年份、出土经过、文物等级、"
-            "面部与冠饰细节、制作工艺、残损状况、展览或著录信息。每项具体细节都写明来源名称；"
-            "若搜索到近似文物，必须先核对材质与馆藏单位，不能把近似文物的细节移植过来。\n\n"
-            f"待核线索：\n{facts_text}"
-        ),
-    ]
-
-    async def run_research(question: str) -> str:
-        payload: dict[str, object] = {
-            "model": qwen_provider.model,
-            "messages": [
-                {"role": "system", "content": ARTIFACT_RESEARCH_SYSTEM_PROMPT},
-                {"role": "user", "content": question},
-            ],
-            "enable_search": True,
-            "search_options": {"search_strategy": "max"},
-            "temperature": 0.1,
-            "max_tokens": 2200,
-        }
-        data = await request_chat_completion(qwen_provider, payload)
-        return extract_message_text(data).strip()
-
-    outcomes = await asyncio.gather(
-        *(run_research(question) for question in research_questions),
-        return_exceptions=True,
-    )
-    sections: list[str] = []
-    section_labels = ["身份与馆藏核验", "细节与出土信息核验"]
-    for label, outcome in zip(section_labels, outcomes, strict=True):
-        if isinstance(outcome, str) and outcome:
-            sections.append(f"## {label}\n{outcome}")
-    research_summary = "\n\n".join(sections)
-    if research_summary:
-        _ARTIFACT_RESEARCH_CACHE[cache_key] = research_summary
-        _ARTIFACT_RESEARCH_CACHE.move_to_end(cache_key)
-        while len(_ARTIFACT_RESEARCH_CACHE) > _ARTIFACT_RESEARCH_CACHE_MAX:
-            _ARTIFACT_RESEARCH_CACHE.popitem(last=False)
-    return research_summary
-
-
 async def generate_artifact_descriptions_parallel(
     *,
     image_urls: list[str],
@@ -795,33 +678,12 @@ async def generate_artifact_descriptions_parallel(
     era: str | None = None,
     museum_name: str | None = None,
     place_of_excavation: str | None = None,
+    search_hits: list[SearchHit] | None = None,
+    research_summary: str | None = None,
 ) -> tuple[list[dict[str, object]], list[str]]:
     providers, unavailable = get_description_providers()
     if not providers:
         raise RuntimeError("未配置可用的大模型，无法生成描述。")
-
-    search_queries = build_artifact_description_search_queries(
-        artifact_name=artifact_name,
-        era=era,
-        museum_name=museum_name,
-        place_of_excavation=place_of_excavation,
-    )
-    search_result, research_result = await asyncio.gather(
-        search_candidate_artifacts(
-            search_queries,
-            expand_queries=False,
-        ),
-        request_qwen_artifact_research(
-            providers,
-            artifact_name=artifact_name,
-            era=era,
-            museum_name=museum_name,
-            place_of_excavation=place_of_excavation,
-        ),
-        return_exceptions=True,
-    )
-    search_hits = search_result if isinstance(search_result, list) else []
-    research_summary = research_result if isinstance(research_result, str) else ""
 
     tasks = [
         generate_artifact_description_for_provider(
@@ -832,7 +694,7 @@ async def generate_artifact_descriptions_parallel(
             era=era,
             museum_name=museum_name,
             place_of_excavation=place_of_excavation,
-            search_hits=search_hits,
+            search_hits=search_hits or [],
             research_summary=research_summary,
         )
         for provider in providers

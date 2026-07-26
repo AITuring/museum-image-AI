@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # Text model used to structure the web answer prose into DB JSON.
     web_structuring_model: str = "qwen-plus"
 
+    # Artifact research agent and local professional knowledge base.
+    artifact_research_agent_version: str = "artifact-research-v1"
+
     # 通义 (qianwen.com)
     qwen_web_enabled: bool = False
     qwen_web_url: str = "https://www.qianwen.com/"

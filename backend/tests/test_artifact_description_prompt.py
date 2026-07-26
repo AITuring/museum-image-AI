@@ -2,13 +2,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from app.artifact_research.agent import (
+    build_artifact_search_queries,
+    request_qwen_web_research,
+)
+from app.artifact_research.schemas import ArtifactResearchQuery
 from app.vision import (
     ARTIFACT_DESCRIPTION_SYSTEM_PROMPT,
     SearchHit,
     VisionProvider,
     build_artifact_description_payload,
-    build_artifact_description_search_queries,
-    request_qwen_artifact_research,
+    generate_artifact_descriptions_parallel,
 )
 
 
@@ -53,11 +57,13 @@ class ArtifactDescriptionPromptTests(unittest.TestCase):
         self.assertIn("严禁给出没有来源支持的尺寸", ARTIFACT_DESCRIPTION_SYSTEM_PROMPT)
 
     def test_description_search_queries_cover_identity_and_detail_checks(self) -> None:
-        queries = build_artifact_description_search_queries(
-            artifact_name="灰陶菩萨头像",
-            era="辽代",
-            museum_name="内蒙古博物院",
-            place_of_excavation="呼和浩特市白塔遗址出土",
+        queries = build_artifact_search_queries(
+            ArtifactResearchQuery(
+                artifact_name="灰陶菩萨头像",
+                era="辽代",
+                museum_name="内蒙古博物院",
+                place_of_excavation="呼和浩特市白塔遗址出土",
+            )
         )
 
         self.assertTrue(any("灰陶菩萨头像" in query and "白塔遗址" in query for query in queries))
@@ -75,16 +81,23 @@ class ArtifactResearchTests(unittest.IsolatedAsyncioTestCase):
         )
         response = {"choices": [{"message": {"content": "联网核验结果"}}]}
 
-        with patch(
-            "app.vision.request_chat_completion",
-            new=AsyncMock(return_value=response),
-        ) as request:
-            result = await request_qwen_artifact_research(
-                [provider],
-                artifact_name="灰陶菩萨头像",
-                era="辽代",
-                museum_name="内蒙古博物院",
-                place_of_excavation="呼和浩特市白塔遗址出土",
+        with (
+            patch(
+                "app.artifact_research.agent.get_description_providers",
+                return_value=([provider], []),
+            ),
+            patch(
+                "app.artifact_research.agent.request_chat_completion",
+                new=AsyncMock(return_value=response),
+            ) as request,
+        ):
+            result = await request_qwen_web_research(
+                ArtifactResearchQuery(
+                    artifact_name="灰陶菩萨头像",
+                    era="辽代",
+                    museum_name="内蒙古博物院",
+                    place_of_excavation="呼和浩特市白塔遗址出土",
+                )
             )
 
         self.assertIn("## 身份与馆藏核验", result)
@@ -94,6 +107,51 @@ class ArtifactResearchTests(unittest.IsolatedAsyncioTestCase):
             payload = call.args[1]
             self.assertIs(payload["enable_search"], True)
             self.assertEqual(payload["search_options"]["search_strategy"], "max")
+
+    async def test_description_generation_consumes_agent_evidence(self) -> None:
+        provider = VisionProvider(
+            name="qwen",
+            base_url="https://example.invalid",
+            api_key="test-key",
+            model="qwen3.7-plus",
+        )
+        source = SearchHit(
+            title="Agent 来源",
+            url="https://museum.example/item",
+            snippet="可核验证据",
+            source="museum.example",
+        )
+        generated = {
+            "provider": provider,
+            "result": {"description": "描述", "tags": []},
+            "reasoning": "依据",
+        }
+
+        with (
+            patch(
+                "app.vision.get_description_providers",
+                return_value=([provider], []),
+            ),
+            patch(
+                "app.vision.generate_artifact_description_for_provider",
+                new=AsyncMock(return_value=generated),
+            ) as generate,
+        ):
+            results, unavailable = await generate_artifact_descriptions_parallel(
+                image_urls=[],
+                data_dir=Path("."),
+                artifact_name="测试文物",
+                search_hits=[source],
+                research_summary="Agent 核验报告",
+            )
+
+        self.assertEqual(results, [generated])
+        self.assertEqual(unavailable, [])
+        self.assertEqual(generate.await_args.kwargs["search_hits"], [source])
+        self.assertEqual(
+            generate.await_args.kwargs["research_summary"],
+            "Agent 核验报告",
+        )
 
 
 if __name__ == "__main__":

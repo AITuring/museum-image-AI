@@ -58,6 +58,7 @@ type GeneratedDescription = {
   description: string
   tags: string[]
   reasoning: string | null
+  research_id?: string | null
   candidates: DescriptionCandidate[]
   unavailable_providers: string[]
 }
@@ -887,6 +888,11 @@ function ensureCandidates(value: DescriptionCandidate[] | undefined | null): Des
 
 function ensureStringList(value: string[] | undefined | null): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
+}
+
+function researchSourceUrl(apiBaseUrl: string, url: string) {
+  if (url.startsWith("http://") || url.startsWith("https://")) return url
+  return `${apiBaseUrl}${url.startsWith("/") ? url : `/${url}`}`
 }
 
 function toNullableNumber(value: string) {
@@ -1960,8 +1966,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       const nextCandidates = ensureCandidates(generated.candidates)
       const nextUnavailableProviders = ensureStringList(generated.unavailable_providers)
       const nextMeta = isSharedTarget
-        ? `共享描述采用：${generated.provider} / ${generated.model}`
-        : `默认采用：${generated.provider} / ${generated.model}`
+        ? `共享描述采用：${generated.provider} / ${generated.model}${generated.research_id ? ` · 研究 ${generated.research_id.slice(0, 8)}` : ""}`
+        : `默认采用：${generated.provider} / ${generated.model}${generated.research_id ? ` · 研究 ${generated.research_id.slice(0, 8)}` : ""}`
 
       if (isSharedTarget) {
         setSharedForm(nextSharedForm)
@@ -3067,7 +3073,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                                     <div className="exif-source-list">
                                       {candidate.search_hits?.map((hit, index) => (
                                         <article key={hit.url}>
-                                          <a href={hit.url} target="_blank" rel="noreferrer">
+                                          <a href={researchSourceUrl(apiBaseUrl, hit.url)} target="_blank" rel="noreferrer">
                                             [{index + 1}] {hit.title}
                                           </a>
                                           {hit.source ? <span>{hit.source}</span> : null}

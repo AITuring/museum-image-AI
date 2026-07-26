@@ -264,6 +264,7 @@ class ArtifactDescriptionGenerateRead(BaseModel):
     description: str
     tags: list[str] = Field(default_factory=list)
     reasoning: str | None = None
+    research_id: str | None = None
     candidates: list[ArtifactDescriptionCandidateRead] = Field(default_factory=list)
     unavailable_providers: list[str] = Field(default_factory=list)
 

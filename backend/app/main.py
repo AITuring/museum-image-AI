@@ -29,6 +29,9 @@ from sqlalchemy import and_, func, inspect, or_, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
+from app.artifact_research.agent import prompt_sources, run_artifact_research
+from app.artifact_research.router import router as artifact_research_router
+from app.artifact_research.schemas import ArtifactResearchRequest
 from app.db import Base, SessionLocal, engine, get_db
 from app.exhibition_db import (
     ExhibitionSessionLocal,
@@ -628,6 +631,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.mount("/files", StaticFiles(directory=str(DATA_DIR)), name="files")
+app.include_router(artifact_research_router, prefix=settings.api_prefix)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -1636,6 +1640,14 @@ async def generate_artifact_description_payload(
         Place_of_Excavation=Place_of_Excavation,
     )
     try:
+        research = await run_artifact_research(
+            ArtifactResearchRequest(
+                artifact_name=name,
+                era=era,
+                museum_name=museum_name,
+                place_of_excavation=Place_of_Excavation,
+            )
+        )
         raw_results, unavailable_providers = await generate_artifact_descriptions_parallel(
             image_urls=[],
             data_dir=DATA_DIR,
@@ -1643,6 +1655,8 @@ async def generate_artifact_description_payload(
             era=era,
             museum_name=museum_name,
             place_of_excavation=Place_of_Excavation,
+            search_hits=prompt_sources(research),
+            research_summary=research.research_summary,
         )
         candidates: list[ArtifactDescriptionCandidateRead] = []
         preferred_candidate: ArtifactDescriptionCandidateRead | None = None
@@ -1718,6 +1732,7 @@ async def generate_artifact_description_payload(
                 description=preferred_candidate.description,
                 tags=preferred_candidate.tags,
                 reasoning=preferred_candidate.reasoning,
+                research_id=research.research_id,
                 candidates=candidates,
                 unavailable_providers=unavailable_providers,
             )
@@ -1727,6 +1742,7 @@ async def generate_artifact_description_payload(
             model="fallback",
             description=fallback_description,
             tags=[],
+            research_id=research.research_id,
             candidates=candidates,
             unavailable_providers=unavailable_providers,
         )
