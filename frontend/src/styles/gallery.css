@@ -2243,6 +2243,13 @@
   white-space: pre-wrap;
 }
 
+.gallery-description-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 @media (max-width: 680px) {
   .gallery-info-grid,
   .gallery-camera-grid {

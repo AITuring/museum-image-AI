@@ -21,6 +21,7 @@ import {
 } from "lucide-react"
 
 const Textarea = Input.TextArea
+const SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY = true
 
 type ParsedArtifactName = {
   original_name: string
@@ -1716,14 +1717,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   }
 
   const stats = useMemo(() => {
-    const describedCount = items.filter((item) =>
-      ensureCandidates(item.candidates).some((candidate) => candidate.status === "success"),
-    ).length
     const submittedCount = items.filter((item) => item.submitState === "submitted").length
     const gpsCount = items.filter((item) => item.form.latitude.trim() && item.form.longitude.trim()).length
     return {
       itemCount: items.length,
-      describedCount,
       submittedCount,
       gpsCount,
     }
@@ -3229,8 +3226,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <strong>{stats.submittedCount}</strong>
               </div>
               <div className="exif-sidebar-stat">
-                <span>已补描述</span>
-                <strong>{stats.describedCount}</strong>
+                <span>待入库</span>
+                <strong>{stats.itemCount - stats.submittedCount}</strong>
               </div>
               <div className="exif-sidebar-stat">
                 <span>已带坐标</span>
@@ -3443,14 +3440,14 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         {item.existingArtifactMatch ? " · 已匹配已有文物" : ""}
                       </span>
                       <span className="queue-state-tags">
-                        {descriptionGeneratingItemIds.includes(item.id) ? (
+                        {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && descriptionGeneratingItemIds.includes(item.id) ? (
                           <Tag
                             color="processing"
                             icon={<Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />}
                           >
                             描述中
                           </Tag>
-                        ) : ensureCandidates(item.candidates).some((candidate) => candidate.status === "success") ? (
+                        ) : SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && ensureCandidates(item.candidates).some((candidate) => candidate.status === "success") ? (
                           <Tag
                             color="success"
                             icon={<Check size={11} strokeWidth={2.2} aria-hidden="true" />}
@@ -3558,7 +3555,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <span>可选</span>
                   </summary>
                   <div className="form-section-body">
-                    <p className="muted">这些图片指向同一件文物时，在这里统一填写基础字段和描述，再一键应用到全部图片。</p>
+                    <p className="muted">这些图片指向同一件文物时，在这里统一填写基础信息和展出地点，再一键应用到全部图片。</p>
                     <div className="field-row">
                       <label className="field">
                         <span>馆藏单位</span>
@@ -3632,7 +3629,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </div>
                       </label>
                     </div>
-                    <label className="field">
+                    {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <label className="field">
                       <span>共享描述</span>
                       <Textarea
                         rows={4}
@@ -3640,7 +3637,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         placeholder="这里的描述会作为同一文物的默认描述应用到全部图片"
                         onChange={(event) => updateSharedForm({ description: event.target.value })}
                       />
-                    </label>
+                    </label> : null}
                     <div className="upload-actions exif-shared-actions">
                       <Button htmlType="button" type="default" onClick={fillSharedFromSelected}>
                         从当前图片带入
@@ -3648,11 +3645,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <Button htmlType="button" type="default" onClick={applySharedToAll} disabled={items.length === 0}>
                         应用到全部图片
                       </Button>
-                      <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription("shared")} disabled={generating}>
+                      {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription("shared")} disabled={generating}>
                         并行生成共享描述
-                      </Button>
+                      </Button> : null}
                     </div>
-                    <p className="field-help">当前会同步到 {items.length || 0} 张图片，建议先统一名称和地点，再批量生成共享描述。</p>
+                    <p className="field-help">当前会同步到 {items.length || 0} 张图片；AI 描述是可选项，也可直接入库后再到图库补充。</p>
                   </div>
                 </details>
 
@@ -3904,10 +3901,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                   </Card>
 
-                  <Card
+                  {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <Card
                     size="small"
                     className="form-section exif-form-card"
-                    title={<FormSectionHeader icon={Sparkles} title="AI 补充描述" description="生成多份候选描述后，选一版写回当前图片。" />}
+                    title={<FormSectionHeader icon={Sparkles} title="AI 补充描述（可选）" description="可以跳过直接入库，也可以生成候选描述后选一版写回当前图片。" />}
                   >
                     <div className="form-section-body">
                       <div className="upload-actions exif-model-actions">
@@ -4073,9 +4070,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         <p className="muted">未配置模型：{selectedItem.unavailableProviders.join(" / ")}</p>
                       ) : null}
                     </div>
-                  </Card>
+                  </Card> : null}
 
-                  <Card
+                  {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <Card
                     size="small"
                     className="form-section exif-form-card"
                     title={<FormSectionHeader icon={FileCheck2} title="最终写入内容" description="这里的描述与标签会写入 EXIF 和云端数据库。" />}
@@ -4123,7 +4120,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </div>
                       </label>
                     </div>
-                  </Card>
+                  </Card> : null}
                 </div>
               </div>
 
@@ -4133,7 +4130,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <p className={selectedItem.submitState === "error" ? "error-text" : "success-text"}>{selectedItem.submitMessage}</p>
                   ) : submitNotice ? (
                     <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>{submitNotice.text}</p>
-                  ) : <p className="muted">确认当前图片信息无误后，再执行保存入库。</p>}
+                  ) : <p className="muted">基础信息、拍摄信息和展出地点确认后即可入库；AI 描述可现在生成，也可稍后在图库补充。</p>}
                 </div>
                 <Button
                   htmlType="button"

@@ -16,6 +16,7 @@ import {
   MapPin,
   Search,
   SlidersHorizontal,
+  Sparkles,
   Tag as TagIcon,
   Timer,
   X,
@@ -93,6 +94,18 @@ type GalleryEditFormState = {
   aperture: string
   iso: string
   editMethod: string
+}
+
+type GeneratedDescription = {
+  provider: string
+  model: string
+  description: string
+  candidates?: Array<{
+    provider: string
+    model: string
+    description: string
+    status: string
+  }>
 }
 
 type MuseumOption = {
@@ -601,6 +614,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [editForm, setEditForm] = useState<GalleryEditFormState | null>(null)
   const [tagInput, setTagInput] = useState("")
   const [saving, setSaving] = useState(false)
+  const [generatingDescription, setGeneratingDescription] = useState(false)
+  const [descriptionProgress, setDescriptionProgress] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
   const thumbnailStripRef = useRef<HTMLDivElement | null>(null)
@@ -680,6 +695,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setTagInput("")
     setSaveError(null)
     setSaveNotice(null)
+    setGeneratingDescription(false)
+    setDescriptionProgress(null)
     setImagePreviewOpen(false)
     if (!active) return
     setActiveImageIndex(0)
@@ -768,6 +785,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setTagInput("")
     setSaveError(null)
     setSaveNotice(null)
+    setDescriptionProgress(null)
     setEditing(true)
   }
 
@@ -776,6 +794,95 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setEditForm(null)
     setTagInput("")
     setSaveError(null)
+    setDescriptionProgress(null)
+  }
+
+  async function handleGenerateDescription(
+    event?: { preventDefault?: () => void; stopPropagation?: () => void },
+  ) {
+    event?.preventDefault?.()
+    event?.stopPropagation?.()
+    if (!active || generatingDescription) {
+      return
+    }
+
+    const image = active.images[activeImageIndex] ?? active.images[0] ?? null
+    const targetForm = editForm ?? buildEditForm(active, image)
+    if (!targetForm.name.trim()) {
+      setSaveError("请先填写文物名称")
+      return
+    }
+    if (!editForm) {
+      setEditForm(targetForm)
+      setTagInput("")
+      setEditing(true)
+    }
+
+    setGeneratingDescription(true)
+    setDescriptionProgress("正在整理资料并生成描述，这不会影响已经入库的图片…")
+    setSaveError(null)
+    setSaveNotice(null)
+
+    try {
+      const form = new FormData()
+      form.append("museum_name", targetForm.museumName.trim())
+      form.append("name", targetForm.name.trim())
+      form.append("era", targetForm.era.trim())
+      form.append("Place_of_Excavation", targetForm.Place_of_Excavation.trim())
+      const response = await fetch(`${apiBaseUrl}/api/artifacts/generate-description-stream-file`, {
+        method: "POST",
+        body: form,
+      })
+      if (!response.ok || !response.body) {
+        throw new Error(`生成描述失败（HTTP ${response.status}）`)
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let pending = ""
+      let generated: GeneratedDescription | null = null
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        pending += decoder.decode(value, { stream: true })
+        const lines = pending.split("\n")
+        pending = lines.pop() ?? ""
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue
+          const payload = JSON.parse(line.slice(5).trim()) as {
+            type: string
+            message?: string
+            result?: GeneratedDescription
+          }
+          if (payload.message) setDescriptionProgress(payload.message)
+          if (payload.type === "result" && payload.result) generated = payload.result
+        }
+      }
+      if (!generated) {
+        throw new Error("模型未返回可用描述")
+      }
+
+      const preferred =
+        generated.candidates?.find(
+          (candidate) =>
+            candidate.status === "success" &&
+            candidate.provider === generated.provider &&
+            candidate.model === generated.model,
+        )?.description ||
+        generated.candidates?.find((candidate) => candidate.status === "success")?.description ||
+        generated.description
+      if (!preferred.trim()) {
+        throw new Error("模型返回的描述为空")
+      }
+
+      setEditForm((current) => current ? { ...current, description: preferred } : current)
+      setDescriptionProgress(`已由 ${generated.provider} / ${generated.model} 生成，请检查后保存`)
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "生成描述失败")
+      setDescriptionProgress(null)
+    } finally {
+      setGeneratingDescription(false)
+    }
   }
 
   function addTags(rawValue: string) {
@@ -1050,7 +1157,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   htmlType="button"
                                   type="default"
                                   onClick={handleCancelEdit}
-                                  disabled={saving}
+                                  disabled={saving || generatingDescription}
                                 >
                                   取消
                                 </Button>
@@ -1058,9 +1165,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   htmlType="submit"
                                   type="primary"
                                   form={editFormId}
-                                  disabled={saving}
+                                  disabled={saving || generatingDescription}
                                 >
-                                  {saving ? "保存中..." : "保存"}
+                                  {saving ? "保存中..." : generatingDescription ? "描述生成中..." : "保存"}
                                 </Button>
                                 <Button
                                   htmlType="button"
@@ -1075,6 +1182,15 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               </>
                             ) : (
                               <>
+                                <Button
+                                  htmlType="button"
+                                  type="default"
+                                  onClick={(event) => void handleGenerateDescription(event)}
+                                  disabled={generatingDescription}
+                                >
+                                  <Sparkles size={14} aria-hidden="true" />
+                                  {generatingDescription ? "生成中..." : "AI 补充描述"}
+                                </Button>
                                 <Button htmlType="button" type="primary" onClick={handleStartEdit}>
                                   编辑资料
                                 </Button>
@@ -1219,7 +1335,19 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       </label>
                                     </div>
                                     <label className="field">
-                                      <span>描述</span>
+                                      <span className="gallery-description-editor-head">
+                                        <span>描述</span>
+                                        <Button
+                                          htmlType="button"
+                                          type="default"
+                                          size="small"
+                                          onClick={(event) => void handleGenerateDescription(event)}
+                                          disabled={generatingDescription || saving}
+                                        >
+                                          <Sparkles size={13} aria-hidden="true" />
+                                          {generatingDescription ? "AI 生成中..." : "AI 补充描述"}
+                                        </Button>
+                                      </span>
                                       <Textarea
                                         rows={4}
                                         value={editForm.description}
@@ -1230,6 +1358,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                         }
                                         placeholder="文物简介，可补充或修正"
                                       />
+                                      {descriptionProgress ? (
+                                        <span className="field-help" aria-live="polite">{descriptionProgress}</span>
+                                      ) : null}
                                     </label>
                                   </div>
                                 </section>
@@ -1534,8 +1665,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 </div>
                               </section>
                             ) : null}
-                            {active.description ? (
-                              <section className="gallery-info-section gallery-description-card">
+                            <section className="gallery-info-section gallery-description-card">
                                 <header className="gallery-info-section-head">
                                   <div className="gallery-card-title">
                                     <FileText size={15} aria-hidden="true" />
@@ -1543,10 +1673,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   </div>
                                 </header>
                                 <div>
-                                  <p className="gallery-description-copy">{active.description}</p>
+                                  <p className="gallery-description-copy">{active.description || "暂未补充，可在闲暇时使用 AI 生成后检查保存。"}</p>
                                 </div>
-                              </section>
-                            ) : null}
+                            </section>
                           </div>
                         )}
                       </div>
