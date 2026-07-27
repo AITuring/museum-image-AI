@@ -9,6 +9,13 @@ from typing import BinaryIO
 from PIL import Image, ImageOps
 from PIL.TiffImagePlugin import IFDRational
 
+# Pillow raises only above twice this value and warns above the value itself.
+# Museum source photos can legitimately exceed Pillow's 89.5 MP default
+# (issue 214 is 185 MP), so allow them without disabling the bomb guard.
+# Images above 200 MP remain rejected before pixel decompression.
+MUSEUM_IMAGE_WARNING_PIXELS = 100_000_000
+Image.MAX_IMAGE_PIXELS = max(Image.MAX_IMAGE_PIXELS or 0, MUSEUM_IMAGE_WARNING_PIXELS)
+
 TAG_IMAGE_DESCRIPTION = 270
 TAG_MODEL = 272
 TAG_SOFTWARE = 305
@@ -58,6 +65,8 @@ def image_content_fingerprint(image_bytes: bytes) -> str | None:
         return None
     try:
         with Image.open(BytesIO(image_bytes)) as image:
+            if image.format == "JPEG":
+                image.draft("L", (32, 32))
             normalized = ImageOps.exif_transpose(image).convert("L").resize(
                 (17, 16), Image.Resampling.LANCZOS
             )
@@ -475,6 +484,8 @@ def extract_exif_and_preview_from_file(
         image_file.seek(0)
         with Image.open(image_file) as image:
             metadata = _extract_exif_metadata_from_image(image)
+            if image.format == "JPEG":
+                image.draft("RGB", (preview_max_edge, preview_max_edge))
             preview = ImageOps.exif_transpose(image)
             preview.thumbnail((preview_max_edge, preview_max_edge), Image.Resampling.LANCZOS)
             if preview.mode not in {"RGB", "L"}:

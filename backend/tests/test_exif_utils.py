@@ -1,4 +1,5 @@
 import unittest
+import warnings
 from datetime import datetime
 from io import BytesIO
 
@@ -6,6 +7,7 @@ from PIL import Image
 
 from app.exif_utils import (
     ImageExifWriteError,
+    MUSEUM_IMAGE_WARNING_PIXELS,
     extract_exif_metadata,
     update_image_exif_metadata,
 )
@@ -18,6 +20,16 @@ def build_jpeg() -> bytes:
 
 
 class ExifWriteTests(unittest.TestCase):
+    def test_allows_185_megapixel_museum_source_without_disabling_guard(self) -> None:
+        self.assertEqual(MUSEUM_IMAGE_WARNING_PIXELS, 100_000_000)
+        self.assertEqual(Image.MAX_IMAGE_PIXELS, MUSEUM_IMAGE_WARNING_PIXELS)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            Image._decompression_bomb_check((12_335, 14_999))
+
+        with self.assertRaises(Image.DecompressionBombError):
+            Image._decompression_bomb_check((20_001, 10_000))
+
     def test_writes_capture_fields_and_gps_into_final_image(self) -> None:
         captured_at = datetime(2026, 7, 19, 13, 32, 16)
         updated = update_image_exif_metadata(

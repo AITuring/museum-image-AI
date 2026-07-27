@@ -123,6 +123,34 @@ type ArtifactSubmitResult = {
   duplicate_image_detail?: string | null
 }
 
+type ExistingArtifactImage = {
+  url: string
+  capture_museum_name: string | null
+  exhibition_name: string | null
+  catalog_exhibition_source_id: string | null
+  catalog_exhibition_id: number | null
+  capture_location: string | null
+  latitude: number | null
+  longitude: number | null
+}
+
+type ExistingArtifact = {
+  id: number
+  museum_name: string
+  name: string
+  era: string | null
+  Place_of_Excavation: string | null
+  description: string | null
+  tags: string[]
+  images: ExistingArtifactImage[]
+}
+
+type ExistingArtifactMatch = {
+  artifact: ExistingArtifact
+  match_score: number
+  match_reason: string
+}
+
 type ExifConsoleProps = {
   apiBaseUrl: string
 }
@@ -305,6 +333,10 @@ type ExifWorkbenchItem = {
   candidates: DescriptionCandidate[]
   unavailableProviders: string[]
   descriptionMeta: string | null
+  existingArtifactId: number | null
+  existingArtifactMatch: string | null
+  existingArtifactCandidates: ExistingArtifactMatch[]
+  existingArtifactReviewKey: string | null
   verificationDecisions?: Record<string, "accepted" | "rejected">
   submitState: "idle" | "submitting" | "submitted" | "error"
   submitMessage: string | null
@@ -322,6 +354,13 @@ type PersistedExifDraft = {
   items: PersistedExifDraftItem[]
   selectedId: string | null
   sharedForm: FormState
+}
+
+type ReuploadHint = {
+  version: 1
+  form: FormState
+  existingArtifactId: number | null
+  updatedAt: string
 }
 
 type WritableFileStream = { write(data: Blob): Promise<void>; close(): Promise<void> }
@@ -356,6 +395,7 @@ const TIFF_BROWSER_FALLBACK_MAX_PIXELS = 24_000_000
 const EXIF_DRAFT_DB_NAME = "museum-exif-drafts"
 const EXIF_DRAFT_STORE_NAME = "workbench"
 const EXIF_DRAFT_RECORD_KEY = "active"
+const EXIF_REUPLOAD_HINT_STORE_NAME = "reupload-hints"
 
 function yieldToMainThread() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 0))
@@ -443,9 +483,17 @@ async function canvasToPreviewUrl(canvas: HTMLCanvasElement) {
 
 async function createRasterPreviewUrl(file: File) {
   if (file.size > CLIENT_PREVIEW_FILE_LIMIT || !("createImageBitmap" in window)) {
-    throw new Error("图片过大，使用轻量占位预览")
+    // Large JPEG files are still directly previewable by the browser. Avoid
+    // decoding the full image into a canvas, but do not replace it with a file
+    // placeholder merely because it exceeds the thumbnail-generation limit.
+    return URL.createObjectURL(file)
   }
-  const bitmap = await createImageBitmap(file, { resizeWidth: 640, resizeQuality: "high" })
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(file, { resizeWidth: 640, resizeQuality: "high" })
+  } catch {
+    return URL.createObjectURL(file)
+  }
   try {
     const scale = Math.min(1, 640 / Math.max(bitmap.width, bitmap.height))
     const canvas = document.createElement("canvas")
@@ -487,6 +535,24 @@ async function createFallbackPreviewUrl(file: File) {
   } catch {
     return createFilePlaceholderUrl(file)
   }
+}
+
+async function createRestoredPreviewUrl(file: File, apiBaseUrl: string) {
+  if (file.size <= CLIENT_PREVIEW_FILE_LIMIT || isTiffFile(file)) {
+    return createFallbackPreviewUrl(file)
+  }
+  try {
+    const formData = new FormData()
+    formData.append("file", file)
+    const metadata = await fetchJson<ImageExifMetadata>(
+      `${apiBaseUrl}/api/artifacts/extract-exif-file`,
+      { method: "POST", body: formData },
+    )
+    if (metadata.preview_data_url) return metadata.preview_data_url
+  } catch {
+    // The browser's direct object URL remains the last-resort preview path.
+  }
+  return createFallbackPreviewUrl(file)
 }
 
 function revokePreviewUrl(url: string) {
@@ -775,6 +841,92 @@ async function resolveMuseum(apiBaseUrl: string, name: string): Promise<MuseumOp
   return exact ?? items[0] ?? null
 }
 
+async function lookupExistingArtifact(
+  apiBaseUrl: string,
+  form: FormState,
+): Promise<ExistingArtifactMatch | null> {
+  if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return null
+  const params = new URLSearchParams({
+    name: form.name.trim(),
+    museum_name: form.museumName.trim(),
+    era: form.era.trim(),
+  })
+  try {
+    return await fetchJson<ExistingArtifactMatch | null>(
+      `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
+    )
+  } catch {
+    return null
+  }
+}
+
+function compactArtifactIdentity(value: string | null | undefined) {
+  return (value ?? "")
+    .trim()
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}_]+/gu, "")
+}
+
+function artifactReviewIdentityKey(form: FormState) {
+  if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return ""
+  return [
+    compactArtifactIdentity(form.name),
+    compactArtifactIdentity(form.museumName),
+    compactArtifactIdentity(form.era),
+  ].join("|")
+}
+
+async function lookupExistingArtifactCandidates(
+  apiBaseUrl: string,
+  form: FormState,
+): Promise<ExistingArtifactMatch[]> {
+  if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return []
+  const params = new URLSearchParams({
+    q: form.name.trim(),
+    era: form.era.trim(),
+  })
+  const [bestMatch, searchResults] = await Promise.all([
+    lookupExistingArtifact(apiBaseUrl, form),
+    fetchJson<ExistingArtifact[]>(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
+      .catch(() => []),
+  ])
+  const normalizedMuseum = compactArtifactIdentity(form.museumName)
+  const normalizedEra = compactArtifactIdentity(form.era)
+  const normalizedName = compactArtifactIdentity(form.name)
+  const candidates = new Map<string, ExistingArtifactMatch>()
+  const candidateIdentity = (artifact: ExistingArtifact) => [
+    compactArtifactIdentity(artifact.name),
+    compactArtifactIdentity(artifact.museum_name),
+    compactArtifactIdentity(artifact.era),
+  ].join("|")
+  if (bestMatch) candidates.set(candidateIdentity(bestMatch.artifact), bestMatch)
+  searchResults.forEach((artifact) => {
+    if (
+      compactArtifactIdentity(artifact.museum_name) !== normalizedMuseum
+      || compactArtifactIdentity(artifact.era) !== normalizedEra
+    ) return
+    const candidateName = compactArtifactIdentity(artifact.name)
+    const exact = candidateName === normalizedName
+    const related = candidateName.includes(normalizedName) || normalizedName.includes(candidateName)
+    if (!exact && !related) return
+    const identity = candidateIdentity(artifact)
+    const nextMatch: ExistingArtifactMatch = {
+      artifact,
+      match_score: exact ? 1 : 0.8,
+      match_reason: exact
+        ? "名称完全一致，且时代、馆藏一致。"
+        : "名称相近，且时代、馆藏一致。",
+    }
+    const current = candidates.get(identity)
+    if (!current || nextMatch.match_score > current.match_score) {
+      candidates.set(identity, nextMatch)
+    }
+  })
+  return Array.from(candidates.values())
+    .sort((left, right) => right.match_score - left.match_score)
+    .slice(0, 6)
+}
+
 function buildBaseForm(): FormState {
   return {
     ...EMPTY_FORM,
@@ -790,17 +942,127 @@ function cloneFormState(form: FormState): FormState {
   }
 }
 
+function normalizedReuploadHintKeys(fileName: string) {
+  const normalized = fileName.trim().toLocaleLowerCase("zh-CN")
+  const base = fileBaseName(normalized)
+  return Array.from(new Set([normalized, base].filter(Boolean)))
+}
+
+function applyExistingArtifactToForm(form: FormState, artifact: ExistingArtifact): FormState {
+  const capture = artifact.images.find((image) => (
+    image.capture_location
+    || image.capture_museum_name
+    || image.exhibition_name
+    || image.latitude !== null
+    || image.longitude !== null
+  ))
+  return {
+    ...form,
+    museumName: artifact.museum_name || form.museumName,
+    name: artifact.name || form.name,
+    era: artifact.era ?? form.era,
+    placeOfExcavation: artifact.Place_of_Excavation ?? form.placeOfExcavation,
+    displayLocationName: form.displayLocationName
+      || capture?.capture_location
+      || capture?.capture_museum_name
+      || artifact.museum_name,
+    exhibitionName: capture?.exhibition_name || form.exhibitionName,
+    catalogExhibitionId: capture?.catalog_exhibition_id ?? form.catalogExhibitionId,
+    catalogExhibitionSourceId: capture?.catalog_exhibition_source_id || form.catalogExhibitionSourceId,
+    latitude: form.latitude || capture?.latitude?.toString() || "",
+    longitude: form.longitude || capture?.longitude?.toString() || "",
+    description: artifact.description ?? form.description,
+    // Camera and lens tags describe individual source photos, so do not copy
+    // them onto a newly uploaded image. Its own EXIF fields remain authoritative.
+    tags: uniqueTags(artifact.tags.filter((tag) => !/^(机型|镜头)\s*[:：]/.test(tag))),
+  }
+}
+
+function applyReuploadHintToForm(form: FormState, hint: ReuploadHint): FormState {
+  return {
+    ...form,
+    museumName: hint.form.museumName || form.museumName,
+    name: hint.form.name || form.name,
+    era: hint.form.era || form.era,
+    placeOfExcavation: hint.form.placeOfExcavation || form.placeOfExcavation,
+    displayLocationName: hint.form.displayLocationName || form.displayLocationName,
+    exhibitionName: hint.form.exhibitionName || form.exhibitionName,
+    catalogExhibitionId: hint.form.catalogExhibitionId ?? form.catalogExhibitionId,
+    catalogExhibitionSourceId: hint.form.catalogExhibitionSourceId || form.catalogExhibitionSourceId,
+    latitude: hint.form.latitude || form.latitude,
+    longitude: hint.form.longitude || form.longitude,
+    description: hint.form.description || form.description,
+    tags: hint.form.tags.length > 0 ? [...hint.form.tags] : form.tags,
+  }
+}
+
 function openExifDraftDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = window.indexedDB.open(EXIF_DRAFT_DB_NAME, 1)
+    const request = window.indexedDB.open(EXIF_DRAFT_DB_NAME, 2)
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(EXIF_DRAFT_STORE_NAME)) {
         request.result.createObjectStore(EXIF_DRAFT_STORE_NAME)
+      }
+      if (!request.result.objectStoreNames.contains(EXIF_REUPLOAD_HINT_STORE_NAME)) {
+        request.result.createObjectStore(EXIF_REUPLOAD_HINT_STORE_NAME)
       }
     }
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error("无法打开本地草稿存储"))
   })
+}
+
+async function readReuploadHint(fileName: string) {
+  const database = await openExifDraftDatabase()
+  try {
+    for (const key of normalizedReuploadHintKeys(fileName)) {
+      const hint = await new Promise<ReuploadHint | null>((resolve, reject) => {
+        const request = database.transaction(EXIF_REUPLOAD_HINT_STORE_NAME, "readonly")
+          .objectStore(EXIF_REUPLOAD_HINT_STORE_NAME)
+          .get(key)
+        request.onsuccess = () => resolve((request.result as ReuploadHint | undefined) ?? null)
+        request.onerror = () => reject(request.error ?? new Error("读取重新上传线索失败"))
+      })
+      if (hint?.version === 1) return hint
+    }
+    return null
+  } finally {
+    database.close()
+  }
+}
+
+async function writeReuploadHints(items: ExifWorkbenchItem[]) {
+  const candidates = items.filter((item) => (
+    item.form.name.trim()
+    && item.form.museumName.trim()
+    && (item.form.description.trim() || item.form.tags.length > 0)
+  ))
+  if (candidates.length === 0) return
+  const database = await openExifDraftDatabase()
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(EXIF_REUPLOAD_HINT_STORE_NAME, "readwrite")
+      const store = transaction.objectStore(EXIF_REUPLOAD_HINT_STORE_NAME)
+      candidates.forEach((item) => {
+        const hint: ReuploadHint = {
+          version: 1,
+          form: cloneFormState(item.form),
+          existingArtifactId: item.existingArtifactId ?? null,
+          updatedAt: new Date().toISOString(),
+        }
+        const keys = new Set([
+          ...normalizedReuploadHintKeys(item.originalFileName),
+          ...normalizedReuploadHintKeys(item.fileName),
+        ])
+        keys.forEach((key) => store.put(hint, key))
+      })
+      transaction.oncomplete = () => resolve()
+      transaction.onerror = () => reject(transaction.error ?? new Error("保存重新上传线索失败"))
+      transaction.onabort = () => reject(transaction.error ?? new Error("保存重新上传线索失败"))
+    })
+  } finally {
+    database.close()
+  }
 }
 
 async function readExifDraft() {
@@ -865,15 +1127,19 @@ function serializeExifDraftItem(item: ExifWorkbenchItem): PersistedExifDraftItem
   }
 }
 
-async function restoreExifDraftItems(draft: PersistedExifDraftItem[]) {
+async function restoreExifDraftItems(draft: PersistedExifDraftItem[], apiBaseUrl: string) {
   return Promise.all(draft.map(async (item) => ({
     ...item,
     form: cloneFormState(item.form),
     originalForm: cloneFormState(item.originalForm),
     candidates: ensureCandidates(item.candidates),
     unavailableProviders: ensureStringList(item.unavailableProviders),
+    existingArtifactId: item.existingArtifactId ?? null,
+    existingArtifactMatch: item.existingArtifactMatch ?? null,
+    existingArtifactCandidates: item.existingArtifactCandidates ?? [],
+    existingArtifactReviewKey: item.existingArtifactReviewKey ?? null,
     fileHandle: null,
-    previewUrl: await createFallbackPreviewUrl(item.localFile),
+    previewUrl: await createRestoredPreviewUrl(item.localFile, apiBaseUrl),
   })))
 }
 
@@ -1393,6 +1659,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const locatingDisplayLocationRef = useRef(false)
   const draftWriteTimerRef = useRef<number | null>(null)
   const draftStorageFailureRef = useRef(false)
+  const artifactMatchLookupRef = useRef(new Set<string>())
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null)
@@ -1423,6 +1690,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [metadataSyncSelection, setMetadataSyncSelection] = useState<MetadataSyncSelection>(DEFAULT_METADATA_SYNC_SELECTION)
   const [metadataSyncPreviewOpen, setMetadataSyncPreviewOpen] = useState(false)
   const [uploadPermissionOpen, setUploadPermissionOpen] = useState(false)
+  const [artifactMatchReviewIds, setArtifactMatchReviewIds] = useState<string[]>([])
+  const [openUploadPermissionAfterArtifactReview, setOpenUploadPermissionAfterArtifactReview] = useState(false)
   const [recentUploadedCount, setRecentUploadedCount] = useState(0)
   const [parsingFileName, setParsingFileName] = useState(false)
   const [submittingAll, setSubmittingAll] = useState(false)
@@ -1432,6 +1701,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
+  )
+  const artifactMatchReviewItem = useMemo(
+    () => items.find((item) => item.id === artifactMatchReviewIds[0]) ?? null,
+    [artifactMatchReviewIds, items],
   )
   const activeFieldWarnings = useMemo(() => {
     if (!selectedItem) return []
@@ -1517,7 +1790,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         await navigator.storage?.persist?.()
         const draft = await readExifDraft()
         if (disposed || !draft || draft.version !== 1 || draft.items.length === 0) return
-        const restoredItems = await restoreExifDraftItems(draft.items)
+        const restoredItems = await restoreExifDraftItems(draft.items, apiBaseUrl)
         if (disposed) {
           restoredItems.forEach((item) => revokePreviewUrl(item.previewUrl))
           return
@@ -1548,7 +1821,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             sharedForm: cloneFormState(sharedForm),
           })
         : clearExifDraft()
-      void persist.then(() => {
+      void Promise.all([persist, writeReuploadHints(items)]).then(() => {
         draftStorageFailureRef.current = false
       }).catch(() => {
         if (draftStorageFailureRef.current) return
@@ -1560,6 +1833,37 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       if (draftWriteTimerRef.current !== null) window.clearTimeout(draftWriteTimerRef.current)
     }
   }, [draftStorageReady, items, selectedId, sharedForm])
+
+  useEffect(() => {
+    if (!draftStorageReady) return
+    const target = items.find((item) => {
+      if (item.existingArtifactId != null || (item.existingArtifactCandidates?.length ?? 0) > 0) return false
+      const identity = artifactReviewIdentityKey(item.form)
+      return Boolean(identity) && item.existingArtifactReviewKey !== identity
+    })
+    if (!target) return
+    const identity = artifactReviewIdentityKey(target.form)
+    const lookupKey = `${target.id}:${identity}`
+    if (artifactMatchLookupRef.current.has(lookupKey)) return
+    artifactMatchLookupRef.current.add(lookupKey)
+    setItems((current) => current.map((item) => item.id === target.id
+      ? { ...item, existingArtifactReviewKey: identity }
+      : item))
+    void lookupExistingArtifactCandidates(apiBaseUrl, target.form)
+      .then((matches) => {
+        if (matches.length === 0) return
+        setItems((current) => current.map((item) => item.id === target.id ? {
+          ...item,
+          existingArtifactCandidates: matches,
+          descriptionMeta: `发现 ${matches.length} 件可能对应的已入库文物，请确认后填入。`,
+          submitMessage: "发现可能对应的已入库文物，请先选择是否复用。",
+        } : item))
+        setArtifactMatchReviewIds((current) => (
+          current.includes(target.id) ? current : [...current, target.id]
+        ))
+      })
+      .finally(() => artifactMatchLookupRef.current.delete(lookupKey))
+  }, [apiBaseUrl, draftStorageReady, items])
 
   useEffect(() => {
     if (metadataSyncSourceId && items.some((item) => item.id === metadataSyncSourceId)) return
@@ -1631,6 +1935,64 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function updateItem(itemId: string, updater: (item: ExifWorkbenchItem) => ExifWorkbenchItem) {
     setItems((current) => current.map((item) => (item.id === itemId ? updater(item) : item)))
+  }
+
+  function beginArtifactMatchReview(
+    builtItems: ExifWorkbenchItem[],
+    shouldOpenUploadPermission: boolean,
+  ) {
+    const reviewIds = builtItems
+      .filter((item) => (item.existingArtifactCandidates?.length ?? 0) > 0)
+      .map((item) => item.id)
+    if (reviewIds.length === 0) {
+      if (shouldOpenUploadPermission) setUploadPermissionOpen(true)
+      return
+    }
+    setArtifactMatchReviewIds(reviewIds)
+    setOpenUploadPermissionAfterArtifactReview(shouldOpenUploadPermission)
+  }
+
+  function advanceArtifactMatchReview() {
+    const remaining = artifactMatchReviewIds.slice(1)
+    setArtifactMatchReviewIds(remaining)
+    if (remaining.length === 0 && openUploadPermissionAfterArtifactReview) {
+      setOpenUploadPermissionAfterArtifactReview(false)
+      setUploadPermissionOpen(true)
+    }
+  }
+
+  function selectExistingArtifactMatch(match: ExistingArtifactMatch) {
+    if (!artifactMatchReviewItem) return
+    const itemId = artifactMatchReviewItem.id
+    updateItem(itemId, (item) => {
+      const nextForm = applyExistingArtifactToForm(item.form, match.artifact)
+      return {
+        ...item,
+        form: nextForm,
+        existingArtifactId: match.artifact.id,
+        existingArtifactMatch: match.match_reason,
+        existingArtifactCandidates: [],
+        existingArtifactReviewKey: artifactReviewIdentityKey(nextForm),
+        descriptionMeta: `已关联云端文物 #${match.artifact.id}`,
+        submitMessage: `已采用“${match.artifact.name}”的文物信息，新照片将追加到这件文物。`,
+      }
+    })
+    setSelectedId(itemId)
+    advanceArtifactMatchReview()
+  }
+
+  function rejectExistingArtifactMatches() {
+    if (!artifactMatchReviewItem) return
+    updateItem(artifactMatchReviewItem.id, (item) => ({
+      ...item,
+      existingArtifactId: null,
+      existingArtifactMatch: null,
+      existingArtifactCandidates: [],
+      existingArtifactReviewKey: artifactReviewIdentityKey(item.form),
+      descriptionMeta: null,
+      submitMessage: "已选择不复用已有文物信息，本次将按新文物提交。",
+    }))
+    advanceArtifactMatchReview()
   }
 
   function updateSelectedForm(patch: Partial<FormState>) {
@@ -1881,6 +2243,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     let parsedName: ParsedArtifactName | null = null
     let form = buildBaseForm()
     let previewUrl = ""
+    let existingArtifactId: number | null = null
+    let existingArtifactMatch: string | null = null
+    let existingArtifactCandidates: ExistingArtifactMatch[] = []
 
     try {
       const exifForm = new FormData()
@@ -1949,6 +2314,14 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       // keep default form
     }
 
+    try {
+      const hint = await readReuploadHint(file.name)
+      if (hint) form = applyReuploadHintToForm(form, hint)
+    } catch {
+      // A missing local hint must not block normal image intake.
+    }
+    existingArtifactCandidates = await lookupExistingArtifactCandidates(apiBaseUrl, form)
+
     return {
       id: buildItemId(file, index),
       fileName: file.name,
@@ -1961,9 +2334,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       originalForm: cloneFormState(form),
       candidates: [],
       unavailableProviders: [],
-      descriptionMeta: null,
+      descriptionMeta: existingArtifactCandidates.length > 0
+        ? `发现 ${existingArtifactCandidates.length} 件可能对应的已入库文物，请确认后填入。`
+        : null,
+      existingArtifactId,
+      existingArtifactMatch,
+      existingArtifactCandidates,
+      existingArtifactReviewKey: artifactReviewIdentityKey(form) || null,
       submitState: "idle",
-      submitMessage: null,
+      submitMessage: existingArtifactCandidates.length > 0
+        ? "发现可能对应的已入库文物，请先选择是否复用。"
+        : null,
       uploadProgress: 0,
       uploadStage: null,
     }
@@ -2005,10 +2386,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }
 
       setDirectoryHandle(nextDirectoryHandle)
+      const matchCount = builtItems.filter((item) => item.existingArtifactCandidates.length > 0).length
       setSubmitNotice({
         type: "success",
-        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片，并获得批量原地回写权限；未提交内容会自动保存在本机浏览器。`,
+        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片${matchCount > 0 ? `，其中 ${matchCount} 张发现已有文物候选，请确认选择` : ""}，并获得批量原地回写权限；未提交内容会自动保存在本机浏览器。`,
       })
+      beginArtifactMatchReview(builtItems, false)
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return
       setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "读取照片文件夹失败" })
@@ -2129,12 +2512,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         const seedForm = builtItems.find((item) => hasMeaningfulFormValue(item.form))?.form
         return seedForm ? cloneFormState(seedForm) : current
       })
+      const matchCount = builtItems.filter((item) => item.existingArtifactCandidates.length > 0).length
       setSubmitNotice({
         type: "success",
-        text: `已读取 ${builtItems.length} 张图片，正在确认原文件写入权限。`,
+        text: `已读取 ${builtItems.length} 张图片${matchCount > 0 ? `，其中 ${matchCount} 张发现已有文物候选，请先确认选择` : ""}。`,
       })
       setRecentUploadedCount(builtItems.length)
-      setUploadPermissionOpen(true)
+      beginArtifactMatchReview(builtItems, true)
     } catch (error) {
       setSubmitNotice({
         type: "error",
@@ -2154,6 +2538,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (!target) {
       return
     }
+    try {
+      await writeReuploadHints([target])
+    } catch {
+      // Removing a queue item should still work if browser storage is unavailable.
+    }
     revokePreviewUrl(target.previewUrl)
     const remaining = items.filter((item) => item.id !== itemId)
     setItems(remaining)
@@ -2162,6 +2551,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   async function clearAll() {
     const currentItems = [...items]
+    try {
+      await writeReuploadHints(currentItems)
+    } catch {
+      // Clearing the queue should still work if browser storage is unavailable.
+    }
     currentItems.forEach((item) => revokePreviewUrl(item.previewUrl))
     setItems([])
     setSelectedId(null)
@@ -2443,7 +2837,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       const latestLocalFile = await target.fileHandle.getFile()
       const latitude = toNullableNumber(target.form.latitude)
       const longitude = toNullableNumber(target.form.longitude)
-      const appendMetadata = (data: FormData) => {
+      const appendMetadata = (data: FormData, includeArtifactLink = false) => {
         data.append("museum_name", target.form.museumName.trim())
         data.append("name", target.form.name.trim())
         data.append("era", target.form.era.trim() || "")
@@ -2465,6 +2859,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         data.append("shutter_speed", target.form.shutterSpeed.trim())
         data.append("aperture", target.form.aperture.trim())
         if (target.form.iso.trim()) data.append("iso", target.form.iso.trim())
+        if (includeArtifactLink && target.existingArtifactId != null) {
+          data.append("existing_artifact_id", String(target.existingArtifactId))
+        }
       }
 
       let response: Response | null = null
@@ -2559,7 +2956,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
       const formData = new FormData()
       formData.append("file", uploadFile)
-      appendMetadata(formData)
+      appendMetadata(formData, true)
       formData.append("tags", JSON.stringify(target.form.tags))
       formData.append("exif_prepared", "true")
       if (sourceHash) formData.append("source_hash", sourceHash)
@@ -3022,7 +3419,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     />
                     <div className="exif-queue-copy">
                       <strong title={item.fileName}>{item.fileName}</strong>
-                      <span>{item.form.name || item.parsedName?.artifact_name || "待确认名称"}</span>
+                      <span>
+                        {item.form.name || item.parsedName?.artifact_name || "待确认名称"}
+                        {item.existingArtifactMatch ? " · 已匹配已有文物" : ""}
+                      </span>
                       <Tag
                         color={item.submitState === "submitted" ? "success" : item.submitState === "error" ? "error" : undefined}
                         className={`queue-submit-state ${item.submitState} ${changedParts(item).length > 0 ? "has-changes" : ""}`}
@@ -3735,6 +4135,80 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           )}
         </section>
       </div>
+      <Modal
+        title="发现可能对应的已入库文物"
+        open={artifactMatchReviewItem !== null}
+        centered
+        width={780}
+        closable={false}
+        maskClosable={false}
+        keyboard={false}
+        destroyOnHidden
+        footer={[
+          <Button key="new" htmlType="button" onClick={rejectExistingArtifactMatches}>
+            都不是，按新文物填写
+          </Button>,
+        ]}
+      >
+        {artifactMatchReviewItem ? (
+          <div className="artifact-match-review">
+            <div className="artifact-match-review-intro">
+              <div>
+                <span>当前上传</span>
+                <strong>{artifactMatchReviewItem.fileName}</strong>
+              </div>
+              <Tag color="processing">
+                {artifactMatchReviewIds.length > 1 ? `还有 ${artifactMatchReviewIds.length} 张待确认` : "请选择对应文物"}
+              </Tag>
+            </div>
+            <p className="muted">
+              选择后会填入已有文物的名称、馆藏、时代、描述和标签，并把这张新照片追加到该文物；新照片自己的相机参数和拍摄时间不会被覆盖。
+            </p>
+            <div className="artifact-match-candidates">
+              {(artifactMatchReviewItem.existingArtifactCandidates ?? []).map((match) => {
+                const cover = match.artifact.images[0]
+                const previewUrl = cover
+                  ? `${apiBaseUrl}/api/image-variant?${new URLSearchParams({ url: cover.url, size: "360" }).toString()}`
+                  : ""
+                return (
+                  <button
+                    key={match.artifact.id}
+                    type="button"
+                    className="artifact-match-candidate"
+                    onClick={() => selectExistingArtifactMatch(match)}
+                  >
+                    <span className="artifact-match-thumb">
+                      {cover ? (
+                        <img
+                          src={previewUrl}
+                          alt={match.artifact.name}
+                          onError={(event) => {
+                            event.currentTarget.onerror = null
+                            event.currentTarget.src = cover.url
+                          }}
+                        />
+                      ) : <span>无图</span>}
+                    </span>
+                    <span className="artifact-match-copy">
+                      <strong>{match.artifact.name}</strong>
+                      <span>{match.artifact.era || "时代未填写"} · {match.artifact.museum_name}</span>
+                      <small>{match.match_reason}</small>
+                      {match.artifact.description ? <p>{match.artifact.description}</p> : null}
+                      <span className="artifact-match-tags">
+                        {match.artifact.tags
+                          .filter((tag) => !/^(机型|镜头)\s*[:：]/.test(tag))
+                          .slice(0, 6)
+                          .map((tag) => <Tag key={tag}>{tag}</Tag>)}
+                      </span>
+                      <b>选择并填入这件文物</b>
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ) : null}
+      </Modal>
       <Modal
         title="图片已读取，继续授权原文件"
         open={uploadPermissionOpen}
