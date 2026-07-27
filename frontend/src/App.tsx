@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
 import { AutoComplete, Button, Input, Select, Tabs, Tag } from "antd"
-import { Camera, Check, ChevronRight, CloudUpload, ImagePlus, RefreshCw, ScanSearch, Trash2, X } from "lucide-react"
+import { Camera, Check, ChevronRight, CloudUpload, ImagePlus, RefreshCw, ScanSearch, Trash2 } from "lucide-react"
 import "./App.css"
 
 const BatchConsole = lazy(() => import("./BatchConsole"))
@@ -1357,11 +1357,11 @@ function App() {
                 const candidate = stream.candidate
                 if (!candidate) return null
                 return (
-                  <Button
+                  <button
                     key={`candidate-${stream.provider}`}
-                    htmlType="button"
-                    type={selectedCandidateKey === stream.provider ? "primary" : "default"}
-                    className="single-candidate"
+                    type="button"
+                    data-ui="interactive-surface"
+                    className={`single-candidate ${selectedCandidateKey === stream.provider ? "is-selected" : ""}`}
                     onClick={() => handleApplyCandidate(candidate)}
                   >
                     <span>
@@ -1369,7 +1369,7 @@ function App() {
                       <em>{stream.provider} · {formatConfidence(candidate.confidence) ?? "可信度待估"}</em>
                     </span>
                     {stream.provider === bestCandidateKey ? <Tag color="success">推荐</Tag> : null}
-                  </Button>
+                  </button>
                 )
               }) : (
                 <p className="muted">识别完成后，候选会在这里集中展示；点一次即可填入右侧表单。</p>
@@ -1715,12 +1715,9 @@ function App() {
                   <div className="tag-editor">
                     <div className="tag-editor-chips">
                       {artifactForm.tags.length > 0 ? artifactForm.tags.map((tag) => (
-                        <span key={tag} className="tag-chip">
+                        <Tag key={tag} closable onClose={() => removeTag(tag)}>
                           {tag}
-                          <Button htmlType="button" type="text" shape="circle" size="small" onClick={() => removeTag(tag)} aria-label={`删除标签 ${tag}`}>
-                            <X size={11} strokeWidth={2} aria-hidden="true" />
-                          </Button>
-                        </span>
+                        </Tag>
                       )) : <span className="tag-editor-placeholder">暂无标签</span>}
                     </div>
                     <Input
@@ -1801,7 +1798,7 @@ function App() {
             <strong>{submitNotice.type === "error" ? "提交失败" : "提交成功"}</strong>
             <p>{submitNotice.text}</p>
           </div>
-          <Button htmlType="button" className="submit-toast-close" onClick={() => setSubmitNotice(null)}>
+          <Button htmlType="button" type="text" shape="circle" aria-label="关闭提交提示" onClick={() => setSubmitNotice(null)}>
             ×
           </Button>
         </div>

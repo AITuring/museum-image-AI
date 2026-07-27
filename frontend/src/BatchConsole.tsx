@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { AutoComplete, Button, Input, Select, Tag } from "antd"
-import { X } from "lucide-react"
 
 const Textarea = Input.TextArea
 
@@ -1240,7 +1239,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           <Button
             htmlType="button"
             type="primary"
-            className="picker-button"
             onClick={() => folderInputRef.current?.click()}
             disabled={scanning}
           >
@@ -1266,7 +1264,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           <Button
             htmlType="button"
             type="primary"
-            className="picker-button"
             onClick={handleGooglePhotosPrimaryAction}
             disabled={
               googlePhotosBusy ||
@@ -1285,7 +1282,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
             <Button
               htmlType="button"
               type="text"
-              className="ghost"
               onClick={() => void openGooglePhotosConfigModal()}
               disabled={googlePhotosBusy}
             >
@@ -1297,7 +1293,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               htmlType="button"
               type="text"
               danger
-              className="ghost danger"
               onClick={() => void handleClearGooglePhotosToken()}
               disabled={googlePhotosBusy}
             >
@@ -1309,7 +1304,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               <Button
                 htmlType="button"
                 type="text"
-                className="ghost"
                 onClick={() => void handleConnectGooglePhotos()}
                 disabled={googlePhotosBusy}
               >
@@ -1359,10 +1353,10 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
               {googlePhotosMedia.map((item) => {
                 const checked = googlePhotosSelectedIds.includes(item.id)
                 return (
-                  <Button
+                  <button
                     key={`google-photo-${item.id}`}
-                    htmlType="button"
-                    type="default"
+                    type="button"
+                    data-ui="interactive-surface"
                     className={`existing-artifact-thumb ${checked ? "selected-action" : ""}`}
                     onClick={() =>
                       setGooglePhotosSelectedIds((current) =>
@@ -1374,7 +1368,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     title={item.filename}
                   >
                     <img src={item.thumbnail_url ?? item.base_url} alt={item.filename} loading="lazy" />
-                  </Button>
+                  </button>
                 )
               })}
             </div>
@@ -1383,7 +1377,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <Button
                   htmlType="button"
                   type="text"
-                  className="ghost"
                   onClick={() =>
                     void loadGooglePhotosMedia({
                       sessionId: googlePhotosSession?.id ?? "",
@@ -1414,7 +1407,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
           htmlType="button"
           type="text"
           danger
-          className="ghost danger"
           onClick={() => void handleClearAll()}
           disabled={identifying || scanning || googlePhotosBusy || items.length === 0}
         >
@@ -1615,7 +1607,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       htmlType="button"
                       type="primary"
                       size="small"
-                      className={sameArtifactDecision === "yes" ? "selected-action" : undefined}
                       onClick={() => {
                         patchLocal(item.id, {
                           museum_name: matchedArtifact.artifact.museum_name,
@@ -1636,7 +1627,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     <Button
                       htmlType="button"
                       type={sameArtifactDecision === "no" ? "primary" : "text"}
-                      className={sameArtifactDecision === "no" ? "selected-action" : "ghost"}
                       onClick={() => {
                         patchLocal(item.id, { existing_artifact_id: null })
                         setSameArtifactDecisions((current) => ({ ...current, [item.id]: "no" }))
@@ -1664,17 +1654,9 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     <div className="tag-editor-chips">
                       {item.tags.length > 0 ? (
                         item.tags.map((tag) => (
-                          <span key={tag} className="tag-chip">
+                          <Tag key={tag} closable onClose={() => removeTag(item.id, tag)}>
                             {tag}
-                            <Button
-                              htmlType="button"
-                              type="text"
-                              onClick={() => removeTag(item.id, tag)}
-                              aria-label={`删除标签 ${tag}`}
-                            >
-                              <X size={11} strokeWidth={2} aria-hidden="true" />
-                            </Button>
-                          </span>
+                          </Tag>
                         ))
                       ) : (
                         <span className="tag-editor-placeholder">暂无标签</span>
@@ -1864,7 +1846,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                 <Button
                   htmlType="button"
                   type="text"
-                  className="ghost"
                   onClick={() => void handleSave(item)}
                 >
                   保存
@@ -1882,7 +1863,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       ? "更新已有文物并上传图片"
                       : "提交云端"}
                 </Button>
-                <Button htmlType="button" type="text" danger className="ghost danger" onClick={() => void handleDelete(item.id)}>
+                <Button htmlType="button" type="text" danger onClick={() => void handleDelete(item.id)}>
                   删除
                 </Button>
               </div>
@@ -1907,7 +1888,7 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
             <strong>{submitNotice.type === "error" ? "操作失败" : "操作成功"}</strong>
             <p>{submitNotice.text}</p>
           </div>
-          <Button htmlType="button" className="submit-toast-close" onClick={() => setSubmitNotice(null)}>
+          <Button htmlType="button" type="text" shape="circle" aria-label="关闭提交提示" onClick={() => setSubmitNotice(null)}>
             ×
           </Button>
         </div>
@@ -1973,7 +1954,6 @@ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   <Button
                     htmlType="button"
                     type="text"
-                    className="ghost"
                     disabled={googlePhotosBusy}
                     onClick={() => setShowGooglePhotosConfigModal(false)}
                   >

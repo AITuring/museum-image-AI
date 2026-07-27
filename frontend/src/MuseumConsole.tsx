@@ -656,7 +656,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   {!editing ? (
                     <Button
                       htmlType="button"
-                      className="ghost"
+                      type="text"
                       onClick={() => {
                         setEditForm(buildMuseumEditForm(activeMuseum))
                         setEditing(true)
@@ -669,7 +669,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                   ) : (
                     <Button
                       htmlType="button"
-                      className="ghost"
+                      type="text"
                       onClick={() => {
                         setEditing(false)
                         setEditForm(buildMuseumEditForm(activeMuseum))
@@ -698,7 +698,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                       <>
                         <Button
                           htmlType="button"
-                          className="ghost"
+                          type="text"
                           onClick={() => void handleLocateByName()}
                           disabled={locatingByName || !mapReady}
                         >
@@ -706,7 +706,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                         </Button>
                         <Button
                           htmlType="button"
-                          className="ghost"
+                          type="text"
                           onClick={() => {
                             const original = getMuseumCoordinates(activeMuseum)
                             if (!original) {
@@ -871,7 +871,7 @@ export default function MuseumConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
                     ) : (
                       <span />
                     )}
-                    <Button htmlType="submit" className="primary" disabled={saving}>
+                    <Button htmlType="submit" type="primary" disabled={saving}>
                       {saving ? "保存中..." : "保存博物馆资料"}
                     </Button>
                   </div>

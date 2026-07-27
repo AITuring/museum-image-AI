@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ImgHTMLAttributes } from "react"
 import { createPortal } from "react-dom"
-import { Button, Card, Input, Select, Tag } from "antd"
+import { Button, Input, Select, Tag } from "antd"
 import "./styles/gallery.css"
 import {
   Aperture,
@@ -566,7 +566,6 @@ function GalleryLocationPicker({
         <Button
           htmlType="button"
           type="default"
-          className="gallery-secondary-button"
           onClick={() => void handleResolveLocation()}
           disabled={mapLoading}
         >
@@ -1050,7 +1049,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 <Button
                                   htmlType="button"
                                   type="default"
-                                  className="gallery-secondary-button"
                                   onClick={handleCancelEdit}
                                   disabled={saving}
                                 >
@@ -1060,7 +1058,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   htmlType="submit"
                                   type="primary"
                                   form={editFormId}
-                                  className="gallery-primary-button"
                                   disabled={saving}
                                 >
                                   {saving ? "保存中..." : "保存"}
@@ -1068,7 +1065,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 <Button
                                   htmlType="button"
                                   type="text"
-                                  className="gallery-close"
+                                  shape="circle"
                                   onClick={() => !editing && setActive(null)}
                                   disabled={editing}
                                   aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
@@ -1078,13 +1075,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                               </>
                             ) : (
                               <>
-                                <Button htmlType="button" type="primary" className="gallery-toolbar-button" onClick={handleStartEdit}>
+                                <Button htmlType="button" type="primary" onClick={handleStartEdit}>
                                   编辑资料
                                 </Button>
                                 <Button
                                   htmlType="button"
                                   type="text"
-                                  className="gallery-close"
+                                  shape="circle"
                                   onClick={() => !editing && setActive(null)}
                                   disabled={editing}
                                   aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
@@ -1193,17 +1190,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                         <div className="tag-editor">
                                           <div className="tag-editor-chips">
                                             {editForm.tags.map((tag) => (
-                                              <span key={tag} className="tag-chip">
-                                                <span>{tag}</span>
-                                                <button
-                                                  type="button"
-                                                  className="tag-chip-remove"
-                                                  onClick={() => removeTag(tag)}
-                                                  aria-label={`删除标签 ${tag}`}
-                                                >
-                                                  <X size={12} aria-hidden="true" />
-                                                </button>
-                                              </span>
+                                              <Tag key={tag} closable onClose={() => removeTag(tag)}>
+                                                {tag}
+                                              </Tag>
                                             ))}
                                           </div>
                                           <Input
@@ -1292,7 +1281,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       <label className="field">
                                         <span>修图方式</span>
                                         <Select
-                                          className="gallery-edit-select"
                                           allowClear
                                           placeholder="未填写"
                                           value={editForm.editMethod || undefined}
@@ -1406,8 +1394,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                         ) : (
                           <div className="gallery-detail-lines">
                             {saveNotice ? <p className="success-text gallery-save-notice">{saveNotice}</p> : null}
-                            <Card className="gallery-info-card" styles={{ body: { padding: 0 } }}>
-                              <div className="ui-card-content gallery-info-grid">
+                            <section className="gallery-info-section">
+                              <div className="gallery-info-grid">
                                 <div className="gallery-info-item">
                                   <span className="gallery-info-label">
                                     <History size={14} className="gallery-detail-label-icon" aria-hidden="true" />
@@ -1488,16 +1476,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 </div>
                               ) : null}
                               </div>
-                            </Card>
+                            </section>
                             {(currentImage?.camera_model || currentImage?.lens_model || shutterSpeed || aperture || iso) ? (
-                              <Card className="gallery-info-card gallery-camera-card" styles={{ body: { padding: 0 } }}>
-                                <div className="ui-card-header">
+                              <section className="gallery-info-section gallery-camera-card">
+                                <header className="gallery-info-section-head">
                                   <div className="gallery-card-title">
                                     <SlidersHorizontal size={15} aria-hidden="true" />
                                     <span>相机参数</span>
                                   </div>
-                                </div>
-                                <div className="ui-card-content gallery-camera-grid">
+                                </header>
+                                <div className="gallery-camera-grid">
                                   {currentImage?.camera_model ? (
                                     <div className="gallery-camera-item">
                                       <span className="gallery-info-label">
@@ -1544,20 +1532,20 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     </div>
                                   ) : null}
                                 </div>
-                              </Card>
+                              </section>
                             ) : null}
                             {active.description ? (
-                              <Card className="gallery-info-card gallery-description-card" styles={{ body: { padding: 0 } }}>
-                                <div className="ui-card-header">
+                              <section className="gallery-info-section gallery-description-card">
+                                <header className="gallery-info-section-head">
                                   <div className="gallery-card-title">
                                     <FileText size={15} aria-hidden="true" />
                                     <span>描述</span>
                                   </div>
-                                </div>
-                                <div className="ui-card-content">
+                                </header>
+                                <div>
                                   <p className="gallery-description-copy">{active.description}</p>
                                 </div>
-                              </Card>
+                              </section>
                             ) : null}
                           </div>
                         )}

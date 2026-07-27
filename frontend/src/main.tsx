@@ -45,7 +45,23 @@ createRoot(document.getElementById("root")!).render(
             hoverBorderColor: "rgba(0, 0, 0, 0.14)",
           },
           Card: {
+            bodyPadding: 16,
+            bodyPaddingSM: 14,
+            headerHeight: 44,
+            headerHeightSM: 40,
             headerBg: "#ffffff",
+          },
+          Checkbox: {
+            borderRadiusSM: 4,
+          },
+          Segmented: {
+            itemActiveBg: "#ffffff",
+            itemHoverBg: "#ebebe8",
+            trackBg: "#f1f1ef",
+          },
+          Tag: {
+            borderRadiusSM: 5,
+            defaultBg: "#f7f7f5",
           },
           Tabs: {
             cardBg: "#f7f7f5",

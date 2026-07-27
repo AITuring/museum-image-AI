@@ -82,30 +82,6 @@ a {
   color: inherit;
 }
 
-.ant-btn {
-  box-shadow: none;
-}
-
-.ant-btn:focus-visible,
-.ant-btn.ant-btn-default:focus-visible,
-.ant-btn.ant-btn-color-default:focus-visible {
-  box-shadow: 0 0 0 2px rgb(17 17 17 / 0.05);
-}
-
-.ant-input:focus,
-.ant-input-focused,
-.ant-input-affix-wrapper-focused,
-.ant-picker-focused,
-.ant-select-focused .ant-select-selector,
-.ant-input-number-focused {
-  border-color: rgb(0 0 0 / 18%) !important;
-  box-shadow: 0 0 0 2px rgb(17 17 17 / 0.04) !important;
-}
-
-.ant-input-affix-wrapper-focused .ant-input {
-  box-shadow: none !important;
-}
-
 .app-tabs .ant-tabs-nav {
   margin: 0;
 }

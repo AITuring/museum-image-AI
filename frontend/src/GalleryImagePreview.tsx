@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Button } from "antd"
+import { Button, Space } from "antd"
 import {
   FlipHorizontal2,
   FlipVertical2,
@@ -334,10 +334,11 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </div>
         ) : null}
 
-        <div className="gallery-image-preview-toolbar">
+        <Space.Compact className="gallery-image-preview-toolbar">
           <Button
             htmlType="button"
-            className="gallery-image-preview-action"
+            ghost
+            shape="circle"
             onClick={() => setScale((current) => Math.max(1, Number((current - 0.2).toFixed(2))))}
             aria-label="缩小"
             data-tooltip="缩小"
@@ -346,7 +347,8 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </Button>
           <Button
             htmlType="button"
-            className="gallery-image-preview-action"
+            ghost
+            shape="circle"
             onClick={() => setScale((current) => Math.min(8, Number((current + 0.2).toFixed(2))))}
             aria-label="放大"
             data-tooltip="放大"
@@ -355,7 +357,8 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </Button>
           <Button
             htmlType="button"
-            className="gallery-image-preview-action"
+            ghost
+            shape="circle"
             onClick={() => setRotation((current) => current - 90)}
             aria-label="左转"
             data-tooltip="左转"
@@ -364,7 +367,8 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </Button>
           <Button
             htmlType="button"
-            className="gallery-image-preview-action"
+            ghost
+            shape="circle"
             onClick={() => setRotation((current) => current + 90)}
             aria-label="右转"
             data-tooltip="右转"
@@ -373,7 +377,8 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </Button>
           <Button
             htmlType="button"
-            className="gallery-image-preview-action"
+            ghost
+            shape="circle"
             onClick={() => setFlipX((current) => !current)}
             aria-label="水平翻转"
             data-tooltip="水平翻转"
@@ -382,7 +387,8 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </Button>
           <Button
             htmlType="button"
-            className="gallery-image-preview-action"
+            ghost
+            shape="circle"
             onClick={() => setFlipY((current) => !current)}
             aria-label="垂直翻转"
             data-tooltip="垂直翻转"
@@ -391,7 +397,8 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </Button>
           <Button
             htmlType="button"
-            className="gallery-image-preview-action"
+            ghost
+            shape="circle"
             onClick={() => {
               setScale(1)
               setRotation(0)
@@ -406,14 +413,16 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </Button>
           <Button
             htmlType="button"
-            className="gallery-image-preview-action close"
+            ghost
+            danger
+            shape="circle"
             onClick={onClose}
             aria-label="关闭原比例预览"
             data-tooltip="关闭"
           >
             <X size={16} aria-hidden="true" />
           </Button>
-        </div>
+        </Space.Compact>
       </div>
     </div>
   )

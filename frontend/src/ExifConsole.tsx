@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
-import { AutoComplete, Button, Card, Input, Modal, Segmented, Select, Switch, Tag, Tooltip } from "antd"
+import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Space, Tag, Tooltip } from "antd"
 import {
   ArrowRight,
   Camera,
@@ -288,18 +288,14 @@ function MetadataSyncFieldControls({
           </header>
           <div className="metadata-sync-field-list">
             {group.fields.map((field) => (
-              <label
+              <Checkbox
                 key={field.key}
-                className={`metadata-sync-field ${selection[field.key] ? "is-selected" : ""}`}
+                className="metadata-sync-field"
+                checked={selection[field.key]}
+                onChange={(event) => onChange(field.key, event.target.checked)}
               >
-                <span>{field.label}</span>
-                <Switch
-                  size="small"
-                  checked={selection[field.key]}
-                  onChange={(checked) => onChange(field.key, checked)}
-                  aria-label={`同步${field.label}`}
-                />
-              </label>
+                {field.label}
+              </Checkbox>
             ))}
           </div>
         </section>
@@ -588,14 +584,12 @@ function FormSectionHeader({ icon: Icon, title, description }: {
   description: string
 }) {
   return (
-    <div className="ui-card-header form-section-head">
-      <Tooltip title={description} placement="topLeft" trigger={["hover", "focus"]}>
-        <span className="exif-section-title" tabIndex={0}>
-          <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-          <span>{title}</span>
-        </span>
-      </Tooltip>
-    </div>
+    <Tooltip title={description} placement="topLeft" trigger={["hover", "focus"]}>
+      <span className="exif-section-title" tabIndex={0}>
+        <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
+        <span>{title}</span>
+      </span>
+    </Tooltip>
   )
 }
 
@@ -3125,13 +3119,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <h2>图片列表</h2>
                 <p className="muted">当前批次 {stats.itemCount} 张，优先处理名称和地点信息</p>
               </div>
-              <div className="exif-queue-actions" role="toolbar" aria-label="图片列表操作">
+              <Space className="exif-queue-actions" size={6} role="toolbar" aria-label="图片列表操作">
                 <Tooltip title={uploadActivity === "files" ? "正在读取图片" : "添加指定图片"} mouseEnterDelay={0.45}>
                   <Button
                     htmlType="button"
-                    type="text"
                     size="small"
-                    className="icon-button exif-queue-action"
                     icon={uploadActivity === "files"
                       ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
                       : <ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
@@ -3154,9 +3146,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 >
                   <Button
                     htmlType="button"
-                    type="text"
                     size="small"
-                    className={`icon-button exif-queue-action ${needsDirectoryAuthorization ? "is-required" : directoryHandle ? "is-complete" : ""}`}
                     icon={bindingDirectory || uploadActivity === "directory"
                       ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
                       : directoryHandle && !needsDirectoryAuthorization
@@ -3176,9 +3166,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <Tooltip title="清空图片列表" mouseEnterDelay={0.45}>
                   <Button
                     htmlType="button"
-                    type="text"
+                    danger
                     size="small"
-                    className="icon-button exif-queue-action exif-queue-action-clear"
                     icon={<Trash2 size={15} strokeWidth={1.8} aria-hidden="true" />}
                     onClick={() => void clearAll()}
                     disabled={items.length === 0}
@@ -3190,7 +3179,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     htmlType="button"
                     type="primary"
                     size="small"
-                    className={`icon-button exif-queue-action exif-queue-action-submit ${allItemsSubmitted ? "is-complete" : ""}`}
                     icon={submittingAll
                       ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
                       : allItemsSubmitted
@@ -3201,7 +3189,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     aria-label={submittingAll ? "正在全部入库" : allItemsSubmitted ? "当前批次已全部入库" : "全部入库"}
                   />
                 </Tooltip>
-              </div>
+              </Space>
             </div>
             <div className="exif-sidebar-stats" aria-label="当前批次统计">
               <div className="exif-sidebar-stat">
@@ -3249,7 +3237,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </label>
                 </div>
                 <div className="exif-tool-actions">
-                  <Button htmlType="button" type="default" className="exif-tool-apply" onClick={applyBatchRename} disabled={items.length === 0}>应用文件名规则</Button>
+                  <Button htmlType="button" onClick={applyBatchRename} disabled={items.length === 0}>应用文件名规则</Button>
                 </div>
                 <p className="muted">名称变动后会自动重解析时代、馆藏与出土信息，适合先统一处理文件名。</p>
               </details>
@@ -3305,11 +3293,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 </div>
                 <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
                   <span>快捷选择</span>
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("default")}>默认</Button>
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("location")}>地点</Button>
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("content")}>内容</Button>
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("all")}>全部</Button>
-                  <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
+                  <Space.Compact size="small">
+                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("default")}>默认</Button>
+                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("location")}>地点</Button>
+                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("content")}>内容</Button>
+                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("all")}>全部</Button>
+                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
+                  </Space.Compact>
                 </div>
                 <MetadataSyncFieldControls
                   context="sidebar"
@@ -3331,7 +3321,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   <Button
                     htmlType="button"
                     type="primary"
-                    className="exif-tool-submit"
+                    block
                     onClick={openMetadataSyncPreview}
                     disabled={items.length < 2 || !metadataSyncSource}
                   >
@@ -3351,7 +3341,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </span>
                 </summary>
                 <div className="batch-location-actions">
-                  <Button htmlType="button" type="default" className="exif-tool-copy" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>
+                  <Button htmlType="button" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>
                     采用当前图片地点
                   </Button>
                 </div>
@@ -3393,16 +3383,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   />
                 </div>
                 <div className="exif-tool-actions">
-                  <Button htmlType="button" type="primary" className="exif-tool-submit" onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</Button>
+                  <Button htmlType="button" type="primary" block onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</Button>
                 </div>
               </details>
               </div>
               <div className="exif-queue-list">
               {items.length > 0 ? items.map((item) => (
                 <div key={item.id} className="exif-queue-item-shell">
-                  <Button
-                    htmlType="button"
-                    type="default"
+                  <button
+                    type="button"
+                    data-ui="interactive-surface"
                     className={`exif-queue-item ${selectedId === item.id ? "is-selected" : ""}`}
                     aria-pressed={selectedId === item.id}
                     onClick={() => {
@@ -3424,8 +3414,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         {item.existingArtifactMatch ? " · 已匹配已有文物" : ""}
                       </span>
                       <Tag
-                        color={item.submitState === "submitted" ? "success" : item.submitState === "error" ? "error" : undefined}
-                        className={`queue-submit-state ${item.submitState} ${changedParts(item).length > 0 ? "has-changes" : ""}`}
+                        color={
+                          item.submitState === "submitted"
+                            ? "success"
+                            : item.submitState === "error"
+                              ? "error"
+                              : item.submitState === "submitting"
+                                ? "processing"
+                                : changedParts(item).length > 0
+                                  ? "warning"
+                                  : undefined
+                        }
+                        className="queue-submit-state"
                         icon={item.submitState === "submitted"
                           ? <Check size={11} strokeWidth={2.2} aria-hidden="true" />
                           : item.submitState === "submitting"
@@ -3458,30 +3458,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </span>
                       ) : null}
                     </div>
-                  </Button>
-                  {item.submitState === "error" ? (
+                  </button>
+                  <Space className="exif-queue-item-actions" size={6}>
+                    {item.submitState === "error" ? (
+                      <Button
+                        htmlType="button"
+                        danger
+                        size="small"
+                        icon={<RefreshCw size={13} strokeWidth={2} aria-hidden="true" />}
+                        onClick={() => void submitOne(item.id)}
+                      >
+                        授权并重试
+                      </Button>
+                    ) : null}
                     <Button
                       htmlType="button"
-                      type="text"
                       size="small"
-                      className="exif-retry"
-                      icon={<RefreshCw size={13} strokeWidth={2} aria-hidden="true" />}
-                    onClick={() => void submitOne(item.id)}
-                  >
-                      授权并重试
-                    </Button>
-                  ) : null}
-                  <Button
-                    htmlType="button"
-                    type="text"
-                    shape="circle"
-                    size="small"
-                    className="exif-remove"
-                    aria-label={`移除 ${item.fileName}`}
-                    onClick={() => void removeItem(item.id)}
-                  >
-                    <Trash2 size={14} aria-hidden="true" />
-                  </Button>
+                      danger
+                      icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />}
+                      aria-label={`移除 ${item.fileName}`}
+                      onClick={() => void removeItem(item.id)}
+                    />
+                  </Space>
                 </div>
               )) : <p className="muted">还没有图片，先上传一批图片开始处理。</p>}
               </div>
@@ -3612,8 +3610,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </div>
                 </details>
 
-                <Card className="exif-preview-card" styles={{ body: { padding: 0 } }}>
-                  <div className="ui-card-content exif-selected-head">
+                <Card className="exif-preview-card">
+                  <div className="exif-selected-head">
                     <img
                       src={selectedItem.previewUrl}
                       alt={selectedItem.fileName}
@@ -3648,9 +3646,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 </Card>
 
                 <div className="form-fields exif-form-card-grid">
-                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <FormSectionHeader icon={Landmark} title="基础信息" description="优先确认文物名称、馆藏单位和时代。" />
-                    <div className="ui-card-content form-section-body">
+                  <Card
+                    size="small"
+                    className="form-section exif-form-card"
+                    title={<FormSectionHeader icon={Landmark} title="基础信息" description="优先确认文物名称、馆藏单位和时代。" />}
+                  >
+                    <div className="form-section-body">
                       <div className="field-row">
                         <label className="field">
                           <span>馆藏单位 <FieldReviewBadge warning={warningForField("museum_name")} /></span>
@@ -3709,9 +3710,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                   </Card>
 
-                  <Card className="form-section exif-form-card exif-capture-card" styles={{ body: { padding: 0 } }}>
-                    <FormSectionHeader icon={Camera} title="拍摄信息" description="自动读取图片 EXIF，可在入库前校正。" />
-                    <div className="ui-card-content form-section-body">
+                  <Card
+                    size="small"
+                    className="form-section exif-form-card exif-capture-card"
+                    title={<FormSectionHeader icon={Camera} title="拍摄信息" description="自动读取图片 EXIF，可在入库前校正。" />}
+                  >
+                    <div className="form-section-body">
                       <div className="field-row">
                         <label className="field">
                           <span>相机型号</span>
@@ -3748,9 +3752,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                   </Card>
 
-                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <FormSectionHeader icon={MapPin} title="展出地点" description="填写展出地点、展览名称和定位坐标。" />
-                    <div className="ui-card-content form-section-body">
+                  <Card
+                    size="small"
+                    className="form-section exif-form-card"
+                    title={<FormSectionHeader icon={MapPin} title="展出地点" description="填写展出地点、展览名称和定位坐标。" />}
+                  >
+                    <div className="form-section-body">
                       <label className="field">
                         <span>展出地点名称</span>
                         <AutoComplete
@@ -3851,9 +3858,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                   </Card>
 
-                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <FormSectionHeader icon={Sparkles} title="AI 补充描述" description="生成多份候选描述后，选一版写回当前图片。" />
-                    <div className="ui-card-content form-section-body">
+                  <Card
+                    size="small"
+                    className="form-section exif-form-card"
+                    title={<FormSectionHeader icon={Sparkles} title="AI 补充描述" description="生成多份候选描述后，选一版写回当前图片。" />}
+                  >
+                    <div className="form-section-body">
                       <div className="upload-actions exif-model-actions">
                         <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
                           生成描述
@@ -3994,20 +4004,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                                 ) : null}
                                 <div className="result-meta selectable-model-tags">
                                   {candidate.tags.length > 0 ? candidate.tags.map((tag) => (
-                                    <button
+                                    <Tag.CheckableTag
                                       key={tag}
-                                      type="button"
-                                      className={selectedItem.form.tags.includes(tag) ? "is-selected" : ""}
-                                      aria-pressed={selectedItem.form.tags.includes(tag)}
-                                      onClick={() => toggleCandidateTag(tag)}
+                                      checked={selectedItem.form.tags.includes(tag)}
+                                      onChange={() => toggleCandidateTag(tag)}
                                     >
                                       {selectedItem.form.tags.includes(tag) ? <Check size={12} /> : <span>＋</span>}
                                       {tag}
-                                    </button>
+                                    </Tag.CheckableTag>
                                   )) : <span>暂无标签</span>}
                                 </div>
                                 {candidate.tags.length > 0 ? <p className="model-tag-help">点击任意模型标签，可加入或移出最终标签。</p> : null}
-                                <Button className="exif-candidate-apply" htmlType="button" type="primary" icon={<Check size={14} aria-hidden="true" />} onClick={() => applyCandidate(candidate)}>
+                                <Button htmlType="button" type="primary" icon={<Check size={14} aria-hidden="true" />} onClick={() => applyCandidate(candidate)}>
                                   采用此描述
                                 </Button>
                               </>
@@ -4021,9 +4029,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                   </Card>
 
-                  <Card className="form-section exif-form-card" styles={{ body: { padding: 0 } }}>
-                    <FormSectionHeader icon={FileCheck2} title="最终写入内容" description="这里的描述与标签会写入 EXIF 和云端数据库。" />
-                    <div className="ui-card-content form-section-body">
+                  <Card
+                    size="small"
+                    className="form-section exif-form-card"
+                    title={<FormSectionHeader icon={FileCheck2} title="最终写入内容" description="这里的描述与标签会写入 EXIF 和云端数据库。" />}
+                  >
+                    <div className="form-section-body">
                       <label className="field">
                         <span>描述</span>
                         <Textarea
@@ -4039,22 +4050,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         <div className="tag-editor">
                           <div className="tag-editor-chips">
                             {selectedItem.form.tags.length > 0 ? selectedItem.form.tags.map((tag) => (
-                              <span key={tag} className="tag-chip">
+                              <Tag
+                                key={tag}
+                                closable
+                                onClose={() => updateItem(selectedItem.id, (item) => ({
+                                  ...item,
+                                  form: { ...item.form, tags: item.form.tags.filter((entry) => entry !== tag) },
+                                }))}
+                              >
                                 {tag}
-                                <Button
-                                  htmlType="button"
-                                  type="text"
-                                  shape="circle"
-                                  size="small"
-                                  aria-label={`删除标签 ${tag}`}
-                                  onClick={() => updateItem(selectedItem.id, (item) => ({
-                                    ...item,
-                                    form: { ...item.form, tags: item.form.tags.filter((entry) => entry !== tag) },
-                                  }))}
-                                >
-                                  <X size={11} strokeWidth={2} aria-hidden="true" />
-                                </Button>
-                              </span>
+                              </Tag>
                             )) : <span className="tag-editor-placeholder">暂无标签</span>}
                           </div>
                           <Input
@@ -4285,11 +4290,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             </div>
             <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
               <span>快捷选择</span>
-              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("default")}>恢复默认</Button>
-              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("location")}>只选地点</Button>
-              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("content")}>只选内容</Button>
-              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("all")}>全部开启</Button>
-              <Button htmlType="button" size="small" type="text" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
+              <Space.Compact size="small">
+                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("default")}>恢复默认</Button>
+                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("location")}>只选地点</Button>
+                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("content")}>只选内容</Button>
+                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("all")}>全部开启</Button>
+                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
+              </Space.Compact>
             </div>
             <MetadataSyncFieldControls
               context="preview"

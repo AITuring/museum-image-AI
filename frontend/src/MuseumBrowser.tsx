@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ImgHTMLAttributes } from "react"
-import { Button, Input } from "antd"
+import { Button, Input, Segmented } from "antd"
 import "./styles/museum.css"
 
 const AMAP_SCRIPT_ID = "museum-console-amap-script"
@@ -1049,14 +1049,15 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
         </div>
 
         <div className="museum-console-tools">
-          <div className="museum-mode-switch" aria-label="博物馆展示模式">
-            <Button htmlType="button" className={mode === "cards" ? "active" : ""} onClick={() => setMode("cards")}>
-              卡片模式
-            </Button>
-            <Button htmlType="button" className={mode === "map" ? "active" : ""} onClick={() => setMode("map")}>
-              地图模式
-            </Button>
-          </div>
+          <Segmented<MuseumMode>
+            aria-label="博物馆展示模式"
+            value={mode}
+            options={[
+              { label: "卡片模式", value: "cards" },
+              { label: "地图模式", value: "map" },
+            ]}
+            onChange={setMode}
+          />
 
           <label className="gallery-search museum-search">
             <Input
@@ -1204,7 +1205,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           <div className="museum-detail-modal-body">
             <div className="museum-detail-modal-bar">
               <span className="museum-detail-modal-kicker">博物馆详情</span>
-              <Button htmlType="button" className="museum-detail-modal-close" onClick={() => setDetailModalOpen(false)}>
+              <Button htmlType="button" type="text" onClick={() => setDetailModalOpen(false)}>
                 关闭
               </Button>
             </div>
