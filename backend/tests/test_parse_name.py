@@ -22,6 +22,16 @@ class ParseArtifactNameTests(unittest.TestCase):
         self.assertEqual(parsed.era, "隋代")
         self.assertTrue(parsed.normalized_name.startswith("隋代-"))
 
+    def test_tomb_mural_title_is_not_mistaken_for_excavation_place(self) -> None:
+        parsed = main.parse_artifact_compound_name(
+            "唐-韩休墓北壁《山水图》-2013年线少陵原唐韩休墓出土-陕西历史博物馆藏-未标题-215.jpg"
+        )
+
+        self.assertEqual(parsed.era, "唐")
+        self.assertEqual(parsed.artifact_name, "韩休墓北壁《山水图》")
+        self.assertEqual(parsed.Place_of_Excavation, "2013年线少陵原唐韩休墓出土")
+        self.assertEqual(parsed.museum_name, "陕西历史博物馆")
+
 
 if __name__ == "__main__":
     unittest.main()

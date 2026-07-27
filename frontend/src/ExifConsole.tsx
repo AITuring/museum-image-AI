@@ -122,6 +122,7 @@ type ArtifactSubmitResult = {
   duplicate_image_skipped?: boolean
   duplicate_image_replaced?: boolean
   duplicate_image_detail?: string | null
+  reconciled_after_timeout?: boolean
 }
 
 type ExistingArtifactImage = {
@@ -339,6 +340,7 @@ type ExifWorkbenchItem = {
   submitMessage: string | null
   uploadProgress: number
   uploadStage: string | null
+  sourceHash: string | null
 }
 
 type PersistedExifDraftItem = Omit<ExifWorkbenchItem, "previewUrl" | "fileHandle"> & {
@@ -773,10 +775,12 @@ function postFormDataWithProgress<T>(url: string, formData: FormData, onProgress
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     request.open("POST", url)
+    request.timeout = 150_000
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.min(95, 45 + Math.round((event.loaded / event.total) * 50)))
     }
     request.onerror = () => reject(new Error("图片上传连接失败"))
+    request.ontimeout = () => reject(new Error("等待云端入库确认超时"))
     request.onload = () => {
       let payload: { detail?: string } | T | null = null
       try { payload = JSON.parse(request.responseText) as { detail?: string } | T } catch { /* non-json error */ }
@@ -788,6 +792,21 @@ function postFormDataWithProgress<T>(url: string, formData: FormData, onProgress
     }
     request.send(formData)
   })
+}
+
+async function confirmSubmittedSourceHash(apiBaseUrl: string, sourceHash: string) {
+  for (const delayMs of [0, 800, 1600]) {
+    if (delayMs > 0) await waitForRetry(delayMs)
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/artifact-images/by-source-hash?${new URLSearchParams({ source_hash: sourceHash }).toString()}`,
+      )
+      if (response.ok && await response.json()) return true
+    } catch {
+      // A failed confirmation request should fall through to the normal retry.
+    }
+  }
+  return false
 }
 
 async function loadMuseumSuggestions(
@@ -934,6 +953,39 @@ function cloneFormState(form: FormState): FormState {
     catalogExhibitionId: form.catalogExhibitionId ?? null,
     catalogExhibitionSourceId: form.catalogExhibitionSourceId ?? "",
     tags: [...form.tags],
+  }
+}
+
+function shouldReplaceParsedField(currentValue: string, previousParsedValue: string | null | undefined) {
+  const current = currentValue.trim()
+  const previous = previousParsedValue?.trim() ?? ""
+  return !current || Boolean(previous && current === previous)
+}
+
+function applyFilenameParseWithoutOverwritingEdits(
+  form: FormState,
+  previous: ParsedArtifactName | null,
+  next: ParsedArtifactName,
+): FormState {
+  return {
+    ...form,
+    name: next.artifact_name && shouldReplaceParsedField(form.name, previous?.artifact_name)
+      ? next.artifact_name
+      : form.name,
+    era: next.era && shouldReplaceParsedField(form.era, previous?.era)
+      ? next.era
+      : form.era,
+    museumName: next.museum_name && shouldReplaceParsedField(form.museumName, previous?.museum_name)
+      ? next.museum_name
+      : form.museumName,
+    placeOfExcavation: next.Place_of_Excavation
+      && shouldReplaceParsedField(form.placeOfExcavation, previous?.Place_of_Excavation)
+      ? next.Place_of_Excavation
+      : form.placeOfExcavation,
+    displayLocationName: next.museum_name
+      && shouldReplaceParsedField(form.displayLocationName, previous?.museum_name)
+      ? next.museum_name
+      : form.displayLocationName,
   }
 }
 
@@ -1123,19 +1175,30 @@ function serializeExifDraftItem(item: ExifWorkbenchItem): PersistedExifDraftItem
 }
 
 async function restoreExifDraftItems(draft: PersistedExifDraftItem[], apiBaseUrl: string) {
-  return Promise.all(draft.map(async (item) => ({
-    ...item,
-    form: cloneFormState(item.form),
-    originalForm: cloneFormState(item.originalForm),
-    candidates: ensureCandidates(item.candidates),
-    unavailableProviders: ensureStringList(item.unavailableProviders),
-    existingArtifactId: item.existingArtifactId ?? null,
-    existingArtifactMatch: item.existingArtifactMatch ?? null,
-    existingArtifactCandidates: item.existingArtifactCandidates ?? [],
-    existingArtifactReviewKey: item.existingArtifactReviewKey ?? null,
-    fileHandle: null,
-    previewUrl: await createRestoredPreviewUrl(item.localFile, apiBaseUrl),
-  })))
+  return Promise.all(draft.map(async (item) => {
+    const sourceHash = item.sourceHash ?? null
+    const confirmedSubmitted = sourceHash
+      ? await confirmSubmittedSourceHash(apiBaseUrl, sourceHash)
+      : false
+    return {
+      ...item,
+      form: cloneFormState(item.form),
+      originalForm: cloneFormState(item.originalForm),
+      candidates: ensureCandidates(item.candidates),
+      unavailableProviders: ensureStringList(item.unavailableProviders),
+      existingArtifactId: item.existingArtifactId ?? null,
+      existingArtifactMatch: item.existingArtifactMatch ?? null,
+      existingArtifactCandidates: item.existingArtifactCandidates ?? [],
+      existingArtifactReviewKey: item.existingArtifactReviewKey ?? null,
+      sourceHash,
+      fileHandle: null,
+      previewUrl: await createRestoredPreviewUrl(item.localFile, apiBaseUrl),
+      submitState: confirmedSubmitted ? "submitted" as const : item.submitState,
+      submitMessage: confirmedSubmitted ? "已从云端确认这张图片完成入库。" : item.submitMessage,
+      uploadProgress: confirmedSubmitted ? 100 : item.uploadProgress,
+      uploadStage: confirmedSubmitted ? "已完成" : item.uploadStage,
+    }
+  }))
 }
 
 function metadataSyncValue(value: string | string[]) {
@@ -1928,14 +1991,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           ...item,
           parsedName: parsed,
           form: {
-            ...item.form,
-            name: parsed.artifact_name ?? item.form.name,
-            era: parsed.era ?? item.form.era,
-            museumName: parsed.museum_name ?? item.form.museumName,
-            placeOfExcavation: parsed.Place_of_Excavation ?? item.form.placeOfExcavation,
-            displayLocationName: parsed.museum_name ?? item.form.displayLocationName,
-            latitude: museum?.latitude?.toString() ?? item.form.latitude,
-            longitude: museum?.longitude?.toString() ?? item.form.longitude,
+            ...applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
+            latitude: item.form.latitude || museum?.latitude?.toString() || "",
+            longitude: item.form.longitude || museum?.longitude?.toString() || "",
           },
         }))
       } catch {
@@ -2110,14 +2168,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         updateItem(entry.id, (item) => ({
           ...item,
           parsedName: parsed,
-          form: {
-            ...item.form,
-            name: parsed.artifact_name ?? item.form.name,
-            era: parsed.era ?? item.form.era,
-            museumName: parsed.museum_name ?? item.form.museumName,
-            placeOfExcavation: parsed.Place_of_Excavation ?? item.form.placeOfExcavation,
-            displayLocationName: parsed.museum_name ?? item.form.displayLocationName,
-          },
+          form: applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
         }))
       } catch { /* retain the renamed filename and existing metadata */ }
     }))
@@ -2362,6 +2413,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         : null,
       uploadProgress: 0,
       uploadStage: null,
+      sourceHash: null,
     }
   }
 
@@ -2445,16 +2497,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       let matched = 0
       let exactMatched = 0
       let fallbackMatched = 0
+      let nameMatched = 0
       let missing = 0
       let ambiguous = 0
       const usedIndexes = new Set<number>()
-      setItems((current) => current.map((item) => {
-        if (item.fileHandle) return item
-        const candidates = (entriesByName.get(item.originalFileName) ?? entriesByName.get(item.fileName) ?? [])
-          .filter((entry) => !usedIndexes.has(entry.index))
+      const bindingResults = new Map<string, WritableFileHandle>()
+      const unresolved: Array<{ id: string; fileName: string; reason: string }> = []
+      const pendingItems = items.filter((item) => (
+        item.submitState !== "submitted" || changedParts(item).length > 0
+      ))
+
+      pendingItems.forEach((item) => {
+        const candidateMap = new Map<number, { handle: WritableFileHandle; file: File; index: number }>()
+        for (const fileName of new Set([item.originalFileName, item.fileName])) {
+          for (const entry of entriesByName.get(fileName) ?? []) {
+            if (!usedIndexes.has(entry.index)) candidateMap.set(entry.index, entry)
+          }
+        }
+        const candidates = Array.from(candidateMap.values())
         if (candidates.length === 0) {
           missing += 1
-          return item
+          unresolved.push({ id: item.id, fileName: item.fileName, reason: "所选文件夹内未找到同名文件" })
+          return
         }
         const exact = candidates.filter((entry) => (
           entry.file.size === item.localFile.size && entry.file.lastModified === item.localFile.lastModified
@@ -2463,27 +2527,65 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           usedIndexes.add(exact[0].index)
           matched += 1
           exactMatched += 1
-          return { ...item, fileHandle: exact[0].handle }
+          bindingResults.set(item.id, exact[0].handle)
+          return
         }
         const sameSize = candidates.filter((entry) => entry.file.size === item.localFile.size)
         if (sameSize.length === 1) {
           usedIndexes.add(sameSize[0].index)
           matched += 1
           fallbackMatched += 1
-          return { ...item, fileHandle: sameSize[0].handle }
+          bindingResults.set(item.id, sameSize[0].handle)
+          return
+        }
+        // A previous EXIF write changes file size and modification time. A
+        // unique filename inside the explicitly selected folder is still the
+        // correct writable original and must be allowed to refresh a stale
+        // browser handle.
+        if (candidates.length === 1) {
+          usedIndexes.add(candidates[0].index)
+          matched += 1
+          nameMatched += 1
+          bindingResults.set(item.id, candidates[0].handle)
+          return
         }
         ambiguous += 1
-        return item
+        unresolved.push({ id: item.id, fileName: item.fileName, reason: "存在多个同名文件，无法唯一确认" })
+      })
+
+      setItems((current) => current.map((item) => {
+        const handle = bindingResults.get(item.id)
+        if (handle) {
+          return {
+            ...item,
+            fileHandle: handle,
+            submitState: item.submitState === "error" ? "idle" : item.submitState,
+            submitMessage: item.submitState === "error" ? null : item.submitMessage,
+          }
+        }
+        const issue = unresolved.find((entry) => entry.id === item.id)
+        if (!issue) return item
+        return {
+          ...item,
+          fileHandle: null,
+          submitState: "error",
+          submitMessage: `未绑定原文件：${issue.reason}（${issue.fileName}）`,
+        }
       }))
       setDirectoryHandle(nextDirectoryHandle)
       const summary = [`已绑定 ${matched} 张`]
       if (exactMatched > 0) summary.push(`精确匹配 ${exactMatched} 张`)
       if (fallbackMatched > 0) summary.push(`文件名和大小匹配 ${fallbackMatched} 张`)
+      if (nameMatched > 0) summary.push(`文件名匹配 ${nameMatched} 张`)
       if (missing > 0) summary.push(`${missing} 张未找到`)
       if (ambiguous > 0) summary.push(`${ambiguous} 张重名未绑定`)
+      if (unresolved.length > 0) setSelectedId(unresolved[0].id)
+      const unresolvedText = unresolved.length > 0
+        ? `；未绑定：${unresolved.slice(0, 3).map((item) => `“${item.fileName}”（${item.reason}）`).join("、")}${unresolved.length > 3 ? `等 ${unresolved.length} 张` : ""}`
+        : ""
       setSubmitNotice({
-        type: matched > 0 ? "success" : "error",
-        text: `${nextDirectoryHandle.name}：${summary.join("，")}；未载入文件夹内其他照片`,
+        type: unresolved.length === 0 ? "success" : "error",
+        text: `${nextDirectoryHandle.name}：${summary.join("，")}${unresolvedText}；未载入文件夹内其他照片`,
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -2809,12 +2911,26 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   }
 
   async function submitOne(itemId: string): Promise<boolean> {
-    const target = items.find((item) => item.id === itemId)
+    // Read the latest form snapshot at click time. Filename parsing and other
+    // async updates must never cause a stale render closure to submit older
+    // name or excavation values after the operator has corrected them.
+    const target = itemsRef.current.find((item) => item.id === itemId)
     if (!target) {
       return false
     }
     if (target.submitState === "submitted" && changedParts(target).length === 0) {
       setSubmitNotice({ type: "success", text: "该图片已入库且没有新的修改，无需重复提交。" })
+      return true
+    }
+    if (target.sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, target.sourceHash)) {
+      updateItem(itemId, (item) => ({
+        ...item,
+        submitState: "submitted",
+        submitMessage: "已从云端确认这张图片完成入库。",
+        uploadProgress: 100,
+        uploadStage: "已完成",
+        originalForm: cloneFormState(item.form),
+      }))
       return true
     }
     if (!target.form.name.trim() || !target.form.museumName.trim()) {
@@ -2911,6 +3027,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       const sourceHash = response.headers.get("X-Source-Hash")
       const cleanRewriteUsed = response.headers.get("X-Exif-Rewrite-Mode") === "clean"
       const editedBlob = await response.blob()
+      updateItem(itemId, (item) => ({ ...item, sourceHash: sourceHash || item.sourceHash }))
 
       let resolvedWriteHandle = target.fileHandle
       if (directoryHandle && target.fileName !== target.originalFileName) {
@@ -2993,12 +3110,21 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               updateItem(itemId, (item) => ({
                 ...item,
                 uploadProgress: progress,
-                uploadStage: `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
+                uploadStage: progress >= 95
+                  ? "图片已上传，正在等待云端入库确认"
+                  : `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
               }))
             },
           )
           break
         } catch (error) {
+          if (sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, sourceHash)) {
+            result = {
+              reconciled_after_timeout: true,
+              duplicate_image_detail: "云端已确认这张图片完成入库。",
+            }
+            break
+          }
           if (attempt === 3) {
             const message = error instanceof Error ? error.message : "未知错误"
             throw new Error(`云端提交已重试 3 次：${message}`, { cause: error })
@@ -3014,7 +3140,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         originalFileName: item.fileName,
         originalForm: cloneFormState(item.form),
         submitState: "submitted",
-        submitMessage: result.duplicate_image_replaced
+        submitMessage: result.reconciled_after_timeout
+          ? (result.duplicate_image_detail || "云端已确认这张图片完成入库。")
+          : result.duplicate_image_replaced
           ? (result.duplicate_image_detail || "已用本次校正覆盖云端已有图片。")
           : result.duplicate_image_skipped
           ? (result.duplicate_image_detail || "云端已存在相同原图，本次未重复上传。")
@@ -3042,19 +3170,48 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
     setSubmittingAll(true)
     setSubmitNotice(null)
-    const pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
+    let pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
+    const confirmedIds = new Set(
+      (await Promise.all(pendingItems.map(async (item) => (
+        item.sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, item.sourceHash)
+          ? item.id
+          : null
+      )))).filter((id): id is string => Boolean(id)),
+    )
+    if (confirmedIds.size > 0) {
+      setItems((current) => current.map((item) => confirmedIds.has(item.id) ? {
+        ...item,
+        submitState: "submitted",
+        submitMessage: "已从云端确认这张图片完成入库。",
+        uploadProgress: 100,
+        uploadStage: "已完成",
+        originalForm: cloneFormState(item.form),
+      } : item))
+      pendingItems = pendingItems.filter((item) => !confirmedIds.has(item.id))
+    }
     const unboundItems = pendingItems.filter((item) => (
       !item.fileHandle || (item.fileName !== item.originalFileName && !directoryHandle)
     ))
     if (unboundItems.length > 0) {
       setSubmittingAll(false)
+      setSelectedId(unboundItems[0].id)
+      setItems((current) => current.map((item) => (
+        unboundItems.some((unbound) => unbound.id === item.id)
+          ? {
+              ...item,
+              submitState: "error",
+              submitMessage: `未绑定可写原文件：${item.fileName}`,
+            }
+          : item
+      )))
+      const names = unboundItems.slice(0, 3).map((item) => `“${item.fileName}”`).join("、")
       setSubmitNotice({
         type: "error",
-        text: `还有 ${unboundItems.length} 张图片未绑定可写原文件；请先点击图片列表上方的文件夹按钮完成授权，再执行全部入库。`,
+        text: `未绑定可写原文件：${names}${unboundItems.length > 3 ? `等 ${unboundItems.length} 张` : ""}。已定位到第一张，请重新选择包含该原图的文件夹。`,
       })
       return
     }
-    let succeeded = 0
+    let succeeded = confirmedIds.size
     let failed = 0
     const queue = [...pendingItems]
     const worker = async () => {

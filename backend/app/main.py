@@ -1197,7 +1197,10 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
             )
             # #endregion
             continue
-        if place_of_excavation is None and ("出土" in segment or "墓" in segment or "遗址" in segment):
+        # Tomb names are often part of the artifact title itself, for example
+        # “韩休墓北壁《山水图》”. Only explicit excavation/provenance wording
+        # should win the place field during the first pass.
+        if place_of_excavation is None and ("出土" in segment or "遗址" in segment):
             place_of_excavation = segment
             continue
         remaining_segments.append(segment)
@@ -5241,6 +5244,32 @@ def get_artifact_image_by_hash(
         return ArtifactImageRead.model_validate(payload) if payload else None
 
     match = find_artifact_image_by_hash_local(db, image_hash)
+    return ArtifactImageRead.model_validate(match) if match is not None else None
+
+
+@app.get(f"{settings.api_prefix}/artifact-images/by-source-hash", response_model=ArtifactImageRead | None)
+def get_artifact_image_by_source_hash(
+    source_hash: str = Query(..., min_length=64, max_length=64),
+    db: Session = Depends(get_db),
+) -> ArtifactImageRead | None:
+    normalized_source_hash = source_hash.strip().lower()
+    if not SHA256_PATTERN.fullmatch(normalized_source_hash):
+        raise HTTPException(status_code=400, detail="原图哈希格式不正确。")
+    if should_proxy_artifact_queries_to_cloud():
+        base = settings.cloud_api_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
+                response = client.get(
+                    f"{base}{settings.api_prefix}/artifact-images/by-source-hash",
+                    params={"source_hash": normalized_source_hash},
+                )
+                response.raise_for_status()
+        except Exception as exc:  # noqa: BLE001 - surface lookup failure to the caller
+            raise HTTPException(status_code=502, detail=f"查询云端入库状态失败：{exc}") from exc
+        payload = response.json()
+        return ArtifactImageRead.model_validate(payload) if payload else None
+
+    match = find_artifact_image_by_source_hash_local(db, normalized_source_hash)
     return ArtifactImageRead.model_validate(match) if match is not None else None
 
 
