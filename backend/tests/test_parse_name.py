@@ -13,6 +13,14 @@ class ParseArtifactNameTests(unittest.TestCase):
         parsed = main.parse_artifact_compound_name("隋-夫妇宴享行乐图-山东省博物馆藏-DSC03961.jpg")
 
         self.assertEqual(parsed.museum_name, "山东省博物馆")
+        self.assertEqual(parsed.era, "隋")
+        self.assertTrue(parsed.normalized_name.startswith("隋-"))
+
+    def test_preserves_an_explicit_era_suffix(self) -> None:
+        parsed = main.parse_artifact_compound_name("隋代-夫妇宴享行乐图-山东省博物馆藏.jpg")
+
+        self.assertEqual(parsed.era, "隋代")
+        self.assertTrue(parsed.normalized_name.startswith("隋代-"))
 
 
 if __name__ == "__main__":

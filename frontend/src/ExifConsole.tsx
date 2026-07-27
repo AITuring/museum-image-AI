@@ -188,7 +188,7 @@ type MetadataSyncFieldKey =
   | "capturedAt"
   | "description"
   | "tags"
-type MetadataSyncTargetMode = "current" | "others"
+type MetadataSyncTargetMode = "current" | "selected" | "others"
 type MetadataSyncSelection = Record<MetadataSyncFieldKey, boolean>
 type MetadataSyncDiffRow = {
   label: string
@@ -1667,6 +1667,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [uploadActivity, setUploadActivity] = useState<UploadActivity>(null)
   const [bindingDirectory, setBindingDirectory] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [descriptionGeneratingItemIds, setDescriptionGeneratingItemIds] = useState<string[]>([])
   const [descriptionProgress, setDescriptionProgress] = useState<string[]>([])
   const [liveResearchSummary, setLiveResearchSummary] = useState("")
   const [liveProviders, setLiveProviders] = useState<Record<string, LiveProviderState>>({})
@@ -1681,6 +1682,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [batchLongitude, setBatchLongitude] = useState("")
   const [metadataSyncSourceId, setMetadataSyncSourceId] = useState("")
   const [metadataSyncTargetMode, setMetadataSyncTargetMode] = useState<MetadataSyncTargetMode>("others")
+  const [metadataSyncTargetIds, setMetadataSyncTargetIds] = useState<string[]>([])
   const [metadataSyncSelection, setMetadataSyncSelection] = useState<MetadataSyncSelection>(DEFAULT_METADATA_SYNC_SELECTION)
   const [metadataSyncPreviewOpen, setMetadataSyncPreviewOpen] = useState(false)
   const [uploadPermissionOpen, setUploadPermissionOpen] = useState(false)
@@ -1746,13 +1748,29 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     [items, metadataSyncSourceId],
   )
 
+  const metadataSyncAvailableTargets = useMemo(
+    () => items.filter((item) => item.id !== metadataSyncSource?.id),
+    [items, metadataSyncSource],
+  )
+
   const metadataSyncTargets = useMemo(() => {
     if (!metadataSyncSource) return []
     if (metadataSyncTargetMode === "current") {
       return selectedItem && selectedItem.id !== metadataSyncSource.id ? [selectedItem] : []
     }
+    if (metadataSyncTargetMode === "selected") {
+      const targetIds = new Set(metadataSyncTargetIds)
+      return metadataSyncAvailableTargets.filter((item) => targetIds.has(item.id))
+    }
     return items.filter((item) => item.id !== metadataSyncSource.id)
-  }, [items, metadataSyncSource, metadataSyncTargetMode, selectedItem])
+  }, [
+    items,
+    metadataSyncAvailableTargets,
+    metadataSyncSource,
+    metadataSyncTargetIds,
+    metadataSyncTargetMode,
+    selectedItem,
+  ])
 
   const metadataSyncDiffs = useMemo(() => metadataSyncTargets.map((target) => {
     const rows = METADATA_SYNC_GROUPS
@@ -1863,6 +1881,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (metadataSyncSourceId && items.some((item) => item.id === metadataSyncSourceId)) return
     setMetadataSyncSourceId(items[0]?.id ?? "")
   }, [items, metadataSyncSourceId])
+
+  useEffect(() => {
+    const availableIds = new Set(metadataSyncAvailableTargets.map((item) => item.id))
+    setMetadataSyncTargetIds((current) => current.filter((id) => availableIds.has(id)))
+  }, [metadataSyncAvailableTargets])
 
   useEffect(() => () => {
     itemsRef.current.forEach((item) => revokePreviewUrl(item.previewUrl))
@@ -2138,7 +2161,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       setSubmitNotice({ type: "error", text: "请至少开启一项需要同步的信息" })
       return
     }
-    if (metadataSyncTargets.length === 0) {
+    if (metadataSyncTargets.length === 0 && metadataSyncTargetMode !== "selected") {
       setSubmitNotice({
         type: "error",
         text: metadataSyncTargetMode === "current" && selectedItem?.id === metadataSyncSource.id
@@ -2156,7 +2179,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       return
     }
     setMetadataSyncSourceId(selectedItem.id)
-    setMetadataSyncTargetMode("others")
+    setMetadataSyncTargetMode("selected")
+    setMetadataSyncTargetIds([])
     if (!Object.values(metadataSyncSelection).some(Boolean)) {
       selectMetadataSyncPreset("default")
     }
@@ -2566,6 +2590,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     const isSharedTarget = target === "shared"
     const fallbackName = selectedItem.parsedName?.artifact_name || fileBaseName(selectedItem.fileName)
     const targetForm = isSharedTarget ? sharedForm : selectedItem.form
+    const generationTargetIds = isSharedTarget ? items.map((item) => item.id) : [selectedItem.id]
     const resolvedForm = targetForm.name.trim() ? targetForm : { ...targetForm, name: fallbackName }
     if (!resolvedForm.name.trim()) return
     if (!targetForm.name.trim()) {
@@ -2574,6 +2599,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
 
     setGenerating(true)
+    setDescriptionGeneratingItemIds((current) => Array.from(new Set([...current, ...generationTargetIds])))
     setDescriptionProgress(["正在整理名称、年代、博物馆与出土地点…"])
     setLiveResearchSummary("")
     setLiveProviders({})
@@ -2723,6 +2749,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       })
     } finally {
       setGenerating(false)
+      const completedIds = new Set(generationTargetIds)
+      setDescriptionGeneratingItemIds((current) => current.filter((id) => !completedIds.has(id)))
     }
   }
 
@@ -3286,6 +3314,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     value={metadataSyncTargetMode}
                     options={[
                       { label: "当前图片", value: "current" },
+                      { label: "指定照片", value: "selected" },
                       { label: "全部其他图片", value: "others" },
                     ]}
                     onChange={setMetadataSyncTargetMode}
@@ -3325,7 +3354,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     onClick={openMetadataSyncPreview}
                     disabled={items.length < 2 || !metadataSyncSource}
                   >
-                    预览并同步
+                    {metadataSyncTargetMode === "selected" ? "选择目标并预览" : "预览并同步"}
                   </Button>
                 </div>
               </details>
@@ -3413,39 +3442,56 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         {item.form.name || item.parsedName?.artifact_name || "待确认名称"}
                         {item.existingArtifactMatch ? " · 已匹配已有文物" : ""}
                       </span>
-                      <Tag
-                        color={
-                          item.submitState === "submitted"
-                            ? "success"
-                            : item.submitState === "error"
-                              ? "error"
-                              : item.submitState === "submitting"
-                                ? "processing"
+                      <span className="queue-state-tags">
+                        {descriptionGeneratingItemIds.includes(item.id) ? (
+                          <Tag
+                            color="processing"
+                            icon={<Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />}
+                          >
+                            描述中
+                          </Tag>
+                        ) : ensureCandidates(item.candidates).some((candidate) => candidate.status === "success") ? (
+                          <Tag
+                            color="success"
+                            icon={<Check size={11} strokeWidth={2.2} aria-hidden="true" />}
+                          >
+                            描述完成
+                          </Tag>
+                        ) : null}
+                        <Tag
+                          color={
+                            item.submitState === "submitted"
+                              ? "success"
+                              : item.submitState === "error"
+                                ? "error"
+                                : item.submitState === "submitting"
+                                  ? "processing"
+                                  : changedParts(item).length > 0
+                                    ? "warning"
+                                    : undefined
+                          }
+                          className="queue-submit-state"
+                          icon={item.submitState === "submitted"
+                            ? <Check size={11} strokeWidth={2.2} aria-hidden="true" />
+                            : item.submitState === "submitting"
+                              ? <Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />
+                              : item.submitState === "error"
+                                ? <X size={11} strokeWidth={2.2} aria-hidden="true" />
                                 : changedParts(item).length > 0
-                                  ? "warning"
-                                  : undefined
-                        }
-                        className="queue-submit-state"
-                        icon={item.submitState === "submitted"
-                          ? <Check size={11} strokeWidth={2.2} aria-hidden="true" />
-                          : item.submitState === "submitting"
-                            ? <Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />
-                            : item.submitState === "error"
-                              ? <X size={11} strokeWidth={2.2} aria-hidden="true" />
-                              : changedParts(item).length > 0
-                                ? <FileCheck2 size={11} strokeWidth={2} aria-hidden="true" />
-                                : undefined}
-                      >
-                        {item.submitState === "submitted"
-                          ? "已提交"
-                          : item.submitState === "submitting"
-                            ? "提交中"
-                            : item.submitState === "error"
-                              ? "提交失败"
-                              : changedParts(item).length > 0
-                                ? `待提交 · ${changedParts(item).length} 项`
-                                : "待处理"}
-                      </Tag>
+                                  ? <FileCheck2 size={11} strokeWidth={2} aria-hidden="true" />
+                                  : undefined}
+                        >
+                          {item.submitState === "submitted"
+                            ? "已提交"
+                            : item.submitState === "submitting"
+                              ? "提交中"
+                              : item.submitState === "error"
+                                ? "提交失败"
+                                : changedParts(item).length > 0
+                                  ? `待提交 · ${changedParts(item).length} 项`
+                                  : "待处理"}
+                        </Tag>
+                      </span>
                       {changedParts(item).length > 0 ? (
                         <span className="queue-change-summary" aria-label={`待提交的变更：${changedParts(item).join("、")}`}>
                           已修改：{changedParts(item).join("、")}
@@ -4266,7 +4312,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         </div>
       </Modal>
       <Modal
-        title="确认照片信息同步"
+        title="选择目标与同步内容"
         open={metadataSyncPreviewOpen}
         width={760}
         centered
@@ -4274,12 +4320,69 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         onCancel={() => setMetadataSyncPreviewOpen(false)}
         footer={[
           <Button key="cancel" htmlType="button" onClick={() => setMetadataSyncPreviewOpen(false)}>取消</Button>,
-          <Button key="apply" htmlType="button" type="primary" onClick={applyMetadataSync} disabled={metadataSyncChangedCount === 0}>
+          <Button
+            key="apply"
+            htmlType="button"
+            type="primary"
+            onClick={applyMetadataSync}
+            disabled={metadataSyncTargets.length === 0 || metadataSyncChangedCount === 0}
+          >
             同步到 {metadataSyncTargets.length} 张照片
           </Button>,
         ]}
       >
         <div className="metadata-sync-preview">
+          {metadataSyncTargetMode === "selected" ? (
+            <section className="metadata-sync-target-picker">
+              <div className="metadata-sync-target-picker-head">
+                <div>
+                  <strong>选择目标照片</strong>
+                  <span>可以只选一张，也可以多选；来源照片不会出现在这里。</span>
+                </div>
+                <Space.Compact size="small">
+                  <Button
+                    htmlType="button"
+                    onClick={() => setMetadataSyncTargetIds(metadataSyncAvailableTargets.map((item) => item.id))}
+                    disabled={metadataSyncAvailableTargets.length === 0}
+                  >
+                    全选
+                  </Button>
+                  <Button
+                    htmlType="button"
+                    onClick={() => setMetadataSyncTargetIds([])}
+                    disabled={metadataSyncTargetIds.length === 0}
+                  >
+                    清空
+                  </Button>
+                </Space.Compact>
+              </div>
+              <div className="metadata-sync-target-list">
+                {metadataSyncAvailableTargets.map((item) => {
+                  const itemIndex = items.findIndex((entry) => entry.id === item.id)
+                  return (
+                    <Checkbox
+                      key={item.id}
+                      className="metadata-sync-target-option"
+                      checked={metadataSyncTargetIds.includes(item.id)}
+                      onChange={(event) => setMetadataSyncTargetIds((current) => (
+                        event.target.checked
+                          ? Array.from(new Set([...current, item.id]))
+                          : current.filter((id) => id !== item.id)
+                      ))}
+                    >
+                      <span className="metadata-sync-target-option-content">
+                        <img src={item.previewUrl} alt="" loading="lazy" decoding="async" />
+                        <span title={item.fileName}>{indexedFileName(item.fileName, itemIndex)}</span>
+                      </span>
+                    </Checkbox>
+                  )
+                })}
+              </div>
+              <p className="metadata-sync-target-picker-count">
+                已选择 {metadataSyncTargets.length}/{metadataSyncAvailableTargets.length} 张目标照片
+              </p>
+            </section>
+          ) : null}
           <section className="metadata-sync-preview-fields">
             <div className="metadata-sync-preview-fields-head">
               <div>
@@ -4314,14 +4417,22 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             </div>
             <div>
               <span>目标范围</span>
-              <strong>{metadataSyncTargetMode === "current" ? "当前图片" : `全部其他图片（${metadataSyncTargets.length} 张）`}</strong>
+              <strong>
+                {metadataSyncTargetMode === "current"
+                  ? "当前图片"
+                  : metadataSyncTargetMode === "selected"
+                    ? `指定照片（${metadataSyncTargets.length} 张）`
+                    : `全部其他图片（${metadataSyncTargets.length} 张）`}
+              </strong>
             </div>
             <div className="is-emphasis">
               <span>预计变更</span>
               <strong>{metadataSyncChangedCount} 项</strong>
             </div>
           </div>
-          {metadataSyncDiffs.every((entry) => entry.rows.length === 0) ? (
+          {metadataSyncTargets.length === 0 ? (
+            <div className="metadata-sync-no-change">请先选择至少一张目标照片。</div>
+          ) : metadataSyncDiffs.every((entry) => entry.rows.length === 0) ? (
             <div className="metadata-sync-no-change">来源照片与目标照片在所选范围内没有差异。</div>
           ) : (
             <div className="metadata-sync-preview-targets">

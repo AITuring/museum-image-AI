@@ -1634,6 +1634,85 @@ label.field,
   padding-top: 4px;
 }
 
+.metadata-sync-target-picker {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 9px;
+  background: var(--app-card);
+}
+
+.metadata-sync-target-picker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.metadata-sync-target-picker-head > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.metadata-sync-target-picker-head strong {
+  color: var(--app-fg);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.metadata-sync-target-picker-head span,
+.metadata-sync-target-picker-count {
+  color: var(--app-soft);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.metadata-sync-target-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+  max-height: 210px;
+  overflow-y: auto;
+  border-top: 1px solid var(--app-border);
+  border-bottom: 1px solid var(--app-border);
+}
+
+.metadata-sync-target-option {
+  min-width: 0;
+  margin-inline-start: 0;
+  padding: 7px 0;
+}
+
+.metadata-sync-target-option-content {
+  display: inline-grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.metadata-sync-target-option-content img {
+  width: 30px;
+  height: 30px;
+  border-radius: 5px;
+  background: var(--app-muted);
+  object-fit: cover;
+}
+
+.metadata-sync-target-option-content > span {
+  overflow: hidden;
+  color: var(--app-fg);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metadata-sync-target-picker-count {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .metadata-sync-preview-fields {
   padding: 12px;
   border: 1px solid var(--app-border);
@@ -2084,7 +2163,18 @@ label.field,
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  margin: 0;
+}
+
+.queue-state-tags {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
   justify-self: end;
+  gap: 4px;
+}
+
+.queue-state-tags .ant-tag {
   margin: 0;
 }
 
@@ -3448,6 +3538,10 @@ label.field,
 }
 
 @media (max-width: 960px) {
+  .metadata-sync-target-list {
+    grid-template-columns: 1fr;
+  }
+
   .metadata-sync-field-groups.is-preview .metadata-sync-field-group {
     grid-template-columns: 120px minmax(0, 1fr);
   }

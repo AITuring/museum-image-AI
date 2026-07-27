@@ -1110,13 +1110,14 @@ def normalize_era_label(value: str | None) -> str | None:
     text_value = optional_text(value)
     if text_value is None:
         return None
-    if text_value.startswith("五代十国"):
+    if text_value.startswith("五代十国") or any(
+        text_value == token or text_value.startswith(token)
+        for token in ERA_TOKEN_CANDIDATES
+    ):
+        # The filename parser may recognize an era, but it must not rewrite the
+        # operator's wording. "隋" stays "隋"; an explicitly entered "隋代"
+        # stays "隋代".
         return text_value
-    for token in ERA_TOKEN_CANDIDATES:
-        if text_value == token or text_value.startswith(token):
-            if token.endswith(("代", "时期", "朝")):
-                return token
-            return f"{token}代"
     return text_value
 
 
@@ -1167,7 +1168,7 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
     for segment in segments:
         normalized_era = normalize_era_label(segment)
         if era is None and (
-            normalized_era in {normalize_era_label(token) for token in ERA_TOKEN_CANDIDATES}
+            any(segment == token or segment.startswith(token) for token in ERA_TOKEN_CANDIDATES)
             or segment.startswith("五代十国")
         ):
             era = normalized_era
