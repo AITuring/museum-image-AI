@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import AMapLoader from "@amap/amap-jsapi-loader"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { AutoComplete, Button, Card, Checkbox, Dropdown, Input, Modal, Segmented, Select, Space, Tag, Tooltip } from "antd"
 import {
   ArrowRight,
@@ -14,12 +13,23 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
+  Search,
   Sparkles,
   Trash2,
   X,
   type LucideIcon,
 } from "lucide-react"
 import { useOperationHistory } from "./OperationHistory"
+import {
+  DEFAULT_METADATA_SYNC_SELECTION,
+  METADATA_SYNC_FIELD_COUNT,
+  METADATA_SYNC_GROUPS,
+  MetadataSyncFieldControls,
+  metadataSyncSelectionFor,
+  type MetadataSyncFieldKey,
+  type MetadataSyncSelection,
+} from "./components/exif/MetadataSyncFieldControls"
+import { AnnotatedDescription, FieldReviewBadge, type ArtifactFieldWarning } from "./components/exif/ReviewIndicators"
 
 const EXIF_HISTORY_SCOPE = "exif"
 
@@ -52,15 +62,6 @@ type DescriptionCandidate = {
 
 type VerifiedClaim = {
   text: string
-  source_refs: string[]
-}
-
-type ArtifactFieldWarning = {
-  field: "artifact_name" | "era" | "museum_name" | "place_of_excavation" | string
-  label: string
-  input_value: string
-  suggested_value: string | null
-  reason: string
   source_refs: string[]
 }
 
@@ -181,150 +182,13 @@ type FormState = {
   tags: string[]
 }
 
-type MetadataSyncFieldKey =
-  | "displayLocation"
-  | "exhibition"
-  | "gps"
-  | "cameraModel"
-  | "lensModel"
-  | "shutterSpeed"
-  | "aperture"
-  | "iso"
-  | "capturedAt"
-  | "description"
-  | "tags"
 type MetadataSyncTargetMode = "current" | "selected" | "others"
-type MetadataSyncSelection = Record<MetadataSyncFieldKey, boolean>
 type MetadataSyncDiffRow = {
   label: string
   targetValue: string
   sourceValue: string
   changed: boolean
   willClearTarget: boolean
-}
-
-const METADATA_SYNC_GROUPS: Array<{
-  key: string
-  title: string
-  description: string
-  fields: Array<{
-    key: MetadataSyncFieldKey
-    label: string
-  }>
-}> = [
-  {
-    key: "location",
-    title: "地点与展览",
-    description: "同一批照片通常可以复用",
-    fields: [
-      { key: "displayLocation", label: "展出地点" },
-      { key: "exhibition", label: "对应展览" },
-      { key: "gps", label: "经纬度" },
-    ],
-  },
-  {
-    key: "camera",
-    title: "相机与拍摄参数",
-    description: "默认不同步，保留每张照片的原始 EXIF",
-    fields: [
-      { key: "cameraModel", label: "相机型号" },
-      { key: "lensModel", label: "镜头型号" },
-      { key: "shutterSpeed", label: "快门" },
-      { key: "aperture", label: "光圈" },
-      { key: "iso", label: "ISO" },
-    ],
-  },
-  {
-    key: "content",
-    title: "时间与内容",
-    description: "需要完全一致时再开启",
-    fields: [
-      { key: "capturedAt", label: "拍摄时间" },
-      { key: "description", label: "描述" },
-      { key: "tags", label: "标签" },
-    ],
-  },
-]
-
-const DEFAULT_METADATA_SYNC_SELECTION: MetadataSyncSelection = {
-  displayLocation: true,
-  exhibition: true,
-  gps: true,
-  cameraModel: false,
-  lensModel: false,
-  shutterSpeed: false,
-  aperture: false,
-  iso: false,
-  capturedAt: false,
-  description: false,
-  tags: false,
-}
-
-const METADATA_SYNC_FIELD_COUNT = METADATA_SYNC_GROUPS.reduce(
-  (count, group) => count + group.fields.length,
-  0,
-)
-
-function metadataSyncSelectionFor(fields: MetadataSyncFieldKey[]): MetadataSyncSelection {
-  const enabled = new Set(fields)
-  return Object.fromEntries(
-    METADATA_SYNC_GROUPS
-      .flatMap((group) => group.fields)
-      .map((field) => [field.key, enabled.has(field.key)]),
-  ) as MetadataSyncSelection
-}
-
-function MetadataSyncFieldControls({
-  selection,
-  onChange,
-  context,
-}: {
-  selection: MetadataSyncSelection
-  onChange: (field: MetadataSyncFieldKey, checked: boolean) => void
-  context: "sidebar" | "preview"
-}) {
-  const renderGroup = (group: (typeof METADATA_SYNC_GROUPS)[number]) => (
-    <section key={group.key} className="metadata-sync-field-group">
-      <header>
-        <strong>{group.title}</strong>
-        {context === "preview" ? <span>{group.description}</span> : null}
-      </header>
-      <div className="metadata-sync-field-list">
-        {group.fields.map((field) => (
-          <Checkbox
-            key={field.key}
-            className="metadata-sync-field"
-            checked={selection[field.key]}
-            onChange={(event) => onChange(field.key, event.target.checked)}
-          >
-            {field.label}
-          </Checkbox>
-        ))}
-      </div>
-    </section>
-  )
-
-  const advancedSelectedCount = METADATA_SYNC_GROUPS
-    .slice(1)
-    .flatMap((group) => group.fields)
-    .filter((field) => selection[field.key])
-    .length
-
-  return (
-    <div className={`metadata-sync-field-groups is-${context}`}>
-      {renderGroup(METADATA_SYNC_GROUPS[0])}
-      {context === "sidebar" ? (
-        <details className="metadata-sync-more">
-          <summary>
-            <span>更多字段</span>
-            <small>{advancedSelectedCount > 0 ? `${advancedSelectedCount} 项已选` : "默认关闭"}</small>
-            <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
-          </summary>
-          <div>{METADATA_SYNC_GROUPS.slice(1).map(renderGroup)}</div>
-        </details>
-      ) : METADATA_SYNC_GROUPS.slice(1).map(renderGroup)}
-    </div>
-  )
 }
 
 type ImageExifMetadata = {
@@ -1506,58 +1370,6 @@ function ensureStringList(value: string[] | undefined | null): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
 }
 
-function warningDetail(warning: ArtifactFieldWarning) {
-  const suggestion = warning.suggested_value
-    ? `建议值：${warning.suggested_value}。`
-    : ""
-  const sources = warning.source_refs.length > 0
-    ? `依据：${warning.source_refs.join("、")}。`
-    : ""
-  return `${warning.reason}${suggestion}${sources}`
-}
-
-function FieldReviewBadge({ warning }: { warning?: ArtifactFieldWarning }) {
-  if (!warning) return null
-  return (
-    <Tooltip title={warningDetail(warning)}>
-      <span className="field-review-badge">需要复核</span>
-    </Tooltip>
-  )
-}
-
-function AnnotatedDescription({
-  description,
-  warnings,
-}: {
-  description: string
-  warnings: ArtifactFieldWarning[]
-}) {
-  const markers = warnings.flatMap((warning) => {
-    const values = [warning.suggested_value, warning.input_value]
-      .map((value) => value?.trim())
-      .filter((value): value is string => Boolean(value))
-    const value = values.find((candidate) => description.includes(candidate))
-    return value ? [{ warning, value, index: description.indexOf(value) }] : []
-  }).sort((left, right) => left.index - right.index)
-
-  if (markers.length === 0) return <p className="result-desc">{description || "暂无描述"}</p>
-
-  const parts: ReactNode[] = []
-  let cursor = 0
-  markers.forEach(({ warning, value, index }, markerIndex) => {
-    if (index < cursor) return
-    parts.push(description.slice(cursor, index + value.length))
-    parts.push(
-      <Tooltip key={`${warning.field}-${markerIndex}`} title={warningDetail(warning)}>
-        <span className="inline-review-badge">需要复核</span>
-      </Tooltip>,
-    )
-    cursor = index + value.length
-  })
-  parts.push(description.slice(cursor))
-  return <p className="result-desc annotated-description">{parts}</p>
-}
-
 function researchSourceUrl(apiBaseUrl: string, url: string) {
   if (url.startsWith("http://") || url.startsWith("https://")) return url
   return `${apiBaseUrl}${url.startsWith("/") ? url : `/${url}`}`
@@ -1718,33 +1530,47 @@ declare global {
   }
 }
 
+const AMAP_SCRIPT_ID = import.meta.env.VITE_AMAP_SCRIPT_ID as string | undefined
+  ?? "museum-console-amap-script"
 const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE as string | undefined
 const AMAP_SCRIPT_SRC = import.meta.env.VITE_AMAP_SCRIPT_SRC as string | undefined
 let amapLoadPromise: Promise<AMapSdk> | null = null
 
 function loadAmap(): Promise<AMapSdk> {
-  if (window.AMap?.Geocoder) return Promise.resolve(window.AMap)
-  if (window.AMap?.plugin) {
-    return new Promise((resolve, reject) => {
-      window.AMap?.plugin?.(["AMap.Geocoder", "AMap.PlaceSearch"], () => {
-        if (window.AMap?.Geocoder) resolve(window.AMap)
+  if (amapLoadPromise) return amapLoadPromise
+  if (!AMAP_SCRIPT_SRC) return Promise.reject(new Error("未配置高德地图脚本"))
+  if (AMAP_SECURITY_CODE) window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
+  const ensureGeocoder = (sdk: AMapSdk) => {
+    if (sdk.Geocoder) return Promise.resolve(sdk)
+    if (!sdk.plugin) return Promise.reject(new Error("高德地图地理编码插件不可用"))
+    return new Promise<AMapSdk>((resolve, reject) => {
+      sdk.plugin?.(["AMap.Geocoder", "AMap.PlaceSearch"], () => {
+        if (sdk.Geocoder) resolve(sdk)
         else reject(new Error("高德地图地理编码插件加载失败"))
       })
     })
   }
-  if (amapLoadPromise) return amapLoadPromise
-  if (!AMAP_SCRIPT_SRC) return Promise.reject(new Error("未配置高德地图脚本"))
-  const key = new URL(AMAP_SCRIPT_SRC).searchParams.get("key")
-  if (!key) return Promise.reject(new Error("高德地图 Key 不完整"))
-  if (AMAP_SECURITY_CODE) window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
-  amapLoadPromise = (AMapLoader.load({
-    key,
-    version: "2.0",
-    plugins: ["AMap.Geocoder", "AMap.PlaceSearch"],
-  }) as Promise<AMapSdk>).then((sdk) => {
-    if (!sdk.Geocoder) throw new Error("高德地图地理编码插件加载失败")
-    return sdk
-  }).catch((error) => {
+  const loadScript = new Promise<AMapSdk>((resolve, reject) => {
+    if (window.AMap) {
+      resolve(window.AMap)
+      return
+    }
+    const existing = document.getElementById(AMAP_SCRIPT_ID) as HTMLScriptElement | null
+    const finish = () => window.AMap ? resolve(window.AMap) : reject(new Error("高德地图脚本未初始化"))
+    if (existing) {
+      existing.addEventListener("load", finish, { once: true })
+      existing.addEventListener("error", () => reject(new Error("高德地图脚本加载失败")), { once: true })
+      return
+    }
+    const script = document.createElement("script")
+    script.id = AMAP_SCRIPT_ID
+    script.src = AMAP_SCRIPT_SRC
+    script.async = true
+    script.onload = finish
+    script.onerror = () => reject(new Error("高德地图脚本加载失败"))
+    document.head.appendChild(script)
+  })
+  amapLoadPromise = loadScript.then(ensureGeocoder).catch((error) => {
     amapLoadPromise = null
     throw error
   })
@@ -1879,8 +1705,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [sharedForm, setSharedForm] = useState<FormState>(buildBaseForm())
   const [museumSuggestions, setMuseumSuggestions] = useState<MuseumOption[]>([])
   const [locationSuggestions, setLocationSuggestions] = useState<MuseumOption[]>([])
+  const [artifactSearchResults, setArtifactSearchResults] = useState<ExistingArtifact[]>([])
   const [showMuseumSuggestions, setShowMuseumSuggestions] = useState(false)
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
+  const [showArtifactSearch, setShowArtifactSearch] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [uploadActivity, setUploadActivity] = useState<UploadActivity>(null)
   const [bindingDirectory, setBindingDirectory] = useState(false)
@@ -2093,7 +1921,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     filenameHistoryOperationRef.current.clear()
     setSubmitNotice({
       type: "success",
-      text: `已${direction === "undo" ? "撤销" : "重做"}：${entry.label}`,
+      text: direction === "restore"
+        ? `已替换为「${entry.label}」完成后的内容。`
+        : `已${direction === "undo" ? "撤销" : "重做"}：${entry.label}`,
     })
   }), [registerHistoryScope])
 
@@ -2214,6 +2044,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }, 180)
     return () => window.clearTimeout(timer)
   }, [apiBaseUrl, selectedItem, showLocationSuggestions])
+
+  useEffect(() => {
+    const query = selectedItem?.form.name.trim() ?? ""
+    if (!showArtifactSearch || query.length < 2) {
+      setArtifactSearchResults([])
+      return
+    }
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void fetchJson<ExistingArtifact[]>(
+        `${apiBaseUrl}/api/artifacts?${new URLSearchParams({ q: query, limit: "8" }).toString()}`,
+      ).then((results) => {
+        if (!cancelled) setArtifactSearchResults(results)
+      }).catch(() => {
+        if (!cancelled) setArtifactSearchResults([])
+      })
+    }, 180)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [apiBaseUrl, selectedItem?.form.name, showArtifactSearch])
 
   useEffect(() => {
     if (!selectedItem?.fileName.trim()) return
@@ -2362,6 +2214,34 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       affected: [currentItem.fileName],
       mergeKey: `form:${currentItem.id}:${changedKeys.sort().join(",")}`,
     })
+  }
+
+  function selectArtifactFromNameSearch(artifactId: number) {
+    if (!selectedItem) return
+    const artifact = artifactSearchResults.find((item) => item.id === artifactId)
+    if (!artifact) return
+    const nextItems = itemsRef.current.map((item) => {
+      if (item.id !== selectedItem.id) return item
+      const nextForm = applyExistingArtifactToForm(item.form, artifact)
+      return {
+        ...item,
+        form: nextForm,
+        existingArtifactId: artifact.id,
+        existingArtifactMatch: "手动搜索并选择已有文物。",
+        existingArtifactCandidates: [],
+        existingArtifactReviewKey: artifactReviewIdentityKey(nextForm),
+        descriptionMeta: `已手动关联云端文物 #${artifact.id}`,
+        submitMessage: `已导入“${artifact.name}”的信息；新照片将追加到这件文物。`,
+      }
+    })
+    recordItemsChange({
+      label: "搜索并复用已有文物",
+      detail: `${selectedItem.fileName} · ${artifact.name}`,
+      nextItems,
+      affected: [selectedItem.fileName],
+    })
+    setShowArtifactSearch(false)
+    setArtifactSearchResults([])
   }
 
   async function locateDisplayLocation(locationName: string, preferredMuseum?: MuseumOption) {
@@ -2958,6 +2838,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
   }
 
+  function retryQueueItem(item: ExifWorkbenchItem) {
+    const authorizationProblem = !item.fileHandle
+      || /授权|权限|未绑定原文件/.test(item.submitMessage ?? "")
+    if (authorizationProblem) {
+      void handleBindDirectory()
+      return
+    }
+    void submitOne(item.id)
+  }
+
   async function handleUpload(nextFiles: File[]) {
     if (nextFiles.length === 0) {
       setSubmitNotice({ type: "error", text: "请先选择至少一张图片" })
@@ -3330,7 +3220,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }))
       return false
     }
-    if (!target.fileHandle) {
+    if (!target.fileHandle && !directoryHandle) {
       updateItem(itemId, (item) => ({
         ...item,
         submitState: "error",
@@ -3351,14 +3241,27 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     try {
       // A retry click is a fresh user gesture, so request write permission
       // before any network request can consume that activation.
-      if (directoryHandle && !await verifyWritablePermission(directoryHandle)) {
-        throw new Error("文件夹写入权限未授权，请重新选择照片文件夹")
-      }
-      if (!await verifyWritablePermission(target.fileHandle)) {
+      let sourceHandle = target.fileHandle
+      if (directoryHandle) {
+        if (!await verifyWritablePermission(directoryHandle)) {
+          throw new Error("文件夹写入权限未授权，请重新选择照片文件夹")
+        }
+        // A directory grant is authoritative for its children. Reacquire the
+        // current child handle here instead of incorrectly demanding a second
+        // independent permission prompt for a file already imported from it.
+        try {
+          sourceHandle = await directoryHandle.getFileHandle(target.originalFileName)
+        } catch (error) {
+          if ((error as Error).name !== "NotFoundError" || target.fileName === target.originalFileName) throw error
+          // A prior attempt may have already completed the local rename.
+          sourceHandle = await directoryHandle.getFileHandle(target.fileName)
+        }
+      } else if (sourceHandle && !await verifyWritablePermission(sourceHandle)) {
         throw new Error(`“${target.originalFileName}”的写入权限未授权，请点击图片列表上方的文件夹按钮重新授权`)
       }
+      if (!sourceHandle) throw new Error("未找到可写原文件，请授权照片文件夹")
 
-      const latestLocalFile = await target.fileHandle.getFile()
+      const latestLocalFile = await sourceHandle.getFile()
       const latitude = toNullableNumber(target.form.latitude)
       const longitude = toNullableNumber(target.form.longitude)
       const appendMetadata = (data: FormData, includeArtifactLink = false) => {
@@ -3418,7 +3321,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       const editedBlob = await response.blob()
       updateItem(itemId, (item) => ({ ...item, sourceHash: sourceHash || item.sourceHash }))
 
-      let resolvedWriteHandle = target.fileHandle
+      let resolvedWriteHandle = sourceHandle
       if (directoryHandle && target.fileName !== target.originalFileName) {
         try {
           // A previous attempt may have completed the local rename and only
@@ -3427,9 +3330,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName)
         } catch (error) {
           if ((error as Error).name !== "NotFoundError") throw error
-          if (!await verifyWritablePermission(resolvedWriteHandle)) {
-            throw new Error(`“${target.originalFileName}”的写入权限已失效，请点击图片列表上方的文件夹按钮重新授权`)
-          }
           resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName, { create: true })
         }
       } else if (!await verifyWritablePermission(resolvedWriteHandle)) {
@@ -3893,60 +3793,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     />
                     <div className="exif-queue-copy">
                       <strong title={item.fileName}>{item.fileName}</strong>
-                      <span>
-                        {item.form.name || item.parsedName?.artifact_name || "待确认名称"}
-                        {item.existingArtifactMatch ? " · 已匹配已有文物" : ""}
-                      </span>
-                      <span className="queue-state-tags">
-                        {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && descriptionGeneratingItemIds.includes(item.id) ? (
-                          <Tag
-                            color="processing"
-                            icon={<Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />}
-                          >
-                            描述中
-                          </Tag>
-                        ) : SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && ensureCandidates(item.candidates).some((candidate) => candidate.status === "success") ? (
-                          <Tag
-                            color="success"
-                            icon={<Check size={11} strokeWidth={2.2} aria-hidden="true" />}
-                          >
-                            描述完成
-                          </Tag>
-                        ) : null}
-                        <Tag
-                          color={
-                            item.submitState === "submitted"
-                              ? "success"
-                              : item.submitState === "error"
-                                ? "error"
-                                : item.submitState === "submitting"
-                                  ? "processing"
-                                  : changedParts(item).length > 0
-                                    ? "warning"
-                                    : undefined
-                          }
-                          className="queue-submit-state"
-                          icon={item.submitState === "submitted"
-                            ? <Check size={11} strokeWidth={2.2} aria-hidden="true" />
-                            : item.submitState === "submitting"
-                              ? <Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />
-                              : item.submitState === "error"
-                                ? <X size={11} strokeWidth={2.2} aria-hidden="true" />
-                                : changedParts(item).length > 0
-                                  ? <FileCheck2 size={11} strokeWidth={2} aria-hidden="true" />
-                                  : undefined}
-                        >
-                          {item.submitState === "submitted"
-                            ? "已提交"
-                            : item.submitState === "submitting"
-                              ? "提交中"
-                              : item.submitState === "error"
-                                ? "提交失败"
-                                : changedParts(item).length > 0
-                                  ? `待提交 · ${changedParts(item).length} 项`
-                                  : "待处理"}
-                        </Tag>
-                      </span>
                       {changedParts(item).length > 0 ? (
                         <span className="queue-change-summary" aria-label={`待提交的变更：${changedParts(item).join("、")}`}>
                           已修改：{changedParts(item).join("、")}
@@ -3961,16 +3807,31 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     </div>
                   </button>
                   <Space className="exif-queue-item-actions" size={6}>
-                    {item.submitState === "error" ? (
-                      <Button
-                        htmlType="button"
-                        danger
-                        size="small"
-                        icon={<RefreshCw size={13} strokeWidth={2} aria-hidden="true" />}
-                        onClick={() => void submitOne(item.id)}
+                    <span className="queue-state-tags">
+                      {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && descriptionGeneratingItemIds.includes(item.id) ? (
+                        <Tag color="processing" icon={<Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />}>描述中</Tag>
+                      ) : SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && ensureCandidates(item.candidates).some((candidate) => candidate.status === "success") ? (
+                        <Tag color="success" icon={<Check size={11} strokeWidth={2.2} aria-hidden="true" />}>描述完成</Tag>
+                      ) : null}
+                      <Tag
+                        color={item.submitState === "submitted" ? "success" : item.submitState === "error" ? "error" : item.submitState === "submitting" ? "processing" : changedParts(item).length > 0 ? "warning" : undefined}
+                        className={`queue-submit-state is-${item.submitState}`}
+                        icon={item.submitState === "submitted" ? <Check size={14} strokeWidth={2.2} aria-hidden="true" /> : item.submitState === "submitting" ? <Loader2 size={14} strokeWidth={2.2} className="queue-state-icon is-active" aria-hidden="true" /> : item.submitState === "error" ? <X size={14} strokeWidth={2.2} aria-hidden="true" /> : changedParts(item).length > 0 ? <FileCheck2 size={14} strokeWidth={2} className="queue-state-icon is-pending" aria-hidden="true" /> : undefined}
                       >
-                        授权并重试
-                      </Button>
+                        {item.submitState === "submitted" ? "已提交" : item.submitState === "submitting" ? "提交中" : item.submitState === "error" ? "提交失败" : changedParts(item).length > 0 ? `待提交 · ${changedParts(item).length} 项` : "待处理"}
+                      </Tag>
+                    </span>
+                    {item.submitState === "error" ? (
+                      <Tooltip title={(!item.fileHandle || /授权|权限|未绑定原文件/.test(item.submitMessage ?? "")) ? "重新授权原文件夹" : "重试入库"}>
+                        <Button
+                          htmlType="button"
+                          size="small"
+                          className="exif-queue-retry"
+                          icon={<RefreshCw size={14} strokeWidth={1.8} aria-hidden="true" />}
+                          aria-label={(!item.fileHandle || /授权|权限|未绑定原文件/.test(item.submitMessage ?? "")) ? "重新授权原文件夹" : "重试入库"}
+                          onClick={() => retryQueueItem(item)}
+                        />
+                      </Tooltip>
                     ) : null}
                     <Button
                       htmlType="button"
@@ -4217,11 +4078,35 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                         </label>
 
                         <label className="field">
-                          <span>文物名称 <FieldReviewBadge warning={warningForField("artifact_name")} /></span>
-                          <Input
+                          <span>
+                            文物名称 <FieldReviewBadge warning={warningForField("artifact_name")} />
+                            <small className="field-search-hint"><Search size={12} /> 搜索并选择已有文物后才复用</small>
+                          </span>
+                          <AutoComplete
                             value={selectedItem.form.name}
+                            options={artifactSearchResults.map((artifact) => ({
+                              value: `artifact:${artifact.id}`,
+                              label: (
+                                <div className="artifact-name-search-option">
+                                  <strong>{artifact.name}</strong>
+                                  <span>{artifact.era || "时代待补充"} · {artifact.museum_name}</span>
+                                </div>
+                              ),
+                            }))}
+                            filterOption={false}
+                            open={showArtifactSearch && artifactSearchResults.length > 0}
                             placeholder="例如：夫妇宴享行乐图"
-                            onChange={(event) => updateSelectedForm({ name: event.target.value })}
+                            onFocus={() => setShowArtifactSearch(true)}
+                            onOpenChange={setShowArtifactSearch}
+                            onChange={(value) => {
+                              if (value.startsWith("artifact:")) return
+                              updateSelectedForm({ name: value })
+                              setShowArtifactSearch(true)
+                            }}
+                            onSelect={(value) => {
+                              const artifactId = Number(value.replace("artifact:", ""))
+                              if (Number.isInteger(artifactId)) selectArtifactFromNameSearch(artifactId)
+                            }}
                           />
                         </label>
                       </div>

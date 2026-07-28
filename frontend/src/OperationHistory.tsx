@@ -8,8 +8,8 @@ import {
   use,
   type ReactNode,
 } from "react"
-import { Button, Popover, Tooltip } from "antd"
-import { History, Redo2, Trash2, Undo2 } from "lucide-react"
+import { Button, Modal, Popover, Tooltip } from "antd"
+import { FilePenLine, History, Landmark, MapPin, Redo2, Sparkles, Trash2, Undo2 } from "lucide-react"
 
 const HISTORY_LIMIT = 80
 const HISTORY_MERGE_WINDOW_MS = 1_200
@@ -19,7 +19,7 @@ const HISTORY_TIME_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
   second: "2-digit",
 })
 
-type HistoryDirection = "undo" | "redo"
+type HistoryDirection = "undo" | "redo" | "restore"
 type HistorySnapshot = unknown
 
 type OperationHistoryEntry = {
@@ -54,6 +54,7 @@ type OperationHistoryContextValue = {
   ) => () => void
   undo: (scope: string) => void
   redo: (scope: string) => void
+  restore: (scope: string, entryId: string) => void
   clear: (scope: string) => void
   hasChanges: (scope: string) => boolean
   setScopeDirty: (scope: string, dirty: boolean) => void
@@ -176,6 +177,22 @@ export function OperationHistoryProvider({ children }: { children: ReactNode }) 
     })
   }, [replaceScopeHistory])
 
+  const restore = useCallback((scope: string, entryId: string) => {
+    const current = historiesRef.current[scope] ?? EMPTY_SCOPE_HISTORY
+    const entryIndex = current.past.findIndex((entry) => entry.id === entryId)
+    if (entryIndex < 0) return
+    const entry = current.past[entryIndex]
+    const handler = scopeHandlersRef.current.get(scope)
+    if (!handler) return
+    handler(entry.after, "restore", entry)
+    // Treat restoring an older snapshot like returning to that point in the
+    // timeline. Later operations remain available through normal redo.
+    replaceScopeHistory(scope, {
+      past: current.past.slice(0, entryIndex + 1),
+      future: [...current.future, ...current.past.slice(entryIndex + 1).reverse()],
+    })
+  }, [replaceScopeHistory])
+
   const clear = useCallback((scope: string) => {
     replaceScopeHistory(scope, EMPTY_SCOPE_HISTORY)
   }, [replaceScopeHistory])
@@ -200,10 +217,11 @@ export function OperationHistoryProvider({ children }: { children: ReactNode }) 
     registerScope,
     undo,
     redo,
+    restore,
     clear,
     hasChanges,
     setScopeDirty,
-  }), [clear, dirtyScopes, hasChanges, histories, record, redo, registerScope, setScopeDirty, undo, updateAfter])
+  }), [clear, dirtyScopes, hasChanges, histories, record, redo, registerScope, restore, setScopeDirty, undo, updateAfter])
 
   return (
     <OperationHistoryContext value={value}>
@@ -225,6 +243,14 @@ function historyTime(timestamp: number) {
   return HISTORY_TIME_FORMATTER.format(timestamp)
 }
 
+function historyAppearance(label: string) {
+  if (/文件名|改名/.test(label)) return { icon: FilePenLine, tone: "rename" }
+  if (/地点|展览|GPS|定位/.test(label)) return { icon: MapPin, tone: "location" }
+  if (/文物|馆藏|时代|出土地|复用/.test(label)) return { icon: Landmark, tone: "artifact" }
+  if (/描述|标签|核验|识别/.test(label)) return { icon: Sparkles, tone: "content" }
+  return { icon: History, tone: "default" }
+}
+
 export function OperationHistoryControls({
   scope,
   scopeLabel,
@@ -232,7 +258,7 @@ export function OperationHistoryControls({
   scope: string
   scopeLabel: string
 }) {
-  const { histories, undo, redo, clear } = useOperationHistory()
+  const { histories, undo, redo, restore, clear } = useOperationHistory()
   const { past, future } = histories[scope] ?? EMPTY_SCOPE_HISTORY
   const latestPast = past.at(-1)
   const latestFuture = future.at(-1)
@@ -241,6 +267,7 @@ export function OperationHistoryControls({
   const visiblePast = past.slice(-12).reverse()
   const visibleFuture = future.slice(-6).reverse()
   const count = past.length + future.length
+  const [previewEntry, setPreviewEntry] = useState<OperationHistoryEntry | null>(null)
 
   useEffect(() => {
     const handleKeyboard = (event: KeyboardEvent) => {
@@ -289,19 +316,28 @@ export function OperationHistoryControls({
             </div>
           </article>
         ))}
-        {visiblePast.map((entry, index) => (
-          <article key={entry.id} className={`operation-history-entry${index === 0 ? " is-current" : ""}`}>
+        {visiblePast.map((entry, index) => {
+          const appearance = historyAppearance(entry.label)
+          const Icon = appearance.icon
+          return (
+          <button
+            type="button"
+            key={entry.id}
+            className={`operation-history-entry is-action ${appearance.tone}${index === 0 ? " is-current" : ""}`}
+            onClick={() => setPreviewEntry(entry)}
+          >
             <span className="operation-history-marker" aria-hidden="true" />
             <div>
-              <strong>{entry.label}</strong>
-              <p>{entry.detail}</p>
+              <strong><Icon size={14} aria-hidden="true" /> {entry.label}</strong>
+              <Tooltip title={entry.detail} placement="left"><p>{entry.detail}</p></Tooltip>
               <small>
                 {historyTime(entry.updatedAt)}
                 {entry.affected.length > 0 ? ` · ${entry.affected.length} 个对象` : ""}
               </small>
             </div>
-          </article>
-        ))}
+          </button>
+          )
+        })}
         {count === 0 ? (
           <div className="operation-history-empty">
             编辑文件名、文物信息或批量同步后，会在这里留下可回溯记录。
@@ -312,6 +348,40 @@ export function OperationHistoryControls({
         <span>撤销 ⌘Z / Ctrl Z</span>
         <span>重做 ⇧⌘Z / Ctrl Y</span>
       </footer>
+      <Modal
+        open={previewEntry !== null}
+        title={previewEntry ? `恢复「${previewEntry.label}」后的内容` : ""}
+        onCancel={() => setPreviewEntry(null)}
+        footer={[
+          <Button key="cancel" onClick={() => setPreviewEntry(null)}>取消</Button>,
+          <Button
+            key="restore"
+            type="primary"
+            onClick={() => {
+              if (previewEntry) restore(scope, previewEntry.id)
+              setPreviewEntry(null)
+            }}
+          >
+            替换为此时内容
+          </Button>,
+        ]}
+      >
+        {previewEntry ? (
+          <div className="operation-history-restore-detail">
+            <p>将当前快速录入内容替换为此操作完成后的状态；之后的记录仍可通过“重做”继续恢复。</p>
+            <dl>
+              <div><dt>操作</dt><dd>{previewEntry.label}</dd></div>
+              <div><dt>时间</dt><dd>{historyTime(previewEntry.updatedAt)}</dd></div>
+              <div><dt>完整内容</dt><dd className="is-detail"><Tooltip title={previewEntry.detail}>{previewEntry.detail}</Tooltip></dd></div>
+              <div><dt>影响照片</dt><dd className="is-affected">
+                {previewEntry.affected.length > 0
+                  ? previewEntry.affected.map((name) => <Tooltip key={name} title={name}><span>{name}</span></Tooltip>)
+                  : "未记录具体照片"}
+              </dd></div>
+            </dl>
+          </div>
+        ) : null}
+      </Modal>
     </section>
   )
 
