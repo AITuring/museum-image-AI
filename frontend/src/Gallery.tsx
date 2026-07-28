@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ImgHTMLAttributes } from "react"
-import { createPortal } from "react-dom"
 import { AutoComplete, Button, Input, Select, Tag } from "antd"
 import "./styles/gallery.css"
 import {
   Aperture,
+  ArrowLeft,
   Building2,
   CalendarRange,
   Camera,
@@ -19,7 +19,6 @@ import {
   Sparkles,
   Tag as TagIcon,
   Timer,
-  X,
 } from "lucide-react"
 import GalleryImagePreview from "./GalleryImagePreview"
 
@@ -265,6 +264,16 @@ function normalizeArtifact(item: RawGalleryArtifact): GalleryArtifact {
   }
 }
 
+function getGalleryArtifactIdFromLocation() {
+  const routeMatch = window.location.pathname.match(/^\/gallery\/(\d+)$/)
+  const routeId = routeMatch ? Number(routeMatch[1]) : Number.NaN
+  if (Number.isInteger(routeId) && routeId > 0) return routeId
+
+  const legacyValue = new URLSearchParams(window.location.search).get("artifact")
+  const legacyId = legacyValue ? Number(legacyValue) : Number.NaN
+  return Number.isInteger(legacyId) && legacyId > 0 ? legacyId : null
+}
+
 function formatMetaDate(value?: string | null) {
   if (!value) return ""
   const normalized = value.replace("T", " ")
@@ -469,7 +478,7 @@ function GalleryExhibitionPicker({
         loading={loading}
         value={selectedSourceId ? `catalog:${selectedSourceId}` : undefined}
         options={options}
-        placeholder={museumName.trim() ? "输入展名检索该馆及目录展览" : "请先填写拍摄馆"}
+        placeholder={museumName.trim() ? "输入展名检索该馆及目录展览…" : "请先填写拍摄馆…"}
         popupMatchSelectWidth={420}
         notFoundContent={loading ? "正在检索…" : "没有匹配展览，可在下方手动填写"}
         onSearch={setQuery}
@@ -481,7 +490,7 @@ function GalleryExhibitionPicker({
       />
       <Input
         value={selectedName}
-        placeholder="也可手动填写；再次匹配时会自动复用同名展览"
+        placeholder="也可手动填写；再次匹配时会自动复用同名展览…"
         onChange={(event) => onManualChange(event.target.value)}
       />
       {error ? <span className="field-help error">{error}</span> : null}
@@ -772,12 +781,11 @@ function GalleryLocationPicker({
     <div className="gallery-location-picker">
       <div className="gallery-location-toolbar">
         <label className="gallery-location-query">
-          <MapPin size={14} aria-hidden="true" />
           <Input
             value={locationText}
             onChange={(event) => onLocationTextChange(event.target.value)}
             aria-label="地点定位输入"
-            placeholder="输入地点、地址或博物馆名称"
+            placeholder="输入地点、地址或博物馆名称…"
           />
         </label>
         <Button
@@ -787,7 +795,7 @@ function GalleryLocationPicker({
           disabled={mapLoading}
         >
           <Search size={14} aria-hidden="true" />
-          <span>{mapLoading ? "定位中..." : "地点定位"}</span>
+          <span>{mapLoading ? "定位中…" : "地点定位"}</span>
         </Button>
       </div>
       <div className="gallery-location-map-shell">
@@ -812,10 +820,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState<GalleryArtifact | null>(null)
+  const [artifactRouteId, setArtifactRouteId] = useState<number | null>(getGalleryArtifactIdFromLocation)
   const [activeImageIndex, setActiveImageIndex] = useState(0)
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<GalleryEditFormState | null>(null)
+  const [advancedEditingOpen, setAdvancedEditingOpen] = useState(false)
   const [tagInput, setTagInput] = useState("")
   const [saving, setSaving] = useState(false)
   const [generatingDescription, setGeneratingDescription] = useState(false)
@@ -823,11 +833,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
   const thumbnailStripRef = useRef<HTMLDivElement | null>(null)
-  const requestedArtifactIdRef = useRef<number | null>((() => {
-    const value = new URLSearchParams(window.location.search).get("artifact")
-    const parsed = value ? Number(value) : Number.NaN
-    return Number.isInteger(parsed) && parsed > 0 ? parsed : null
-  })())
 
   const fetchJson = useCallback(async <T,>(input: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(input, init)
@@ -871,12 +876,22 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [load])
 
   useEffect(() => {
-    const requestedArtifactId = requestedArtifactIdRef.current
-    if (requestedArtifactId === null || items.length === 0) return
-    const requestedArtifact = items.find((item) => item.id === requestedArtifactId)
-    requestedArtifactIdRef.current = null
-    if (requestedArtifact) setActive(requestedArtifact)
-  }, [items])
+    const syncRoute = () => {
+      const routeId = getGalleryArtifactIdFromLocation()
+      setArtifactRouteId(routeId)
+      if (routeId === null) setActive(null)
+    }
+    window.addEventListener("popstate", syncRoute)
+    return () => window.removeEventListener("popstate", syncRoute)
+  }, [])
+
+  useEffect(() => {
+    if (artifactRouteId === null) return
+    const requestedArtifact = items.find((item) => item.id === artifactRouteId)
+    if (!requestedArtifact) return
+    const timer = window.setTimeout(() => setActive(requestedArtifact), 0)
+    return () => window.clearTimeout(timer)
+  }, [artifactRouteId, items])
 
   useEffect(() => {
     void (async () => {
@@ -896,6 +911,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   useEffect(() => {
     setEditing(false)
     setEditForm(null)
+    setAdvancedEditingOpen(false)
     setTagInput("")
     setSaveError(null)
     setSaveNotice(null)
@@ -923,7 +939,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           setImagePreviewOpen(false)
           return
         }
-        if (!editing) setActive(null)
+        if (!editing) navigateToGallery()
         return
       }
       if (editing || active.images.length < 2) return
@@ -938,11 +954,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
     }
     window.addEventListener("keydown", onKeyDown)
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
     return () => {
       window.removeEventListener("keydown", onKeyDown)
-      document.body.style.overflow = prevOverflow
     }
   }, [active, editing, imagePreviewOpen])
 
@@ -978,6 +991,24 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     void load(query)
   }
 
+  function navigateToArtifact(artifact: GalleryArtifact) {
+    const nextPath = `/gallery/${artifact.id}`
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState({}, "", nextPath)
+    }
+    setArtifactRouteId(artifact.id)
+    setActive(artifact)
+    window.scrollTo(0, 0)
+  }
+
+  function navigateToGallery() {
+    if (window.location.pathname !== "/gallery") {
+      window.history.pushState({}, "", "/gallery")
+    }
+    setArtifactRouteId(null)
+    setActive(null)
+  }
+
   function handleStartEdit(event?: { preventDefault?: () => void; stopPropagation?: () => void }) {
     event?.preventDefault?.()
     event?.stopPropagation?.()
@@ -990,12 +1021,14 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setSaveError(null)
     setSaveNotice(null)
     setDescriptionProgress(null)
+    setAdvancedEditingOpen(false)
     setEditing(true)
   }
 
   function handleCancelEdit() {
     setEditing(false)
     setEditForm(null)
+    setAdvancedEditingOpen(false)
     setTagInput("")
     setSaveError(null)
     setDescriptionProgress(null)
@@ -1214,18 +1247,19 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   return (
     <section className="gallery-workbench" aria-labelledby="gallery-page-title">
+      {!active ? (
+        <>
       <header className="gallery-page-head">
         <div className="gallery-page-copy">
-          <span className="page-kicker">COLLECTION ARCHIVE</span>
-          <h2 id="gallery-page-title">文物图库</h2>
-          <p>按名称、时代与馆藏快速检索图像档案。</p>
+          <h2 id="gallery-page-title">图库</h2>
+          {!loading ? <span className="gallery-result-count">{items.length} 件</span> : null}
         </div>
         <form className="gallery-search" role="search" onSubmit={handleSearch}>
         <Input
           prefix={<Search size={16} aria-hidden="true" />}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索名称、时代、馆藏、出土地点或描述，按回车检索"
+          placeholder="搜索名称、时代、馆藏或出土地点…"
           aria-label="图库搜索"
           name="gallery-search"
           autoComplete="off"
@@ -1253,7 +1287,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
               type="button"
               key={artifact.id}
               className="gallery-card"
-              onClick={() => setActive(artifact)}
+              onClick={() => navigateToArtifact(artifact)}
             >
               <div className="gallery-thumb">
                 {cover ? (
@@ -1286,12 +1320,14 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         })}
       </div>
 
+        </>
+      ) : null}
+
       {active
-        ? createPortal(
-            <div className="gallery-modal" onClick={() => !editing && setActive(null)}>
-              <div
-                className={`gallery-modal-body ${editing ? "is-editing" : "is-reading"}`}
-                onClick={(e) => e.stopPropagation()}
+        ? (
+            <article
+                className={`gallery-detail-page gallery-modal-body ${editing ? "is-editing" : "is-reading"}`}
+                aria-labelledby={`gallery-detail-title-${active.id}`}
               >
                 {(() => {
                   const currentImage = active.images[activeImageIndex] ?? active.images[0] ?? null
@@ -1319,6 +1355,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                 src={getBackendImageVariantUrl(apiBaseUrl, currentImage.url, 1280)}
                                 fallbackSrc={toAbsoluteUrl(apiBaseUrl, currentImage.url)}
                                 alt={active.name}
+                                width={1280}
+                                height={960}
                               />
                             </button>
                             <div className="gallery-media-foot">
@@ -1341,6 +1379,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                         <FallbackImage
                                           src={getBackendImageVariantUrl(apiBaseUrl, image.url, 160)}
                                           alt={active.name}
+                                          width={160}
+                                          height={160}
                                           loading={active.images.length > 20 ? "lazy" : "eager"}
                                         />
                                       </button>
@@ -1365,7 +1405,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                       <div className={`gallery-modal-info ${editing ? "is-editing" : "is-reading"}`}>
                         <div className="gallery-detail-head">
                           <div className="gallery-detail-heading">
-                            <h3 className="gallery-detail-title">{active.name}</h3>
+                            <h3 id={`gallery-detail-title-${active.id}`} className="gallery-detail-title">{active.name}</h3>
                             
                           </div>
                           <div className="gallery-actions" onClick={(event) => event.stopPropagation()}>
@@ -1385,30 +1425,21 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   form={editFormId}
                                   disabled={saving || generatingDescription}
                                 >
-                                  {saving ? "保存中..." : generatingDescription ? "描述生成中..." : "保存"}
+                                  {saving ? "保存中…" : generatingDescription ? "描述生成中…" : "保存"}
                                 </Button>
                                 <Button
                                   htmlType="button"
                                   type="text"
                                   shape="circle"
-                                  onClick={() => !editing && setActive(null)}
+                                  onClick={navigateToGallery}
                                   disabled={editing}
-                                  aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
+                                  aria-label={editing ? "编辑中不可返回图库" : "返回图库"}
                                 >
-                                  <X size={16} aria-hidden="true" />
+                                  <ArrowLeft size={16} aria-hidden="true" />
                                 </Button>
                               </>
                             ) : (
                               <>
-                                <Button
-                                  htmlType="button"
-                                  type="default"
-                                  onClick={(event) => void handleGenerateDescription(event)}
-                                  disabled={generatingDescription}
-                                >
-                                  <Sparkles size={14} aria-hidden="true" />
-                                  {generatingDescription ? "生成中..." : "AI 补充描述"}
-                                </Button>
                                 <Button htmlType="button" type="primary" onClick={handleStartEdit}>
                                   编辑资料
                                 </Button>
@@ -1416,11 +1447,11 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   htmlType="button"
                                   type="text"
                                   shape="circle"
-                                  onClick={() => !editing && setActive(null)}
+                                  onClick={navigateToGallery}
                                   disabled={editing}
-                                  aria-label={editing ? "编辑中不可关闭弹窗" : "关闭弹窗"}
+                                  aria-label={editing ? "编辑中不可返回图库" : "返回图库"}
                                 >
-                                  <X size={16} aria-hidden="true" />
+                                  <ArrowLeft size={16} aria-hidden="true" />
                                 </Button>
                               </>
                             )}
@@ -1431,9 +1462,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                           <form id={editFormId} className="gallery-edit-form" onSubmit={handleSave}>
                             <div className="gallery-edit-scroll">
                               <div className="form-fields">
-                                <section className="form-section">
-                                  <div className="form-section-head">
-                                    <h3>基本信息</h3>
+                                <section className="form-section gallery-edit-section gallery-edit-section-basic">
+                                  <div className="form-section-head gallery-edit-section-head">
+                                    <h3><Building2 size={15} aria-hidden="true" /> 基本信息</h3>
                                   </div>
                                   <div className="form-section-body">
                                     <div className="field-row">
@@ -1448,7 +1479,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                             )
                                           }
                                           placeholder={
-                                            museumOptions.length > 0 ? "输入或选择博物馆名称" : "加载博物馆选项中..."
+                                            museumOptions.length > 0 ? "输入或选择博物馆名称…" : "加载博物馆选项中…"
                                           }
                                         />
                                       </label>
@@ -1461,7 +1492,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               current ? { ...current, name: event.target.value } : current,
                                             )
                                           }
-                                          placeholder="例如：如意云纹金盘"
+                                          placeholder="例如：如意云纹金盘…"
                                         />
                                       </label>
                                     </div>
@@ -1476,7 +1507,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               current ? { ...current, era: event.target.value } : current,
                                             )
                                           }
-                                          placeholder={eraOptions.length > 0 ? "输入或选择时代" : "加载时代选项中..."}
+                                          placeholder={eraOptions.length > 0 ? "输入或选择时代…" : "加载时代选项中…"}
                                         />
                                       </label>
                                       <label className="field">
@@ -1488,7 +1519,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               current ? { ...current, Place_of_Excavation: event.target.value } : current,
                                             )
                                           }
-                                          placeholder="例如：陕西西安何家村"
+                                          placeholder="例如：陕西西安何家村…"
                                         />
                                       </label>
                                     </div>
@@ -1525,7 +1556,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               } : current,
                                             )
                                           }
-                                          placeholder="输入或选择标准场馆名称"
+                                          placeholder="输入或选择标准场馆名称…"
                                         />
                                       </label>
                                       <label className="field">
@@ -1588,12 +1619,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               }
                                             }}
                                             onBlur={() => addTags(tagInput)}
-                                            placeholder="输入后回车或逗号添加"
+                                            placeholder="输入后回车或逗号添加…"
                                           />
                                         </div>
                                       </label>
                                     </div>
-                                    <label className="field">
+                                    <label className="field gallery-edit-description-field">
                                       <span className="gallery-description-editor-head">
                                         <span>描述</span>
                                         <Button
@@ -1604,7 +1635,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                           disabled={generatingDescription || saving}
                                         >
                                           <Sparkles size={13} aria-hidden="true" />
-                                          {generatingDescription ? "AI 生成中..." : "AI 补充描述"}
+                                          {generatingDescription ? "AI 生成中…" : "AI 补充描述"}
                                         </Button>
                                       </span>
                                       <Textarea
@@ -1615,7 +1646,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                             current ? { ...current, description: event.target.value } : current,
                                           )
                                         }
-                                        placeholder="文物简介，可补充或修正"
+                                        placeholder="文物简介，可补充或修正…"
                                       />
                                       {descriptionProgress ? (
                                         <span className="field-help" aria-live="polite">{descriptionProgress}</span>
@@ -1624,9 +1655,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   </div>
                                 </section>
 
-                                <section className="form-section">
-                                  <div className="form-section-head">
-                                    <h3>拍摄信息</h3>
+                                <section className="form-section gallery-edit-section gallery-edit-section-capture">
+                                  <div className="form-section-head gallery-edit-section-head">
+                                    <h3><Camera size={15} aria-hidden="true" /> 拍摄信息</h3>
                                   </div>
                                   <div className="form-section-body">
                                     <div className="field-row">
@@ -1639,7 +1670,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               current ? { ...current, cameraModel: event.target.value } : current,
                                             )
                                           }
-                                          placeholder="自动读取后可补充修正"
+                                          placeholder="自动读取后可补充修正…"
                                         />
                                       </label>
                                       <label className="field">
@@ -1651,7 +1682,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               current ? { ...current, lensModel: event.target.value } : current,
                                             )
                                           }
-                                          placeholder="自动读取后可补充修正"
+                                          placeholder="自动读取后可补充修正…"
                                         />
                                       </label>
                                     </div>
@@ -1665,14 +1696,14 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               current ? { ...current, capturedAt: event.target.value } : current,
                                             )
                                           }
-                                          placeholder="例如：2024-05-01T14:30:00"
+                                          placeholder="例如：2024-05-01T14:30:00…"
                                         />
                                       </label>
                                       <label className="field">
                                         <span>修图方式</span>
                                         <Select
                                           allowClear
-                                          placeholder="未填写"
+                                          placeholder="未填写…"
                                           value={editForm.editMethod || undefined}
                                           options={[
                                             { value: "简单调整", label: "简单调整" },
@@ -1686,12 +1717,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                         />
                                       </label>
                                     </div>
-                                    <div className="gallery-advanced-details">
-                                      <div className="gallery-advanced-summary">
-                                        <span>高级信息</span>
+                                    <details
+                                      className="gallery-advanced-details"
+                                      open={advancedEditingOpen}
+                                      onToggle={(event) => setAdvancedEditingOpen(event.currentTarget.open)}
+                                    >
+                                      <summary className="gallery-advanced-summary">
+                                        <span>更多拍摄信息</span>
                                         <span className="gallery-advanced-hint">坐标与曝光参数</span>
-                                      </div>
-                                      <div className="gallery-advanced-body">
+                                      </summary>
+                                      {advancedEditingOpen ? <div className="gallery-advanced-body">
                                         <GalleryLocationPicker
                                           latitude={editForm.latitude}
                                           longitude={editForm.longitude}
@@ -1709,7 +1744,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                                   current ? { ...current, latitude: event.target.value } : current,
                                                 )
                                               }
-                                              placeholder="例如：32.060255"
+                                              placeholder="例如：32.060255…"
                                             />
                                           </label>
                                           <label className="field">
@@ -1721,7 +1756,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                                   current ? { ...current, longitude: event.target.value } : current,
                                                 )
                                               }
-                                              placeholder="例如：118.796877"
+                                              placeholder="例如：118.796877…"
                                             />
                                           </label>
                                         </div>
@@ -1735,7 +1770,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                                   current ? { ...current, shutterSpeed: event.target.value } : current,
                                                 )
                                               }
-                                              placeholder="例如：1/125s"
+                                              placeholder="例如：1/125s…"
                                             />
                                           </label>
                                           <label className="field">
@@ -1747,7 +1782,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                                   current ? { ...current, aperture: event.target.value } : current,
                                                 )
                                               }
-                                              placeholder="例如：f/2.8"
+                                              placeholder="例如：f/2.8…"
                                             />
                                           </label>
                                           <label className="field">
@@ -1759,16 +1794,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                                   current ? { ...current, iso: event.target.value } : current,
                                                 )
                                               }
-                                              placeholder="例如：400"
+                                              placeholder="例如：400…"
                                             />
                                           </label>
                                           <div className="field">
                                             <span>上传时间</span>
-                                            <Input value={uploadedAt} readOnly placeholder="暂无记录" />
+                                            <Input value={uploadedAt} readOnly placeholder="暂无记录…" />
                                           </div>
                                         </div>
-                                      </div>
-                                    </div>
+                                      </div> : null}
+                                    </details>
                                   </div>
                                 </section>
                               </div>
@@ -1950,9 +1985,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                     </>
                   )
                 })()}
-              </div>
-            </div>,
-            document.body,
+            </article>
           )
         : null}
       <datalist id="gallery-museum-options">

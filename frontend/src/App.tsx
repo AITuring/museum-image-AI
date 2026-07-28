@@ -278,6 +278,9 @@ function getDefaultView(): View {
 
 function normalizeViewFromPath(pathname: string): View {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/"
+  if (/^\/gallery\/\d+$/.test(normalizedPath)) {
+    return "gallery"
+  }
   if (
     /^\/exhibitions\/\d+$/.test(normalizedPath)
     || /^\/exhibitions\/source\/[A-Za-z0-9_-]+$/.test(normalizedPath)
@@ -853,7 +856,8 @@ function App() {
         || /^\/exhibitions\/source\/[A-Za-z0-9_-]+\/?$/.test(window.location.pathname)
         || /^\/exhibitions\/history\/[^/]+\/?$/.test(window.location.pathname)
       )
-    if (window.location.pathname !== targetPath && !isExhibitionDetailPath) {
+    const isGalleryDetailPath = normalizedView === "gallery" && /^\/gallery\/\d+\/?$/.test(window.location.pathname)
+    if (window.location.pathname !== targetPath && !isExhibitionDetailPath && !isGalleryDetailPath) {
       window.history.replaceState({}, "", targetPath)
     }
 
