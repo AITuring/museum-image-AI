@@ -1450,6 +1450,39 @@
   gap: 10px 12px;
 }
 
+.gallery-exhibition-picker {
+  display: grid;
+  gap: 7px;
+}
+
+.gallery-exhibition-picker > .ant-select {
+  width: 100%;
+}
+
+.gallery-exhibition-option {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: 2px 0;
+}
+
+.gallery-exhibition-option strong,
+.gallery-exhibition-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-exhibition-option strong {
+  color: var(--app-fg);
+  font-size: 12px;
+}
+
+.gallery-exhibition-option small {
+  color: var(--app-soft);
+  font-size: 10px;
+}
+
 .gallery-location-picker {
   display: grid;
   gap: 8px;

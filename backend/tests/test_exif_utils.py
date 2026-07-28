@@ -2,6 +2,7 @@ import unittest
 import warnings
 from datetime import datetime
 from io import BytesIO
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -9,6 +10,7 @@ from app.exif_utils import (
     ImageExifWriteError,
     MUSEUM_IMAGE_WARNING_PIXELS,
     extract_exif_metadata,
+    extract_exif_and_preview_from_file,
     update_image_exif_metadata,
 )
 
@@ -95,6 +97,21 @@ class ExifWriteTests(unittest.TestCase):
                 artifact_name="测试",
                 raise_on_error=True,
             )
+
+    def test_preview_failure_does_not_discard_gps_metadata(self) -> None:
+        source = update_image_exif_metadata(
+            build_jpeg(),
+            artifact_name="测试文物",
+            latitude=31.2304,
+            longitude=121.4737,
+        )
+
+        with patch("app.exif_utils.ImageOps.exif_transpose", side_effect=RuntimeError("preview failed")):
+            metadata, preview = extract_exif_and_preview_from_file(BytesIO(source))
+
+        self.assertIsNone(preview)
+        self.assertAlmostEqual(metadata.latitude or 0, 31.2304, places=5)
+        self.assertAlmostEqual(metadata.longitude or 0, 121.4737, places=5)
 
 
 if __name__ == "__main__":

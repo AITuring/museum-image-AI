@@ -794,6 +794,20 @@ def ensure_exhibition(
                 Exhibition.name == name,
             )
         )
+    if exhibition is None:
+        normalized_name = normalize_museum_directory_key(name)
+        exhibition = next(
+            (
+                candidate
+                for candidate in db.scalars(
+                    select(Exhibition)
+                    .where(Exhibition.museum_id == museum.id)
+                    .order_by(Exhibition.id.asc())
+                )
+                if normalize_museum_directory_key(candidate.name) == normalized_name
+            ),
+            None,
+        )
     if exhibition is not None:
         if exhibition.start_at is None and start_at is not None:
             exhibition.start_at = start_at
@@ -1267,7 +1281,9 @@ def resolve_capture_context(
         except Exception:
             logger.warning("resolve catalog exhibition failed", exc_info=True)
 
-    resolved_capture_museum_name = optional_text(capture_museum_name)
+    resolved_capture_museum_name = (
+        optional_text(catalog_item.museum_name) if catalog_item is not None else None
+    ) or optional_text(capture_museum_name)
     if resolved_capture_museum_name is None and catalog_item is not None:
         resolved_capture_museum_name = (
             optional_text(catalog_item.venue)
@@ -2192,8 +2208,10 @@ def enrich_artifact_catalog_links(items: list[ArtifactRead]) -> list[ArtifactRea
         return items
 
     by_title: dict[str, list[CatalogExhibition]] = {}
+    by_source_id: dict[str, CatalogExhibition] = {}
     for catalog_item in catalog_items:
         by_title.setdefault(catalog_item.title, []).append(catalog_item)
+        by_source_id[catalog_item.source_id] = catalog_item
 
     enriched_items: list[ArtifactRead] = []
     for item in items:
@@ -2210,6 +2228,11 @@ def enrich_artifact_catalog_links(items: list[ArtifactRead]) -> list[ArtifactRea
             def candidate_score(candidate: CatalogExhibition) -> tuple[int, int]:
                 score = 0
                 museum_name = exhibition.museum_name.casefold()
+                if candidate.museum_name and (
+                    museum_name in candidate.museum_name.casefold()
+                    or candidate.museum_name.casefold() in museum_name
+                ):
+                    score += 40
                 if candidate.venue and (
                     museum_name in candidate.venue.casefold()
                     or candidate.venue.casefold() in museum_name
@@ -2232,9 +2255,41 @@ def enrich_artifact_catalog_links(items: list[ArtifactRead]) -> list[ArtifactRea
                     }
                 )
             )
-        enriched_items.append(
-            item.model_copy(update={"exhibitions": enriched_exhibitions})
-        )
+
+        deduped_exhibitions: dict[str, ExhibitionRead] = {}
+        for exhibition in enriched_exhibitions:
+            identity = (
+                f"catalog:{exhibition.catalog_source_id}"
+                if exhibition.catalog_source_id
+                else "manual:"
+                f"{normalize_museum_directory_key(exhibition.museum_name)}:"
+                f"{normalize_museum_directory_key(exhibition.name)}"
+            )
+            existing = deduped_exhibitions.get(identity)
+            if existing is None:
+                deduped_exhibitions[identity] = exhibition
+                continue
+            catalog_item = (
+                by_source_id.get(exhibition.catalog_source_id)
+                if exhibition.catalog_source_id
+                else None
+            )
+            if catalog_item and catalog_item.museum_name:
+                canonical_museum = normalize_museum_directory_key(catalog_item.museum_name)
+                existing_matches = (
+                    normalize_museum_directory_key(existing.museum_name)
+                    == canonical_museum
+                )
+                current_matches = (
+                    normalize_museum_directory_key(exhibition.museum_name)
+                    == canonical_museum
+                )
+                if current_matches and not existing_matches:
+                    deduped_exhibitions[identity] = exhibition
+
+        enriched_items.append(item.model_copy(update={
+            "exhibitions": list(deduped_exhibitions.values()),
+        }))
     return enriched_items
 
 
@@ -4868,6 +4923,7 @@ def update_museum(
 @app.get(f"{settings.api_prefix}/exhibitions", response_model=list[ExhibitionRead])
 def list_exhibitions(
     museum_id: int | None = Query(default=None),
+    museum_name: str | None = Query(default=None),
     q: str | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -4879,6 +4935,9 @@ def list_exhibitions(
     )
     if museum_id is not None:
         query = query.where(Exhibition.museum_id == museum_id)
+    if museum_name and museum_name.strip():
+        museum_like = f"%{museum_name.strip()}%"
+        query = query.where(Exhibition.museum.has(Museum.name.ilike(museum_like)))
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.where(Exhibition.name.ilike(like))

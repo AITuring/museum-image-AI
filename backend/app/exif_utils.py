@@ -484,22 +484,28 @@ def extract_exif_and_preview_from_file(
         image_file.seek(0)
         with Image.open(image_file) as image:
             metadata = _extract_exif_metadata_from_image(image)
-            if image.format == "JPEG":
-                image.draft("RGB", (preview_max_edge, preview_max_edge))
-            preview = ImageOps.exif_transpose(image)
-            preview.thumbnail((preview_max_edge, preview_max_edge), Image.Resampling.LANCZOS)
-            if preview.mode not in {"RGB", "L"}:
-                background = Image.new("RGB", preview.size, "white")
-                if "A" in preview.getbands():
-                    background.paste(preview, mask=preview.getchannel("A"))
-                else:
-                    background.paste(preview.convert("RGB"))
-                preview = background
-            elif preview.mode == "L":
-                preview = preview.convert("RGB")
-            output = BytesIO()
-            preview.save(output, format="JPEG", quality=82, optimize=True)
-            return metadata, output.getvalue()
+            try:
+                if image.format == "JPEG":
+                    image.draft("RGB", (preview_max_edge, preview_max_edge))
+                preview = ImageOps.exif_transpose(image)
+                preview.thumbnail((preview_max_edge, preview_max_edge), Image.Resampling.LANCZOS)
+                if preview.mode not in {"RGB", "L"}:
+                    background = Image.new("RGB", preview.size, "white")
+                    if "A" in preview.getbands():
+                        background.paste(preview, mask=preview.getchannel("A"))
+                    else:
+                        background.paste(preview.convert("RGB"))
+                    preview = background
+                elif preview.mode == "L":
+                    preview = preview.convert("RGB")
+                output = BytesIO()
+                preview.save(output, format="JPEG", quality=82, optimize=True)
+                return metadata, output.getvalue()
+            except Exception:
+                # EXIF extraction and preview generation are independent. A
+                # huge or unusual image may not be previewable, but its already
+                # decoded GPS/capture fields must still reach the workbench.
+                return metadata, None
     except Exception:
         return ImageExifData(), None
     finally:

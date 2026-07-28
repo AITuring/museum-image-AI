@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ImgHTMLAttributes } from "react"
 import { createPortal } from "react-dom"
-import { Button, Input, Select, Tag } from "antd"
+import { AutoComplete, Button, Input, Select, Tag } from "antd"
 import "./styles/gallery.css"
 import {
   Aperture,
@@ -37,6 +37,8 @@ type GalleryImage = {
   lens_model?: string | null
   capture_museum_name?: string | null
   exhibition_name?: string | null
+  catalog_exhibition_source_id?: string | null
+  catalog_exhibition_id?: number | null
   capture_location?: string | null
   latitude?: number | null
   longitude?: number | null
@@ -86,6 +88,8 @@ type GalleryEditFormState = {
   lensModel: string
   captureMuseumName: string
   exhibitionName: string
+  catalogExhibitionSourceId: string
+  catalogExhibitionId: number | null
   captureLocation: string
   latitude: string
   longitude: string
@@ -111,6 +115,35 @@ type GeneratedDescription = {
 type MuseumOption = {
   id: number
   name: string
+}
+
+type CatalogExhibitionOption = {
+  id: number
+  source_id: string
+  title: string
+  museum_name: string | null
+  venue: string | null
+  city: string
+  start_date: string | null
+  end_date: string | null
+  is_permanent: boolean
+}
+
+type LocalExhibitionOption = {
+  id: number
+  museum_name: string
+  name: string
+  catalog_source_id: string | null
+  catalog_exhibition_id: number | null
+}
+
+type GalleryExhibitionChoice = {
+  key: string
+  name: string
+  museumName: string
+  meta: string
+  catalogSourceId: string
+  catalogExhibitionId: number | null
 }
 
 type EraOption = {
@@ -274,6 +307,8 @@ function buildEditForm(artifact: GalleryArtifact, image?: GalleryImage | null): 
     lensModel: image?.lens_model ?? "",
     captureMuseumName: image?.capture_museum_name ?? "",
     exhibitionName: image?.exhibition_name ?? "常设",
+    catalogExhibitionSourceId: image?.catalog_exhibition_source_id ?? "",
+    catalogExhibitionId: image?.catalog_exhibition_id ?? null,
     captureLocation: image?.capture_location ?? image?.capture_museum_name ?? artifact.museum_name ?? "",
     latitude: image?.latitude?.toString() ?? "",
     longitude: image?.longitude?.toString() ?? "",
@@ -283,6 +318,175 @@ function buildEditForm(artifact: GalleryArtifact, image?: GalleryImage | null): 
     iso: image?.iso?.toString() ?? "",
     editMethod: image?.edit_method ?? "",
   }
+}
+
+function normalizeLookupText(value: string | null | undefined) {
+  return (value ?? "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\s·•・,，。．()（）[\]【】<>《》\-—–_/]+/g, "")
+}
+
+function GalleryExhibitionPicker({
+  apiBaseUrl,
+  museumName,
+  selectedName,
+  selectedSourceId,
+  onSelect,
+  onManualChange,
+}: {
+  apiBaseUrl: string
+  museumName: string
+  selectedName: string
+  selectedSourceId: string
+  onSelect: (choice: GalleryExhibitionChoice | null) => void
+  onManualChange: (value: string) => void
+}) {
+  const [query, setQuery] = useState("")
+  const [choices, setChoices] = useState<GalleryExhibitionChoice[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    const keyword = query.trim()
+    const museum = museumName.trim()
+    if (!keyword && !museum) {
+      setChoices([])
+      setError(null)
+      return
+    }
+
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const catalogParams = new URLSearchParams({
+          include_facets: "false",
+          page_size: "30",
+        })
+        catalogParams.set("q", keyword || museum)
+        const localParams = new URLSearchParams({ limit: "100" })
+        if (museum) localParams.set("museum_name", museum)
+        if (keyword) localParams.set("q", keyword)
+
+        const [catalogResponse, localResponse] = await Promise.all([
+          fetch(`${apiBaseUrl}/api/exhibition-catalog?${catalogParams.toString()}`, {
+            signal: controller.signal,
+          }),
+          fetch(`${apiBaseUrl}/api/exhibitions?${localParams.toString()}`, {
+            signal: controller.signal,
+          }),
+        ])
+        if (!catalogResponse.ok || !localResponse.ok) {
+          throw new Error("展览联想加载失败")
+        }
+        const catalogPayload = (await catalogResponse.json()) as { items: CatalogExhibitionOption[] }
+        const localPayload = (await localResponse.json()) as LocalExhibitionOption[]
+        const museumKey = normalizeLookupText(museum)
+        const catalogChoices: GalleryExhibitionChoice[] = catalogPayload.items.map((item) => ({
+          key: `catalog:${item.source_id}`,
+          name: item.title,
+          museumName: item.museum_name ?? "",
+          meta: [item.museum_name, item.venue, item.city, item.is_permanent ? "常设展" : null]
+            .filter(Boolean)
+            .join(" · "),
+          catalogSourceId: item.source_id,
+          catalogExhibitionId: item.id,
+        }))
+        const localChoices: GalleryExhibitionChoice[] = localPayload
+          .filter((item) => (
+            !museumKey
+            || normalizeLookupText(item.museum_name).includes(museumKey)
+            || museumKey.includes(normalizeLookupText(item.museum_name))
+          ))
+          .map((item) => ({
+            key: item.catalog_source_id ? `catalog:${item.catalog_source_id}` : `local:${item.id}`,
+            name: item.name,
+            museumName: item.museum_name,
+            meta: `${item.museum_name} · 已入库展览`,
+            catalogSourceId: item.catalog_source_id ?? "",
+            catalogExhibitionId: item.catalog_exhibition_id ?? null,
+          }))
+
+        const seen = new Set<string>()
+        const combined = [...catalogChoices, ...localChoices]
+          .sort((left, right) => {
+            const leftMuseumMatch = museumKey && normalizeLookupText(left.museumName).includes(museumKey) ? 1 : 0
+            const rightMuseumMatch = museumKey && normalizeLookupText(right.museumName).includes(museumKey) ? 1 : 0
+            return rightMuseumMatch - leftMuseumMatch
+          })
+          .filter((choice) => {
+            const identity = `${normalizeLookupText(choice.museumName)}:${normalizeLookupText(choice.name)}`
+            if (seen.has(identity)) return false
+            seen.add(identity)
+            return true
+          })
+        setChoices(combined.slice(0, 30))
+      } catch (nextError) {
+        if (!controller.signal.aborted) {
+          setChoices([])
+          setError(nextError instanceof Error ? nextError.message : "展览联想加载失败")
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false)
+      }
+    }, 240)
+
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [apiBaseUrl, museumName, query])
+
+  const options = choices.map((choice) => ({
+    value: choice.key,
+    label: (
+      <span className="gallery-exhibition-option">
+        <strong>{choice.name}</strong>
+        <small>{choice.meta}</small>
+      </span>
+    ),
+  }))
+  if (selectedSourceId && !options.some((option) => option.value === `catalog:${selectedSourceId}`)) {
+    options.unshift({
+      value: `catalog:${selectedSourceId}`,
+      label: (
+        <span className="gallery-exhibition-option">
+          <strong>{selectedName || "已关联展览"}</strong>
+          <small>已保存的目录关联</small>
+        </span>
+      ),
+    })
+  }
+
+  return (
+    <div className="gallery-exhibition-picker">
+      <Select
+        allowClear
+        showSearch
+        filterOption={false}
+        loading={loading}
+        value={selectedSourceId ? `catalog:${selectedSourceId}` : undefined}
+        options={options}
+        placeholder={museumName.trim() ? "输入展名检索该馆及目录展览" : "请先填写拍摄馆"}
+        popupMatchSelectWidth={420}
+        notFoundContent={loading ? "正在检索…" : "没有匹配展览，可在下方手动填写"}
+        onSearch={setQuery}
+        onClear={() => onSelect(null)}
+        onSelect={(key) => {
+          const choice = choices.find((item) => item.key === key)
+          if (choice) onSelect(choice)
+        }}
+      />
+      <Input
+        value={selectedName}
+        placeholder="也可手动填写；再次匹配时会自动复用同名展览"
+        onChange={(event) => onManualChange(event.target.value)}
+      />
+      {error ? <span className="field-help error">{error}</span> : null}
+    </div>
+  )
 }
 
 function parseOptionalNumber(value: string, label: string) {
@@ -956,6 +1160,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           lens_model: editForm.lensModel.trim() || null,
           capture_museum_name: editForm.captureMuseumName.trim() || null,
           exhibition_name: editForm.exhibitionName.trim() || "常设",
+          catalog_exhibition_source_id: editForm.catalogExhibitionSourceId || null,
+          catalog_exhibition_id: editForm.catalogExhibitionId,
           capture_location: editForm.captureLocation.trim() || null,
           latitude: parseOptionalNumber(editForm.latitude, "纬度"),
           longitude: parseOptionalNumber(editForm.longitude, "经度"),
@@ -1277,26 +1483,67 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     <div className="field-row">
                                       <label className="field">
                                         <span>拍摄馆</span>
-                                        <Input
+                                        <AutoComplete
                                           value={editForm.captureMuseumName}
-                                          onChange={(event) =>
+                                          options={museumOptions.map((museum) => ({
+                                            value: museum.name,
+                                            label: museum.name,
+                                          }))}
+                                          filterOption={(input, option) => (
+                                            normalizeLookupText(String(option?.value ?? "")).includes(
+                                              normalizeLookupText(input),
+                                            )
+                                          )}
+                                          onChange={(value) =>
                                             setEditForm((current) =>
-                                              current ? { ...current, captureMuseumName: event.target.value } : current,
+                                              current ? {
+                                                ...current,
+                                                captureMuseumName: value,
+                                                catalogExhibitionSourceId: "",
+                                                catalogExhibitionId: null,
+                                              } : current,
                                             )
                                           }
-                                          placeholder="例如：南京博物院"
+                                          onSelect={(value) =>
+                                            setEditForm((current) =>
+                                              current ? {
+                                                ...current,
+                                                captureMuseumName: value,
+                                                captureLocation: current.captureLocation || value,
+                                              } : current,
+                                            )
+                                          }
+                                          placeholder="输入或选择标准场馆名称"
                                         />
                                       </label>
                                       <label className="field">
                                         <span>展览</span>
-                                        <Input
-                                          value={editForm.exhibitionName}
-                                          onChange={(event) =>
+                                        <GalleryExhibitionPicker
+                                          apiBaseUrl={apiBaseUrl}
+                                          museumName={editForm.captureMuseumName}
+                                          selectedName={editForm.exhibitionName}
+                                          selectedSourceId={editForm.catalogExhibitionSourceId}
+                                          onSelect={(choice) =>
                                             setEditForm((current) =>
-                                              current ? { ...current, exhibitionName: event.target.value } : current,
+                                              current ? {
+                                                ...current,
+                                                exhibitionName: choice?.name ?? "常设",
+                                                captureMuseumName: choice?.museumName || current.captureMuseumName,
+                                                catalogExhibitionSourceId: choice?.catalogSourceId ?? "",
+                                                catalogExhibitionId: choice?.catalogExhibitionId ?? null,
+                                              } : current,
                                             )
                                           }
-                                          placeholder="例如：常设或展览名称"
+                                          onManualChange={(value) =>
+                                            setEditForm((current) =>
+                                              current ? {
+                                                ...current,
+                                                exhibitionName: value,
+                                                catalogExhibitionSourceId: "",
+                                                catalogExhibitionId: null,
+                                              } : current,
+                                            )
+                                          }
                                         />
                                       </label>
                                     </div>

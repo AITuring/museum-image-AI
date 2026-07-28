@@ -2315,6 +2315,12 @@ label.field,
   display: grid;
   gap: 8px;
   align-content: start;
+  min-width: 0;
+}
+
+.exif-file-name {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .exif-file-rename {
@@ -2335,6 +2341,50 @@ label.field,
   color: var(--app-soft);
   font-size: 12px;
   font-style: normal;
+}
+
+.exif-file-rename .ant-input {
+  resize: none;
+  line-height: 1.45;
+}
+
+.exif-inline-batch-rename {
+  margin-top: 2px;
+  padding: 10px 12px;
+}
+
+.exif-inline-batch-rename summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.exif-inline-batch-rename summary::-webkit-details-marker {
+  display: none;
+}
+
+.exif-inline-batch-rename summary:focus {
+  outline: none;
+}
+
+.exif-inline-batch-rename summary:focus-visible {
+  border-radius: 6px;
+  box-shadow: var(--app-ring);
+}
+
+.exif-inline-batch-rename > .exif-tool-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.exif-inline-batch-rename > .exif-tool-actions {
+  display: flex;
+  grid-template-columns: none;
+  justify-content: flex-start;
 }
 
 .exif-editor-scroll {

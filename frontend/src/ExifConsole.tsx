@@ -14,6 +14,7 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
+  RotateCcw,
   Sparkles,
   Trash2,
   X,
@@ -1493,6 +1494,15 @@ function toNullableNumber(value: string) {
   return Number.isFinite(numeric) ? numeric : null
 }
 
+function hasValidGpsCoordinates(latitude: string, longitude: string) {
+  const lat = toNullableNumber(latitude)
+  const lng = toNullableNumber(longitude)
+  return lat !== null
+    && lng !== null
+    && Math.abs(lat) <= 90
+    && Math.abs(lng) <= 180
+}
+
 function exposureSeconds(value: string | null | undefined) {
   const text = (value ?? "").trim().toLowerCase().replace(/s$/, "")
   if (!text) return null
@@ -1768,6 +1778,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [batchPrefix, setBatchPrefix] = useState("")
   const [batchSuffix, setBatchSuffix] = useState("")
   const [batchRemove, setBatchRemove] = useState("")
+  const [batchRenameSnapshot, setBatchRenameSnapshot] = useState<Array<{ id: string; fileName: string }> | null>(null)
   const [batchLocationName, setBatchLocationName] = useState("")
   const [batchExhibitionName, setBatchExhibitionName] = useState("常设")
   const [batchCatalogExhibitionId, setBatchCatalogExhibitionId] = useState<number | null>(null)
@@ -1811,7 +1822,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   const stats = useMemo(() => {
     const submittedCount = items.filter((item) => item.submitState === "submitted").length
-    const gpsCount = items.filter((item) => item.form.latitude.trim() && item.form.longitude.trim()).length
+    const gpsCount = items.filter((item) => hasValidGpsCoordinates(
+      String(item.form.latitude ?? ""),
+      String(item.form.longitude ?? ""),
+    )).length
     return {
       itemCount: items.length,
       submittedCount,
@@ -2167,6 +2181,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function renameSelected(baseName: string) {
     if (!selectedItem) return
+    setBatchRenameSnapshot(null)
     updateItem(selectedItem.id, (item) => ({
       ...item,
       fileName: normalizedFileName(baseName, item.fileName),
@@ -2177,6 +2192,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function applyBatchRename() {
     if (!batchPrefix && !batchSuffix && !batchRemove) return
+    setBatchRenameSnapshot(items.map((item) => ({ id: item.id, fileName: item.fileName })))
     const renamed = items.map((item) => ({
       id: item.id,
       fileName: normalizedFileName(
@@ -2203,6 +2219,33 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       } catch { /* retain the renamed filename and existing metadata */ }
     }))
     setSubmitNotice({ type: "success", text: `已按规则更新 ${items.length} 个目标文件名，入库时将使用新名称` })
+  }
+
+  function undoBatchRename() {
+    if (!batchRenameSnapshot) return
+    const previousNames = new Map(batchRenameSnapshot.map((entry) => [entry.id, entry.fileName]))
+    setItems((current) => current.map((item) => ({
+      ...item,
+      fileName: previousNames.get(item.id) ?? item.fileName,
+      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
+      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+    })))
+    void Promise.all(batchRenameSnapshot.map(async (entry) => {
+      try {
+        const parsed = await fetchJson<ParsedArtifactName>(
+          `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: entry.fileName }).toString()}`,
+        )
+        updateItem(entry.id, (item) => ({
+          ...item,
+          parsedName: parsed,
+          form: applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
+        }))
+      } catch {
+        // The restored target filename remains valid even when parsing fails.
+      }
+    }))
+    setBatchRenameSnapshot(null)
+    setSubmitNotice({ type: "success", text: "已撤销上一次批量文件名修改" })
   }
 
   function useSelectedLocationForBatch() {
@@ -3418,41 +3461,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               </div>
               <div className="exif-sidebar-stat">
                 <span>已带坐标</span>
-                <strong>{stats.gpsCount}</strong>
+                <strong>{stats.gpsCount}/{stats.itemCount}</strong>
               </div>
             </div>
             <div className="exif-sidebar-scroll">
               <div className="exif-sidebar-tools">
-              <details className="batch-rename-panel">
-                <summary>
-                  <span className="exif-tool-summary-copy">
-                    <strong>批量修改目标文件名</strong>
-                    <small>清理命名并统一前后缀</small>
-                  </span>
-                  <span className="exif-tool-summary-meta">
-                    <span className="exif-tool-summary-count">影响 {batchRenameCount}/{items.length}</span>
-                    <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                  </span>
-                </summary>
-                <div className="exif-tool-grid">
-                  <label className="exif-tool-field">
-                    <span>删除文本</span>
-                    <Input value={batchRemove} placeholder="例如：IMG_" onChange={(event) => setBatchRemove(event.target.value)} />
-                  </label>
-                  <label className="exif-tool-field">
-                    <span>添加前缀</span>
-                    <Input value={batchPrefix} placeholder="例如：南博-" onChange={(event) => setBatchPrefix(event.target.value)} />
-                  </label>
-                  <label className="exif-tool-field">
-                    <span>添加后缀</span>
-                    <Input value={batchSuffix} placeholder="例如：-展厅A" onChange={(event) => setBatchSuffix(event.target.value)} />
-                  </label>
-                </div>
-                <div className="exif-tool-actions">
-                  <Button htmlType="button" onClick={applyBatchRename} disabled={items.length === 0}>应用文件名规则</Button>
-                </div>
-                <p className="muted">名称变动后会自动重解析时代、馆藏与出土信息，适合先统一处理文件名。</p>
-              </details>
               <details className="metadata-sync-panel">
                 <summary>
                   <span className="exif-tool-summary-copy">
@@ -3856,12 +3869,56 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       <p className="result-desc exif-file-name">{selectedItem.fileName}</p>
                       <label className="exif-file-rename">
                         <span>目标文件名</span>
-                        <Input
+                        <Textarea
+                          autoSize={{ minRows: 1, maxRows: 4 }}
                           value={fileBaseName(selectedItem.fileName)}
                           onChange={(event) => renameSelected(event.target.value)}
                         />
                         <em>{fileExtension(selectedItem.fileName)}</em>
                       </label>
+                      <details className="batch-rename-panel exif-inline-batch-rename">
+                        <summary>
+                          <span className="exif-tool-summary-copy">
+                            <strong>批量修改目标文件名</strong>
+                            <small>在当前目标文件名旁统一清理文本或添加前后缀</small>
+                          </span>
+                          <span className="exif-tool-summary-meta">
+                            <span className="exif-tool-summary-count">影响 {batchRenameCount}/{items.length}</span>
+                            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
+                          </span>
+                        </summary>
+                        <div className="exif-tool-grid">
+                          <label className="exif-tool-field">
+                            <span>删除文本</span>
+                            <Input value={batchRemove} placeholder="例如：IMG_" onChange={(event) => setBatchRemove(event.target.value)} />
+                          </label>
+                          <label className="exif-tool-field">
+                            <span>添加前缀</span>
+                            <Input value={batchPrefix} placeholder="例如：南博-" onChange={(event) => setBatchPrefix(event.target.value)} />
+                          </label>
+                          <label className="exif-tool-field">
+                            <span>添加后缀</span>
+                            <Input value={batchSuffix} placeholder="例如：-展厅A" onChange={(event) => setBatchSuffix(event.target.value)} />
+                          </label>
+                        </div>
+                        <div className="exif-tool-actions">
+                          <Button
+                            htmlType="button"
+                            onClick={applyBatchRename}
+                            disabled={items.length === 0 || batchRenameCount === 0}
+                          >
+                            应用到 {batchRenameCount} 张
+                          </Button>
+                          <Button
+                            htmlType="button"
+                            icon={<RotateCcw size={13} aria-hidden="true" />}
+                            onClick={undoBatchRename}
+                            disabled={!batchRenameSnapshot}
+                          >
+                            撤销上次批量修改
+                          </Button>
+                        </div>
+                      </details>
                       <p className="muted exif-file-parse-status">
                         {parsingFileName ? "正在从文件名更新字段…" : "文件名变化会自动回填时代、名称、出土与馆藏"}
                       </p>
