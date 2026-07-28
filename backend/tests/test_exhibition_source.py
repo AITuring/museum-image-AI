@@ -22,6 +22,11 @@ class ExhibitionSourceTests(unittest.TestCase):
         self.assertIsNone(parsed.start_date)
         self.assertIsNone(parsed.end_date)
 
+    def test_parse_date_range_rejects_implausible_year(self) -> None:
+        parsed = parse_date_range("2915年4月15日 - 9月6日")
+        self.assertIsNone(parsed.start_date)
+        self.assertIsNone(parsed.end_date)
+
     def test_opening_hours_keep_additional_closure_dates(self) -> None:
         parsed = parse_date_range(
             "2026年10月17日 - 2027年1月24日 10:00 - 18:00 "
@@ -104,6 +109,22 @@ class ExhibitionSourceTests(unittest.TestCase):
             parsed.image_urls,
             ["https://example.com/cover.jpg", "https://example.com/detail-1.jpg"],
         )
+
+    def test_parse_detail_uses_only_venue_as_museum_when_parent_is_missing(self) -> None:
+        parsed = parse_exhibition_detail(
+            """
+            <div class=\"imsm-entry\">
+              <h1 class=\"nm\">嘉德展览</h1>
+              <table class=\"info-fields\">
+                <tr><td class=\"title\">展厅</td><td>嘉德艺术中心（一层展厅）</td></tr>
+              </table>
+            </div>
+            """,
+            source_url="https://art.icity.ly/events/ibw8qfk",
+            city_regions={},
+        )
+        self.assertEqual(parsed.museum_name, "嘉德艺术中心")
+        self.assertEqual(parsed.venue, "嘉德艺术中心（一层展厅）")
 
 
 if __name__ == "__main__":

@@ -32,6 +32,7 @@ type ExhibitionItem = {
   title: string
   region: string
   city: string
+  museum_name: string | null
   venue: string | null
   address: string | null
   start_date: string | null
@@ -294,6 +295,7 @@ function ExhibitionDetailView({
             title: history.name,
             region: "历史展出",
             city: history.museum_name,
+            museum_name: history.museum_name,
             venue: history.museum_name,
             address: null,
             start_date: startDate,
@@ -472,7 +474,7 @@ function ExhibitionDetailView({
             ) : null}
             <div>
               <dt><Building2 size={15} /> 展馆</dt>
-              <dd>{item.venue || "场馆待补充"}</dd>
+              <dd>{item.museum_name || "博物馆待补充"}</dd>
             </div>
             {item.address ? (
               <div>
@@ -650,7 +652,10 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
     }>()
 
     items.forEach((item) => {
-      const museum = item.venue?.trim() || item.city || "馆名待补充"
+      // `venue` is an exhibition hall, never the museum label. Older catalog
+      // rows without a parent museum stay grouped as explicitly incomplete
+      // instead of being presented as if a hall were a museum.
+      const museum = item.museum_name?.trim() || "博物馆待补充"
       const key = [museum, item.city, item.region].join("::")
       const row = rows.get(key) ?? {
         key,
@@ -1084,7 +1089,10 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
                       <div className="exhibition-card-body">
                         <div className="exhibition-location">
                           <MapPin size={13} />
-                          <span>{item.city}{item.venue ? ` · ${item.venue}` : ""}</span>
+                          <span>
+                            {item.museum_name || "博物馆待补充"}
+                            {item.city ? ` · ${item.city}` : ""}
+                          </span>
                         </div>
                         <h4>
                           <a

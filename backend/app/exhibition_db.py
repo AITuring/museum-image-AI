@@ -87,3 +87,30 @@ def initialize_exhibition_database() -> None:
                         "ADD COLUMN image_urls JSON NOT NULL DEFAULT '[]'"
                     )
                 )
+        # Earlier imports left `museum_name` empty when iMuseum supplied only
+        # `展厅`. On those pages the sole location is the institution itself;
+        # preserve `venue` as source detail while filling the canonical museum
+        # field used by the catalog, timeline and recommendations.
+        venue_as_museum_sql = (
+            "TRIM(SPLIT_PART(venue, '（', 1))"
+            if connection.dialect.name == "postgresql"
+            else "TRIM(CASE WHEN INSTR(venue, '（') > 0 "
+            "THEN SUBSTR(venue, 1, INSTR(venue, '（') - 1) ELSE venue END)"
+        )
+        connection.execute(
+            text(
+                "UPDATE catalog_exhibitions "
+                f"SET museum_name = {venue_as_museum_sql} "
+                "WHERE (museum_name IS NULL OR TRIM(museum_name) = '') "
+                "AND venue IS NOT NULL AND TRIM(venue) <> ''"
+            )
+        )
+        # Apply the same normalization to records repaired by an earlier
+        # version of this migration, where the fallback was copied verbatim.
+        connection.execute(
+            text(
+                "UPDATE catalog_exhibitions "
+                f"SET museum_name = {venue_as_museum_sql} "
+                "WHERE museum_name = venue AND venue LIKE '%（%'"
+            )
+        )

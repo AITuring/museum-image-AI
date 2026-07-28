@@ -4172,7 +4172,17 @@ def list_exhibition_catalog(
     db: Session = Depends(get_exhibition_db),
 ) -> ExhibitionCatalogListRead:
     today = datetime.now().date()
-    filters = []
+    # Hide legacy malformed dates as well as rejecting them during source
+    # parsing. Undated and permanent exhibitions remain visible.
+    displayable_year = or_(
+        CatalogExhibition.start_year.is_(None),
+        CatalogExhibition.is_permanent.is_(True),
+        (
+            (CatalogExhibition.start_year >= 1900)
+            & (CatalogExhibition.start_year <= today.year + 1)
+        ),
+    )
+    filters = [displayable_year]
     if q and q.strip():
         like = f"%{q.strip()}%"
         filters.append(
@@ -4257,7 +4267,11 @@ def list_exhibition_catalog(
     if include_facets:
         year_rows = db.execute(
             select(CatalogExhibition.start_year, func.count())
-            .where(CatalogExhibition.start_year.is_not(None))
+            .where(
+                CatalogExhibition.start_year.is_not(None),
+                CatalogExhibition.start_year >= 1900,
+                CatalogExhibition.start_year <= today.year + 1,
+            )
             .group_by(CatalogExhibition.start_year)
             .order_by(CatalogExhibition.start_year.desc())
         )

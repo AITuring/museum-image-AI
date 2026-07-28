@@ -14,6 +14,7 @@ EVENT_URL_PATTERN = re.compile(r"^https://art\.icity\.ly/events/([a-z0-9]+)$")
 CHINESE_DATE_PATTERN = re.compile(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日")
 ISO_DATE_PATTERN = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
 SPACE_PATTERN = re.compile(r"\s+")
+VENUE_DETAIL_SUFFIX_PATTERN = re.compile(r"[（(].*?[）)]")
 
 
 @dataclass
@@ -151,6 +152,23 @@ class ParsedExhibition:
     is_permanent: bool
 
 
+def museum_name_from_source_fields(
+    museum_name: str | None,
+    venue: str | None,
+) -> str | None:
+    """Return the parent museum, using a lone venue as the source fallback."""
+    primary = (museum_name or "").strip()
+    if primary:
+        return primary
+    fallback = (venue or "").strip()
+    if not fallback:
+        return None
+    # A lone venue such as “嘉德艺术中心（一层展厅）” names both the
+    # institution and its room. The catalog needs the institution as its
+    # museum label; retain the unmodified value in `venue` separately.
+    return VENUE_DETAIL_SUFFIX_PATTERN.sub("", fallback).strip() or fallback
+
+
 def parse_html(contents: str) -> HtmlNode:
     parser = TreeParser()
     parser.feed(contents)
@@ -224,6 +242,11 @@ def parse_date_range(value: str | None) -> ParsedDateRange:
         year_text, month_text, day_text = match.groups()
         year = int(year_text) if year_text else previous_year
         if year is None:
+            continue
+        # iMuseum occasionally contains OCR / editorial typos such as 2915.
+        # Keeping those years makes the catalog rail unusable, while a missing
+        # date can still be represented honestly as an undated exhibition.
+        if year < 1900 or year > date.today().year + 1:
             continue
         month = int(month_text)
         day = int(day_text)
@@ -407,7 +430,13 @@ def parse_exhibition_detail(
         region=region,
         city=city_name,
         city_slug=city_slug or "unknown",
-        museum_name=fields.get("展馆"),
+        # Some source pages only expose a `展厅` field for an independent
+        # institution (for example 嘉德艺术中心). In that case it is the
+        # exhibition's museum / venue, not a sub-gallery number. When `展馆`
+        # exists it remains authoritative and `展厅` stays the room detail.
+        museum_name=museum_name_from_source_fields(
+            fields.get("展馆"), fields.get("展厅")
+        ),
         venue=fields.get("展厅"),
         address=fields.get("地址"),
         start_date=parsed_range.start_date,

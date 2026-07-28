@@ -102,7 +102,8 @@ def _candidate_urls(
     missing_detail_urls = [
         row.source_url
         for row in rows
-        if not (row.description or "").strip() or row.museum_name is None
+        if not (row.description or "").strip()
+        or not (row.museum_name or "").strip()
     ]
     unknown_urls = [url for url in reversed(discovered_urls) if url not in existing_urls]
     backfill_urls = list(dict.fromkeys([*missing_detail_urls, *unknown_urls]))
