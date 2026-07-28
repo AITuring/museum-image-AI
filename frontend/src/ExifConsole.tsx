@@ -809,6 +809,35 @@ async function confirmSubmittedSourceHash(apiBaseUrl: string, sourceHash: string
   return false
 }
 
+async function confirmSubmittedFileHash(apiBaseUrl: string, file: File) {
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer())
+    const imageHash = Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")
+    const response = await fetch(
+      `${apiBaseUrl}/api/artifact-images/by-hash?${new URLSearchParams({ image_hash: imageHash }).toString()}`,
+    )
+    return response.ok && Boolean(await response.json())
+  } catch {
+    return false
+  }
+}
+
+function shouldCheckLegacySubmittedDraft(item: Pick<ExifWorkbenchItem, "submitState" | "submitMessage" | "uploadProgress" | "uploadStage">) {
+  return item.submitState === "submitting"
+    || item.uploadProgress >= 45
+    || item.uploadStage === "等待重试"
+    || item.submitMessage?.includes("页面刷新前提交未完成") === true
+}
+
+async function confirmPreviouslySubmittedItem(apiBaseUrl: string, item: ExifWorkbenchItem | PersistedExifDraftItem) {
+  if (item.sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, item.sourceHash)) return true
+  return shouldCheckLegacySubmittedDraft(item)
+    ? confirmSubmittedFileHash(apiBaseUrl, item.localFile)
+    : false
+}
+
 async function loadMuseumSuggestions(
   apiBaseUrl: string,
   keyword: string,
@@ -1177,9 +1206,10 @@ function serializeExifDraftItem(item: ExifWorkbenchItem): PersistedExifDraftItem
 async function restoreExifDraftItems(draft: PersistedExifDraftItem[], apiBaseUrl: string) {
   return Promise.all(draft.map(async (item) => {
     const sourceHash = item.sourceHash ?? null
-    const confirmedSubmitted = sourceHash
-      ? await confirmSubmittedSourceHash(apiBaseUrl, sourceHash)
-      : false
+    const confirmedSubmitted = await confirmPreviouslySubmittedItem(apiBaseUrl, {
+      ...item,
+      sourceHash,
+    })
     return {
       ...item,
       form: cloneFormState(item.form),
@@ -2922,7 +2952,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       setSubmitNotice({ type: "success", text: "该图片已入库且没有新的修改，无需重复提交。" })
       return true
     }
-    if (target.sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, target.sourceHash)) {
+    if (await confirmPreviouslySubmittedItem(apiBaseUrl, target)) {
       updateItem(itemId, (item) => ({
         ...item,
         submitState: "submitted",
@@ -3173,7 +3203,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     let pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
     const confirmedIds = new Set(
       (await Promise.all(pendingItems.map(async (item) => (
-        item.sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, item.sourceHash)
+        await confirmPreviouslySubmittedItem(apiBaseUrl, item)
           ? item.id
           : null
       )))).filter((id): id is string => Boolean(id)),
@@ -3787,6 +3817,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       </label>
                     </div>
                     {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <label className="field">
+                      {/* 40.841694 111.76568 */}
                       <span>共享描述</span>
                       <Textarea
                         rows={4}
