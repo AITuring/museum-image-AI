@@ -1373,3 +1373,23 @@
     transition: none;
   }
 }
+
+/* Surface hierarchy: modules are separated by tone instead of outlines. */
+.exhibition-sync-card,
+.exhibition-search,
+.exhibition-year-rail,
+.exhibition-card,
+.exhibition-artifact-card,
+.exhibition-detail-aside {
+  border-color: transparent;
+}
+
+.exhibition-sync-card,
+.exhibition-year-rail,
+.exhibition-detail-aside {
+  background: var(--ui-surface-wash);
+}
+
+.exhibition-card {
+  background: var(--ui-surface-default);
+}

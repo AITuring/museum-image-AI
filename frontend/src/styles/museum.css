@@ -1823,3 +1823,30 @@
     padding: 0 12px 28px;
   }
 }
+
+/* Surface hierarchy: modules are separated by tone instead of outlines. */
+.museum-console-head {
+  border-bottom: 0;
+}
+
+.museum-summary-card,
+.museum-stage,
+.museum-map-panel,
+.museum-folder-column,
+.museum-image-panel,
+.museum-state-card {
+  border-color: transparent;
+}
+
+.museum-summary-card {
+  background: var(--ui-surface-default);
+}
+
+.museum-folder-column {
+  background: var(--ui-surface-wash);
+}
+
+.museum-image-panel,
+.museum-map-panel {
+  background: var(--ui-surface-default);
+}

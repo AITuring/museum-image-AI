@@ -2646,3 +2646,19 @@
 .gallery-modal-info.is-editing .gallery-tags-field {
   grid-column: 1 / -1;
 }
+
+/* Surface hierarchy: modules are separated by tone instead of outlines. */
+.gallery-page-head {
+  border-bottom: 0;
+}
+
+.gallery-page-head .gallery-search .ant-input-affix-wrapper,
+.gallery-card,
+.gallery-detail-section,
+.gallery-advanced-details {
+  border-color: transparent;
+}
+
+.gallery-card {
+  background: var(--ui-surface-default);
+}

@@ -21,9 +21,9 @@
   --ui-secondary-text: #302b26;
   --ui-human: #70543b;
   --ui-human-wash: #f8f3ec;
-  --ui-line-subtle: rgb(75 61 48 / 0.12);
-  --ui-line-strong: rgb(75 61 48 / 0.24);
-  --ui-line-accent: rgb(112 84 59 / 0.22);
+  --ui-line-subtle: rgb(75 61 48 / 0.065);
+  --ui-line-strong: rgb(75 61 48 / 0.14);
+  --ui-line-accent: rgb(112 84 59 / 0.13);
   --ui-danger: var(--museum-color-error, #b94d45);
   --ui-success: var(--museum-color-success, #48745b);
   --ui-success-muted: #edf5ef;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import AMapLoader from "@amap/amap-jsapi-loader"
-import { AutoComplete, Button, Card, Checkbox, Input, Modal, Segmented, Select, Space, Tag, Tooltip } from "antd"
+import { AutoComplete, Button, Card, Checkbox, Dropdown, Input, Modal, Segmented, Select, Space, Tag, Tooltip } from "antd"
 import {
   ArrowRight,
   Camera,
@@ -281,28 +281,46 @@ function MetadataSyncFieldControls({
   onChange: (field: MetadataSyncFieldKey, checked: boolean) => void
   context: "sidebar" | "preview"
 }) {
+  const renderGroup = (group: (typeof METADATA_SYNC_GROUPS)[number]) => (
+    <section key={group.key} className="metadata-sync-field-group">
+      <header>
+        <strong>{group.title}</strong>
+        {context === "preview" ? <span>{group.description}</span> : null}
+      </header>
+      <div className="metadata-sync-field-list">
+        {group.fields.map((field) => (
+          <Checkbox
+            key={field.key}
+            className="metadata-sync-field"
+            checked={selection[field.key]}
+            onChange={(event) => onChange(field.key, event.target.checked)}
+          >
+            {field.label}
+          </Checkbox>
+        ))}
+      </div>
+    </section>
+  )
+
+  const advancedSelectedCount = METADATA_SYNC_GROUPS
+    .slice(1)
+    .flatMap((group) => group.fields)
+    .filter((field) => selection[field.key])
+    .length
+
   return (
     <div className={`metadata-sync-field-groups is-${context}`}>
-      {METADATA_SYNC_GROUPS.map((group) => (
-        <section key={group.key} className="metadata-sync-field-group">
-          <header>
-            <strong>{group.title}</strong>
-            {context === "preview" ? <span>{group.description}</span> : null}
-          </header>
-          <div className="metadata-sync-field-list">
-            {group.fields.map((field) => (
-              <Checkbox
-                key={field.key}
-                className="metadata-sync-field"
-                checked={selection[field.key]}
-                onChange={(event) => onChange(field.key, event.target.checked)}
-              >
-                {field.label}
-              </Checkbox>
-            ))}
-          </div>
-        </section>
-      ))}
+      {renderGroup(METADATA_SYNC_GROUPS[0])}
+      {context === "sidebar" ? (
+        <details className="metadata-sync-more">
+          <summary>
+            <span>更多字段</span>
+            <small>{advancedSelectedCount > 0 ? `${advancedSelectedCount} 项已选` : "默认关闭"}</small>
+            <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
+          </summary>
+          <div>{METADATA_SYNC_GROUPS.slice(1).map(renderGroup)}</div>
+        </details>
+      ) : METADATA_SYNC_GROUPS.slice(1).map(renderGroup)}
     </div>
   )
 }
@@ -342,6 +360,13 @@ type ExifWorkbenchItem = {
   uploadProgress: number
   uploadStage: string | null
   sourceHash: string | null
+}
+
+type BatchRenameSnapshotEntry = Pick<
+  ExifWorkbenchItem,
+  "id" | "fileName" | "parsedName" | "submitState" | "submitMessage"
+> & {
+  form: FormState
 }
 
 type PersistedExifDraftItem = Omit<ExifWorkbenchItem, "previewUrl" | "fileHandle"> & {
@@ -1618,17 +1643,19 @@ type AMapInstance = {
   clearMap: () => void
   setZoomAndCenter: (zoom: number, center: [number, number]) => void
   add: (marker: unknown) => void
+  destroy?: () => void
 }
 type AMapSdk = {
   Map: new (element: HTMLDivElement, options: Record<string, unknown>) => AMapInstance
   Marker: new (options: Record<string, unknown>) => { on: (event: string, handler: (event: AMapEvent) => void) => void }
-  Geocoder: new (options: Record<string, unknown>) => {
+  Geocoder?: new (options: Record<string, unknown>) => {
     getAddress: (position: [number, number], callback: (status: string, result: { regeocode?: { formattedAddress?: string } }) => void) => void
     getLocation: (
       address: string,
       callback: (status: string, result: { geocodes?: Array<{ location?: AMapGeocodeLocation }> }) => void,
     ) => void
   }
+  plugin?: (plugins: string | string[], callback: () => void) => void
 }
 
 declare global {
@@ -1640,24 +1667,43 @@ declare global {
 
 const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE as string | undefined
 const AMAP_SCRIPT_SRC = import.meta.env.VITE_AMAP_SCRIPT_SRC as string | undefined
+let amapLoadPromise: Promise<AMapSdk> | null = null
 
 function loadAmap(): Promise<AMapSdk> {
-  if (window.AMap) return Promise.resolve(window.AMap)
+  if (window.AMap?.Geocoder) return Promise.resolve(window.AMap)
+  if (window.AMap?.plugin) {
+    return new Promise((resolve, reject) => {
+      window.AMap?.plugin?.(["AMap.Geocoder", "AMap.PlaceSearch"], () => {
+        if (window.AMap?.Geocoder) resolve(window.AMap)
+        else reject(new Error("高德地图地理编码插件加载失败"))
+      })
+    })
+  }
+  if (amapLoadPromise) return amapLoadPromise
   if (!AMAP_SCRIPT_SRC) return Promise.reject(new Error("未配置高德地图脚本"))
   const key = new URL(AMAP_SCRIPT_SRC).searchParams.get("key")
   if (!key) return Promise.reject(new Error("高德地图 Key 不完整"))
   if (AMAP_SECURITY_CODE) window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
-  return AMapLoader.load({
+  amapLoadPromise = (AMapLoader.load({
     key,
     version: "2.0",
     plugins: ["AMap.Geocoder", "AMap.PlaceSearch"],
-  }) as Promise<AMapSdk>
+  }) as Promise<AMapSdk>).then((sdk) => {
+    if (!sdk.Geocoder) throw new Error("高德地图地理编码插件加载失败")
+    return sdk
+  }).catch((error) => {
+    amapLoadPromise = null
+    throw error
+  })
+  return amapLoadPromise
 }
 
 async function geocodeLocationName(name: string): Promise<{ latitude: number; longitude: number } | null> {
   const AMap = await loadAmap()
+  const Geocoder = AMap.Geocoder
+  if (!Geocoder) return null
   return new Promise((resolve) => {
-    new AMap.Geocoder({ city: "全国" }).getLocation(name, (status, result) => {
+    new Geocoder({ city: "全国" }).getLocation(name, (status, result) => {
       const location = status === "complete" ? result.geocodes?.[0]?.location : undefined
       const longitude = location?.getLng?.() ?? location?.lng
       const latitude = location?.getLat?.() ?? location?.lat
@@ -1672,8 +1718,10 @@ async function geocodeLocationName(name: string): Promise<{ latitude: number; lo
 
 async function reverseGeocodeCoordinates(latitude: number, longitude: number): Promise<string> {
   const AMap = await loadAmap()
+  const Geocoder = AMap.Geocoder
+  if (!Geocoder) return ""
   return new Promise((resolve) => {
-    new AMap.Geocoder({}).getAddress([longitude, latitude], (status, result) => {
+    new Geocoder({}).getAddress([longitude, latitude], (status, result) => {
       resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")
     })
   })
@@ -1729,7 +1777,11 @@ function GpsMapPicker({ latitude, longitude, onPick }: {
       }
     }
     void mount()
-    return () => { disposed = true }
+    return () => {
+      disposed = true
+      mapRef.current?.destroy?.()
+      mapRef.current = null
+    }
   }, [])
 
   useEffect(() => {
@@ -1758,6 +1810,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const draftWriteTimerRef = useRef<number | null>(null)
   const draftStorageFailureRef = useRef(false)
   const artifactMatchLookupRef = useRef(new Set<string>())
+  const batchRenameRevisionRef = useRef(0)
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null)
@@ -1778,13 +1831,14 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [batchPrefix, setBatchPrefix] = useState("")
   const [batchSuffix, setBatchSuffix] = useState("")
   const [batchRemove, setBatchRemove] = useState("")
-  const [batchRenameSnapshot, setBatchRenameSnapshot] = useState<Array<{ id: string; fileName: string }> | null>(null)
+  const [batchRenameSnapshot, setBatchRenameSnapshot] = useState<BatchRenameSnapshotEntry[] | null>(null)
   const [batchLocationName, setBatchLocationName] = useState("")
   const [batchExhibitionName, setBatchExhibitionName] = useState("常设")
   const [batchCatalogExhibitionId, setBatchCatalogExhibitionId] = useState<number | null>(null)
   const [batchCatalogExhibitionSourceId, setBatchCatalogExhibitionSourceId] = useState("")
   const [batchLatitude, setBatchLatitude] = useState("")
   const [batchLongitude, setBatchLongitude] = useState("")
+  const [batchLocationOpen, setBatchLocationOpen] = useState(false)
   const [metadataSyncSourceId, setMetadataSyncSourceId] = useState("")
   const [metadataSyncTargetMode, setMetadataSyncTargetMode] = useState<MetadataSyncTargetMode>("others")
   const [metadataSyncTargetIds, setMetadataSyncTargetIds] = useState<string[]>([])
@@ -2192,7 +2246,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function applyBatchRename() {
     if (!batchPrefix && !batchSuffix && !batchRemove) return
-    setBatchRenameSnapshot(items.map((item) => ({ id: item.id, fileName: item.fileName })))
+    const revision = ++batchRenameRevisionRef.current
+    setBatchRenameSnapshot(items.map((item) => ({
+      id: item.id,
+      fileName: item.fileName,
+      parsedName: item.parsedName,
+      form: cloneFormState(item.form),
+      submitState: item.submitState,
+      submitMessage: item.submitMessage,
+    })))
     const renamed = items.map((item) => ({
       id: item.id,
       fileName: normalizedFileName(
@@ -2211,11 +2273,15 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         const parsed = await fetchJson<ParsedArtifactName>(
           `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: entry.fileName }).toString()}`,
         )
-        updateItem(entry.id, (item) => ({
-          ...item,
-          parsedName: parsed,
-          form: applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
-        }))
+        updateItem(entry.id, (item) => (
+          batchRenameRevisionRef.current === revision && item.fileName === entry.fileName
+            ? {
+                ...item,
+                parsedName: parsed,
+                form: applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
+              }
+            : item
+        ))
       } catch { /* retain the renamed filename and existing metadata */ }
     }))
     setSubmitNotice({ type: "success", text: `已按规则更新 ${items.length} 个目标文件名，入库时将使用新名称` })
@@ -2223,29 +2289,26 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function undoBatchRename() {
     if (!batchRenameSnapshot) return
-    const previousNames = new Map(batchRenameSnapshot.map((entry) => [entry.id, entry.fileName]))
-    setItems((current) => current.map((item) => ({
-      ...item,
-      fileName: previousNames.get(item.id) ?? item.fileName,
-      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    })))
-    void Promise.all(batchRenameSnapshot.map(async (entry) => {
-      try {
-        const parsed = await fetchJson<ParsedArtifactName>(
-          `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: entry.fileName }).toString()}`,
-        )
-        updateItem(entry.id, (item) => ({
+    batchRenameRevisionRef.current += 1
+    const previousItems = new Map(batchRenameSnapshot.map((entry) => [entry.id, entry]))
+    setItems((current) => current.map((item) => {
+      const previous = previousItems.get(item.id)
+      return previous
+        ? {
           ...item,
-          parsedName: parsed,
-          form: applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
-        }))
-      } catch {
-        // The restored target filename remains valid even when parsing fails.
-      }
+          fileName: previous.fileName,
+          parsedName: previous.parsedName,
+          form: cloneFormState(previous.form),
+          submitState: previous.submitState,
+          submitMessage: previous.submitMessage,
+        }
+        : item
     }))
+    setBatchPrefix("")
+    setBatchSuffix("")
+    setBatchRemove("")
     setBatchRenameSnapshot(null)
-    setSubmitNotice({ type: "success", text: "已撤销上一次批量文件名修改" })
+    setSubmitNotice({ type: "success", text: "已撤销批量文件名及其解析字段修改" })
   }
 
   function useSelectedLocationForBatch() {
@@ -3325,56 +3388,16 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   return (
     <section className="exif-console">
-      <section className="panel workbench-head exif-workbench-head">
-        <div>
-          <h2>文物图片入库工作台</h2>
-          <p className="muted">校对后直接写回并入库。</p>
-        </div>
-        <div className="upload-actions exif-toolbar">
-          {directoryHandle ? <Tag color="success">已授权：{directoryHandle.name}</Tag> : null}
-          <Button
-            htmlType="button"
-            type="primary"
-            icon={uploadActivity === "files"
-              ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-              : <ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />}
-            onClick={handleSelectImages}
-            disabled={uploading}
-          >
-            {uploadActivity === "files" ? "正在读取…" : "添加图片"}
-          </Button>
-          <Button
-            htmlType="button"
-            icon={uploadActivity === "directory"
-              ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-              : directoryHandle && !needsDirectoryAuthorization
-                ? <Check size={14} strokeWidth={2} aria-hidden="true" />
-                : <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />}
-            onClick={() => void (needsDirectoryAuthorization ? handleBindDirectory() : handleSelectDirectory())}
-            disabled={uploading || bindingDirectory}
-          >
-            {bindingDirectory
-              ? "正在授权…"
-              : uploadActivity === "directory"
-                ? "正在载入文件夹…"
-                : needsDirectoryAuthorization
-                  ? "授权原文件"
-                  : directoryHandle
-                    ? "已授权文件夹"
-                    : "载入文件夹"}
-          </Button>
-        </div>
-        <input
-          aria-label="选择图片"
-          id={EXIF_FILE_INPUT_ID}
-          ref={fileInputRef}
-          type="file"
-          accept="image/*,.tif,.tiff"
-          multiple
-          className="exif-file-input"
-          onChange={(event) => void handleUpload(Array.from(event.target.files ?? []))}
-        />
-      </section>
+      <input
+        aria-label="选择图片"
+        id={EXIF_FILE_INPUT_ID}
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,.tif,.tiff"
+        multiple
+        className="exif-file-input"
+        onChange={(event) => void handleUpload(Array.from(event.target.files ?? []))}
+      />
 
       <div className="layout exif-layout exif-layout-wide">
         <section className="column column-left exif-sidebar">
@@ -3383,7 +3406,28 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               <div className="exif-sidebar-head">
                 <h2>图片列表</h2>
               </div>
-              <Space className="exif-queue-actions" size={6} role="toolbar" aria-label="图片列表操作">
+              {items.length > 0 ? <Space className="exif-queue-actions" size={6} role="toolbar" aria-label="图片列表操作">
+                <Dropdown
+                  trigger={["click"]}
+                  menu={{
+                    items: [
+                      { key: "images", icon: <ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />, label: "添加图片" },
+                      { key: "folder", icon: <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />, label: needsDirectoryAuthorization ? "授权原文件" : "载入文件夹" },
+                    ],
+                    onClick: ({ key }) => {
+                      if (key === "images") handleSelectImages()
+                      if (key === "folder") void (needsDirectoryAuthorization ? handleBindDirectory() : handleSelectDirectory())
+                    },
+                  }}
+                >
+                  <Button
+                    htmlType="button"
+                    size="small"
+                    icon={<ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
+                    disabled={uploading || bindingDirectory}
+                    aria-label="添加图片或载入文件夹"
+                  />
+                </Dropdown>
                 <Tooltip title="清空图片列表" mouseEnterDelay={0.45}>
                   <Button
                     htmlType="button"
@@ -3410,26 +3454,17 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     aria-label={submittingAll ? "正在全部入库" : allItemsSubmitted ? "当前批次已全部入库" : "全部入库"}
                   />
                 </Tooltip>
-              </Space>
+              </Space> : null}
             </div>
-            <div className="exif-sidebar-stats" aria-label="当前批次统计">
-              <div className="exif-sidebar-stat">
-                <span>总计</span>
-                <strong>{stats.itemCount}</strong>
-              </div>
-              <div className="exif-sidebar-stat success">
-                <span>已入库</span>
-                <strong>{stats.submittedCount}</strong>
-              </div>
-              <div className="exif-sidebar-stat">
-                <span>待入库</span>
-                <strong>{stats.itemCount - stats.submittedCount}</strong>
-              </div>
-              <div className="exif-sidebar-stat">
-                <span>已带坐标</span>
-                <strong>{stats.gpsCount}/{stats.itemCount}</strong>
-              </div>
-            </div>
+            {items.length > 0 ? (
+              <p className="exif-sidebar-summary" aria-label="当前批次统计">
+                <strong>{stats.itemCount}</strong> 张
+                <span>·</span>
+                {stats.submittedCount} 已入库
+                <span>·</span>
+                {stats.gpsCount} 带坐标
+              </p>
+            ) : null}
             <div className="exif-sidebar-scroll">
               <div className="exif-sidebar-tools">
               <details className="metadata-sync-panel">
@@ -3443,9 +3478,21 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </span>
                 </summary>
                 <div className="metadata-sync-controls">
-                  <label className="exif-tool-field metadata-sync-source">
-                    <span>来源照片</span>
+                  <div className="metadata-sync-source">
+                    <div className="metadata-sync-source-head">
+                      <span>来源照片</span>
+                      <Button
+                        htmlType="button"
+                        type="link"
+                        size="small"
+                        onClick={() => selectedItem && setMetadataSyncSourceId(selectedItem.id)}
+                        disabled={!selectedItem || selectedItem.id === metadataSyncSourceId}
+                      >
+                        使用当前
+                      </Button>
+                    </div>
                     <Select
+                      aria-label="来源照片"
                       value={metadataSyncSourceId || undefined}
                       placeholder="选择来源照片"
                       options={items.map((item, index) => ({
@@ -3459,19 +3506,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       showSearch
                       optionFilterProp="label"
                     />
-                  </label>
-                  <Button
-                    htmlType="button"
-                    type="default"
-                    onClick={() => selectedItem && setMetadataSyncSourceId(selectedItem.id)}
-                    disabled={!selectedItem || selectedItem.id === metadataSyncSourceId}
-                  >
-                    使用当前图片
-                  </Button>
+                  </div>
                 </div>
                 <div className="metadata-sync-target-row">
-                  <span>目标</span>
                   <Segmented<MetadataSyncTargetMode>
+                    aria-label="同步目标"
                     size="small"
                     value={metadataSyncTargetMode}
                     options={[
@@ -3481,16 +3520,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     ]}
                     onChange={setMetadataSyncTargetMode}
                   />
-                </div>
-                <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
-                  <span>预设</span>
-                  <Space.Compact size="small">
-                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("default")}>默认</Button>
-                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("location")}>地点</Button>
-                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("content")}>内容</Button>
-                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("all")}>全部</Button>
-                    <Button htmlType="button" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
-                  </Space.Compact>
                 </div>
                 <MetadataSyncFieldControls
                   context="sidebar"
@@ -3520,7 +3549,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                   </Button>
                 </div>
               </details>
-              <details className="batch-location-panel">
+              <details
+                className="batch-location-panel"
+                open={batchLocationOpen}
+                onToggle={(event) => setBatchLocationOpen(event.currentTarget.open)}
+              >
                 <summary>
                   <span className="exif-tool-summary-copy">
                     <strong>手动统一展出地点</strong>
@@ -3531,56 +3564,63 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </summary>
-                <div className="batch-location-actions">
-                  <Button htmlType="button" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>
-                    采用当前图片地点
-                  </Button>
-                </div>
-                <div className="batch-location-fields exif-tool-grid">
-                  <label className="exif-tool-field">
-                    <span>展出地点</span>
-                    <Input value={batchLocationName} placeholder="例如：历代青铜馆" onChange={(event) => setBatchLocationName(event.target.value)} />
-                  </label>
-                  <label className="exif-tool-field">
-                    <span>对应展览</span>
-                    <Input
-                      value={batchExhibitionName}
-                      placeholder="例如：常设展"
-                      onChange={(event) => {
-                        setBatchExhibitionName(event.target.value)
-                        setBatchCatalogExhibitionId(null)
-                        setBatchCatalogExhibitionSourceId("")
-                      }}
-                    />
-                  </label>
-                  <label className="exif-tool-field">
-                    <span>纬度</span>
-                    <Input value={batchLatitude} placeholder="39.9087" onChange={(event) => setBatchLatitude(event.target.value)} />
-                  </label>
-                  <label className="exif-tool-field">
-                    <span>经度</span>
-                    <Input value={batchLongitude} placeholder="116.3975" onChange={(event) => setBatchLongitude(event.target.value)} />
-                  </label>
-                </div>
-                <div className="exif-sidebar-map">
-                  <GpsMapPicker
-                    latitude={batchLatitude}
-                    longitude={batchLongitude}
-                    onPick={(latitude, longitude, locationName) => {
-                      setBatchLatitude(latitude)
-                      setBatchLongitude(longitude)
-                      if (locationName) setBatchLocationName(locationName)
-                    }}
-                  />
-                </div>
-                <div className="exif-tool-actions">
-                  <Button htmlType="button" type="primary" block onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</Button>
-                </div>
+                {batchLocationOpen ? (
+                  <>
+                    <div className="batch-location-actions">
+                      <Button htmlType="button" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>
+                        采用当前图片地点
+                      </Button>
+                    </div>
+                    <div className="batch-location-fields exif-tool-grid">
+                      <label className="exif-tool-field">
+                        <span>展出地点</span>
+                        <Input value={batchLocationName} placeholder="例如：历代青铜馆" onChange={(event) => setBatchLocationName(event.target.value)} />
+                      </label>
+                      <label className="exif-tool-field">
+                        <span>对应展览</span>
+                        <Input
+                          value={batchExhibitionName}
+                          placeholder="例如：常设展"
+                          onChange={(event) => {
+                            setBatchExhibitionName(event.target.value)
+                            setBatchCatalogExhibitionId(null)
+                            setBatchCatalogExhibitionSourceId("")
+                          }}
+                        />
+                      </label>
+                      <label className="exif-tool-field">
+                        <span>纬度</span>
+                        <Input value={batchLatitude} placeholder="39.9087" onChange={(event) => setBatchLatitude(event.target.value)} />
+                      </label>
+                      <label className="exif-tool-field">
+                        <span>经度</span>
+                        <Input value={batchLongitude} placeholder="116.3975" onChange={(event) => setBatchLongitude(event.target.value)} />
+                      </label>
+                    </div>
+                    <div className="exif-sidebar-map">
+                      <GpsMapPicker
+                        latitude={batchLatitude}
+                        longitude={batchLongitude}
+                        onPick={(latitude, longitude, locationName) => {
+                          setBatchLatitude(latitude)
+                          setBatchLongitude(longitude)
+                          if (locationName) setBatchLocationName(locationName)
+                        }}
+                      />
+                    </div>
+                    <div className="exif-tool-actions">
+                      <Button htmlType="button" type="primary" block onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</Button>
+                    </div>
+                  </>
+                ) : null}
               </details>
               </div>
               <div className="exif-queue-list">
               {items.length > 0 ? items.map((item) => (
-                <div key={item.id} className="exif-queue-item-shell">
+                <div
+                  key={item.id}
+                  className={`exif-queue-item-shell${item.submitState === "error" ? " is-error" : ""}`}
+                >
                   <button
                     type="button"
                     data-ui="interactive-surface"
@@ -3683,6 +3723,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                       htmlType="button"
                       size="small"
                       danger
+                      className="exif-queue-remove"
                       icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />}
                       aria-label={`移除 ${item.fileName}`}
                       onClick={() => void removeItem(item.id)}
@@ -4364,7 +4405,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <ImagePlus size={22} strokeWidth={1.6} />
               </span>
               <h2>从一张文物照片开始</h2>
-              <p className="muted">选择图片后，系统会从文件名提取基础信息；只需校对后保存入库。</p>
               <div className="upload-actions exif-empty-actions">
                 <Button
                   htmlType="button"
