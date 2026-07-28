@@ -14,12 +14,14 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
-  RotateCcw,
   Sparkles,
   Trash2,
   X,
   type LucideIcon,
 } from "lucide-react"
+import { useOperationHistory } from "./OperationHistory"
+
+const EXIF_HISTORY_SCOPE = "exif"
 
 const Textarea = Input.TextArea
 const SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY = true
@@ -360,13 +362,6 @@ type ExifWorkbenchItem = {
   uploadProgress: number
   uploadStage: string | null
   sourceHash: string | null
-}
-
-type BatchRenameSnapshotEntry = Pick<
-  ExifWorkbenchItem,
-  "id" | "fileName" | "parsedName" | "submitState" | "submitMessage"
-> & {
-  form: FormState
 }
 
 type PersistedExifDraftItem = Omit<ExifWorkbenchItem, "previewUrl" | "fileHandle"> & {
@@ -1009,6 +1004,78 @@ function cloneFormState(form: FormState): FormState {
     catalogExhibitionSourceId: form.catalogExhibitionSourceId ?? "",
     tags: [...form.tags],
   }
+}
+
+type ExifHistorySnapshot = {
+  items: ExifWorkbenchItem[]
+  selectedId: string | null
+  sharedForm: FormState
+}
+
+function cloneHistoryItems(items: ExifWorkbenchItem[]) {
+  return items.map((item) => ({
+    ...item,
+    form: cloneFormState(item.form),
+    originalForm: cloneFormState(item.originalForm),
+    parsedName: item.parsedName ? { ...item.parsedName } : null,
+    candidates: ensureCandidates(item.candidates),
+    unavailableProviders: [...item.unavailableProviders],
+    existingArtifactCandidates: [...item.existingArtifactCandidates],
+    verificationDecisions: item.verificationDecisions ? { ...item.verificationDecisions } : undefined,
+  }))
+}
+
+function createExifHistorySnapshot(
+  items: ExifWorkbenchItem[],
+  selectedId: string | null,
+  sharedForm: FormState,
+): ExifHistorySnapshot {
+  return {
+    items: cloneHistoryItems(items),
+    selectedId,
+    sharedForm: cloneFormState(sharedForm),
+  }
+}
+
+const FORM_HISTORY_LABELS: Partial<Record<keyof FormState, string>> = {
+  museumName: "馆藏单位",
+  name: "文物名称",
+  era: "时代",
+  placeOfExcavation: "出土地",
+  cameraModel: "相机型号",
+  lensModel: "镜头型号",
+  capturedAt: "拍摄时间",
+  shutterSpeed: "快门",
+  aperture: "光圈",
+  iso: "ISO",
+  displayLocationName: "展出地点",
+  exhibitionName: "对应展览",
+  latitude: "纬度",
+  longitude: "经度",
+  description: "描述",
+  tags: "标签",
+}
+
+function historyFieldValue(key: keyof FormState, value: FormState[keyof FormState]) {
+  if (key === "tags") {
+    const tags = value as string[]
+    return tags.length > 0 ? tags.join("、").slice(0, 32) : "空"
+  }
+  const text = String(value ?? "").trim()
+  if (key === "description") return text ? `${text.length} 字` : "空"
+  return text ? (text.length > 28 ? `${text.slice(0, 28)}…` : text) : "空"
+}
+
+function describeFormChange(
+  current: FormState,
+  patch: Partial<FormState>,
+  changedKeys: Array<keyof FormState>,
+) {
+  if (changedKeys.length !== 1) {
+    return changedKeys.map((key) => FORM_HISTORY_LABELS[key] ?? String(key)).join("、")
+  }
+  const key = changedKeys[0]
+  return `${FORM_HISTORY_LABELS[key] ?? String(key)}：${historyFieldValue(key, current[key])} → ${historyFieldValue(key, patch[key] as FormState[keyof FormState])}`
 }
 
 function shouldReplaceParsedField(currentValue: string, previousParsedValue: string | null | undefined) {
@@ -1804,6 +1871,13 @@ function GpsMapPicker({ latitude, longitude, onPick }: {
 }
 
 function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
+  const {
+    record: recordOperation,
+    updateAfter: updateOperationAfter,
+    registerScope: registerHistoryScope,
+    clear: clearOperationHistory,
+    setScopeDirty: setHistoryScopeDirty,
+  } = useOperationHistory()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const itemsRef = useRef<ExifWorkbenchItem[]>([])
   const locatingDisplayLocationRef = useRef(false)
@@ -1811,6 +1885,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const draftStorageFailureRef = useRef(false)
   const artifactMatchLookupRef = useRef(new Set<string>())
   const batchRenameRevisionRef = useRef(0)
+  const filenameHistoryOperationRef = useRef(new Map<string, string>())
   const [items, setItems] = useState<ExifWorkbenchItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [directoryHandle, setDirectoryHandle] = useState<WritableDirectoryHandle | null>(null)
@@ -1831,7 +1906,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [batchPrefix, setBatchPrefix] = useState("")
   const [batchSuffix, setBatchSuffix] = useState("")
   const [batchRemove, setBatchRemove] = useState("")
-  const [batchRenameSnapshot, setBatchRenameSnapshot] = useState<BatchRenameSnapshotEntry[] | null>(null)
   const [batchLocationName, setBatchLocationName] = useState("")
   const [batchExhibitionName, setBatchExhibitionName] = useState("常设")
   const [batchCatalogExhibitionId, setBatchCatalogExhibitionId] = useState<number | null>(null)
@@ -1949,7 +2023,93 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     [metadataSyncDiffs],
   )
 
+  function replaceWorkbenchItems(nextItems: ExifWorkbenchItem[]) {
+    itemsRef.current = nextItems
+    setItems(nextItems)
+  }
+
+  function recordItemsChange({
+    label,
+    detail,
+    nextItems,
+    affected,
+    mergeKey,
+  }: {
+    label: string
+    detail: string
+    nextItems: ExifWorkbenchItem[]
+    affected: string[]
+    mergeKey?: string
+  }) {
+    const before = createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm)
+    const after = createExifHistorySnapshot(nextItems, selectedId, sharedForm)
+    replaceWorkbenchItems(nextItems)
+    return recordOperation({
+      scope: EXIF_HISTORY_SCOPE,
+      scopeLabel: "快速录入",
+      label,
+      detail,
+      affected,
+      before,
+      after,
+      mergeKey,
+    })
+  }
+
+  function recordSharedFormChange({
+    label,
+    detail,
+    nextSharedForm,
+    mergeKey,
+  }: {
+    label: string
+    detail: string
+    nextSharedForm: FormState
+    mergeKey?: string
+  }) {
+    const before = createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm)
+    const after = createExifHistorySnapshot(itemsRef.current, selectedId, nextSharedForm)
+    setSharedForm(nextSharedForm)
+    return recordOperation({
+      scope: EXIF_HISTORY_SCOPE,
+      scopeLabel: "快速录入",
+      label,
+      detail,
+      affected: ["共享文物信息"],
+      before,
+      after,
+      mergeKey,
+    })
+  }
+
   useEffect(() => { itemsRef.current = items }, [items])
+
+  useEffect(() => {
+    setHistoryScopeDirty(
+      EXIF_HISTORY_SCOPE,
+      items.some((item) => item.submitState !== "submitted" || changedParts(item).length > 0),
+    )
+  }, [items, setHistoryScopeDirty])
+
+  useEffect(() => () => setHistoryScopeDirty(EXIF_HISTORY_SCOPE, false), [setHistoryScopeDirty])
+
+  useEffect(() => registerHistoryScope(EXIF_HISTORY_SCOPE, (snapshot, direction, entry) => {
+    const restored = snapshot as ExifHistorySnapshot
+    batchRenameRevisionRef.current += 1
+    const restoredItems = cloneHistoryItems(restored.items)
+    itemsRef.current = restoredItems
+    setItems(restoredItems)
+    setSelectedId(restored.selectedId)
+    setSharedForm(cloneFormState(restored.sharedForm))
+    setBatchPrefix("")
+    setBatchSuffix("")
+    setBatchRemove("")
+    filenameHistoryOperationRef.current.clear()
+    setSubmitNotice({
+      type: "success",
+      text: `已${direction === "undo" ? "撤销" : "重做"}：${entry.label}`,
+    })
+  }), [registerHistoryScope])
 
   useEffect(() => {
     let disposed = false
@@ -2094,6 +2254,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             longitude: item.form.longitude || museum?.longitude?.toString() || "",
           },
         }))
+        const operationId = filenameHistoryOperationRef.current.get(selectedItem.id)
+        if (operationId) {
+          updateOperationAfter(
+            operationId,
+            createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm),
+          )
+        }
       } catch {
         // Keep manual fields usable while the filename is incomplete.
       } finally {
@@ -2101,10 +2268,11 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }
     }, 280)
     return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [apiBaseUrl, selectedId, selectedItem?.fileName])
+  }, [apiBaseUrl, selectedId, selectedItem?.fileName, sharedForm, updateOperationAfter])
 
   function updateItem(itemId: string, updater: (item: ExifWorkbenchItem) => ExifWorkbenchItem) {
-    setItems((current) => current.map((item) => (item.id === itemId ? updater(item) : item)))
+    const nextItems = itemsRef.current.map((item) => (item.id === itemId ? updater(item) : item))
+    replaceWorkbenchItems(nextItems)
   }
 
   function beginArtifactMatchReview(
@@ -2134,7 +2302,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   function selectExistingArtifactMatch(match: ExistingArtifactMatch) {
     if (!artifactMatchReviewItem) return
     const itemId = artifactMatchReviewItem.id
-    updateItem(itemId, (item) => {
+    const nextItems = itemsRef.current.map((item) => {
+      if (item.id !== itemId) return item
       const nextForm = applyExistingArtifactToForm(item.form, match.artifact)
       return {
         ...item,
@@ -2147,13 +2316,19 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         submitMessage: `已采用“${match.artifact.name}”的文物信息，新照片将追加到这件文物。`,
       }
     })
+    recordItemsChange({
+      label: "关联已有文物",
+      detail: `${artifactMatchReviewItem.fileName} · ${match.artifact.name}`,
+      nextItems,
+      affected: [artifactMatchReviewItem.fileName],
+    })
     setSelectedId(itemId)
     advanceArtifactMatchReview()
   }
 
   function rejectExistingArtifactMatches() {
     if (!artifactMatchReviewItem) return
-    updateItem(artifactMatchReviewItem.id, (item) => ({
+    const nextItems = itemsRef.current.map((item) => item.id === artifactMatchReviewItem.id ? {
       ...item,
       existingArtifactId: null,
       existingArtifactMatch: null,
@@ -2161,7 +2336,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       existingArtifactReviewKey: artifactReviewIdentityKey(item.form),
       descriptionMeta: null,
       submitMessage: "已选择不复用已有文物信息，本次将按新文物提交。",
-    }))
+    } : item)
+    recordItemsChange({
+      label: "按新文物填写",
+      detail: artifactMatchReviewItem.fileName,
+      nextItems,
+      affected: [artifactMatchReviewItem.fileName],
+    })
     advanceArtifactMatchReview()
   }
 
@@ -2169,12 +2350,26 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (!selectedItem) {
       return
     }
-    updateItem(selectedItem.id, (item) => ({
+    const currentItem = itemsRef.current.find((item) => item.id === selectedItem.id)
+    if (!currentItem) return
+    const changedKeys = (Object.keys(patch) as Array<keyof FormState>).filter((key) => (
+      JSON.stringify(currentItem.form[key]) !== JSON.stringify(patch[key])
+    ))
+    if (changedKeys.length === 0) return
+    const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? {
       ...item,
       form: { ...item.form, ...patch },
       submitState: item.submitState === "submitted" ? "idle" : item.submitState,
       submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    }))
+    } : item)
+    const fieldLabels = changedKeys.map((key) => FORM_HISTORY_LABELS[key] ?? String(key))
+    recordItemsChange({
+      label: `编辑${fieldLabels.join("、")}`,
+      detail: `${currentItem.fileName} · ${describeFormChange(currentItem.form, patch, changedKeys)}`,
+      nextItems,
+      affected: [currentItem.fileName],
+      mergeKey: `form:${currentItem.id}:${changedKeys.sort().join(",")}`,
+    })
   }
 
   async function locateDisplayLocation(locationName: string, preferredMuseum?: MuseumOption) {
@@ -2213,7 +2408,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         throw new Error("未找到可用坐标")
       }
 
-      updateItem(itemId, (item) => ({
+      const currentItem = itemsRef.current.find((item) => item.id === itemId)
+      if (!currentItem) return
+      const nextItems = itemsRef.current.map((item) => item.id === itemId ? {
         ...item,
         form: {
           ...item.form,
@@ -2223,7 +2420,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         },
         submitState: item.submitState === "submitted" ? "idle" : item.submitState,
         submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-      }))
+      } : item)
+      recordItemsChange({
+        label: "定位展出地点",
+        detail: `${currentItem.fileName} · ${museum?.name || normalizedName}`,
+        nextItems,
+        affected: [currentItem.fileName],
+      })
       setShowLocationSuggestions(false)
       setSubmitNotice({ type: "success", text: `已定位“${museum?.name || normalizedName}”并补充 GPS` })
     } catch {
@@ -2235,39 +2438,51 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function renameSelected(baseName: string) {
     if (!selectedItem) return
-    setBatchRenameSnapshot(null)
-    updateItem(selectedItem.id, (item) => ({
+    const currentItem = itemsRef.current.find((item) => item.id === selectedItem.id)
+    if (!currentItem) return
+    const nextFileName = normalizedFileName(baseName, currentItem.fileName)
+    if (nextFileName === currentItem.fileName) return
+    const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? {
       ...item,
-      fileName: normalizedFileName(baseName, item.fileName),
+      fileName: nextFileName,
       submitState: item.submitState === "submitted" ? "idle" : item.submitState,
       submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    }))
+    } : item)
+    const operationId = recordItemsChange({
+      label: "修改目标文件名",
+      detail: `${currentItem.fileName} → ${nextFileName}`,
+      nextItems,
+      affected: [currentItem.fileName],
+      mergeKey: `filename:${currentItem.id}`,
+    })
+    filenameHistoryOperationRef.current.set(currentItem.id, operationId)
   }
 
   function applyBatchRename() {
     if (!batchPrefix && !batchSuffix && !batchRemove) return
     const revision = ++batchRenameRevisionRef.current
-    setBatchRenameSnapshot(items.map((item) => ({
-      id: item.id,
-      fileName: item.fileName,
-      parsedName: item.parsedName,
-      form: cloneFormState(item.form),
-      submitState: item.submitState,
-      submitMessage: item.submitMessage,
-    })))
-    const renamed = items.map((item) => ({
+    const currentItems = itemsRef.current
+    const renamed = currentItems.map((item) => ({
       id: item.id,
       fileName: normalizedFileName(
         `${batchPrefix}${fileBaseName(item.fileName).split(batchRemove).join("")}${batchSuffix}`,
         item.fileName,
       ),
     }))
-    setItems((current) => current.map((item) => ({
+    const nextItems = currentItems.map((item) => ({
       ...item,
       fileName: renamed.find((entry) => entry.id === item.id)?.fileName ?? item.fileName,
       submitState: item.submitState === "submitted" ? "idle" : item.submitState,
       submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    })))
+    }))
+    const changedItems = nextItems.filter((item, index) => item.fileName !== currentItems[index]?.fileName)
+    if (changedItems.length === 0) return
+    const operationId = recordItemsChange({
+      label: "批量修改目标文件名",
+      detail: `前缀“${batchPrefix || "无"}” · 后缀“${batchSuffix || "无"}” · 影响 ${changedItems.length} 张`,
+      nextItems,
+      affected: changedItems.map((item) => item.fileName),
+    })
     void Promise.all(renamed.map(async (entry) => {
       try {
         const parsed = await fetchJson<ParsedArtifactName>(
@@ -2283,32 +2498,14 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             : item
         ))
       } catch { /* retain the renamed filename and existing metadata */ }
-    }))
-    setSubmitNotice({ type: "success", text: `已按规则更新 ${items.length} 个目标文件名，入库时将使用新名称` })
-  }
-
-  function undoBatchRename() {
-    if (!batchRenameSnapshot) return
-    batchRenameRevisionRef.current += 1
-    const previousItems = new Map(batchRenameSnapshot.map((entry) => [entry.id, entry]))
-    setItems((current) => current.map((item) => {
-      const previous = previousItems.get(item.id)
-      return previous
-        ? {
-          ...item,
-          fileName: previous.fileName,
-          parsedName: previous.parsedName,
-          form: cloneFormState(previous.form),
-          submitState: previous.submitState,
-          submitMessage: previous.submitMessage,
-        }
-        : item
-    }))
-    setBatchPrefix("")
-    setBatchSuffix("")
-    setBatchRemove("")
-    setBatchRenameSnapshot(null)
-    setSubmitNotice({ type: "success", text: "已撤销批量文件名及其解析字段修改" })
+    })).then(() => {
+      if (batchRenameRevisionRef.current !== revision) return
+      updateOperationAfter(
+        operationId,
+        createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm),
+      )
+    })
+    setSubmitNotice({ type: "success", text: `已按规则更新 ${changedItems.length} 个目标文件名，入库时将使用新名称` })
   }
 
   function useSelectedLocationForBatch() {
@@ -2374,12 +2571,18 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   function applyMetadataSync() {
     if (!metadataSyncSource || metadataSyncTargets.length === 0) return
     const targetIds = new Set(metadataSyncTargets.map((item) => item.id))
-    setItems((current) => current.map((item) => targetIds.has(item.id) ? {
+    const nextItems = itemsRef.current.map((item) => targetIds.has(item.id) ? {
       ...item,
       form: applySourceMetadata(item.form, metadataSyncSource.form, metadataSyncSelection),
       submitState: item.submitState === "submitted" ? "idle" : item.submitState,
       submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    } : item))
+    } : item)
+    recordItemsChange({
+      label: "同步照片信息",
+      detail: `从“${metadataSyncSource.fileName}”同步 ${metadataSyncChangedCount} 项到 ${metadataSyncTargets.length} 张照片`,
+      nextItems,
+      affected: metadataSyncTargets.map((item) => item.fileName),
+    })
     setMetadataSyncPreviewOpen(false)
     setSubmitNotice({
       type: "success",
@@ -2394,7 +2597,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       setSubmitNotice({ type: "error", text: "批量 GPS 需要同时填写纬度和经度" })
       return
     }
-    setItems((current) => current.map((item) => ({
+    const nextItems = itemsRef.current.map((item) => ({
       ...item,
       form: {
         ...item.form,
@@ -2407,19 +2610,40 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       },
       submitState: item.submitState === "submitted" ? "idle" : item.submitState,
       submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    })))
-    setSubmitNotice({ type: "success", text: `已将展出地点与 GPS 应用到 ${items.length} 张图片` })
+    }))
+    recordItemsChange({
+      label: "统一展出地点与 GPS",
+      detail: `${batchLocationName.trim() || "保留地点"} · ${itemsRef.current.length} 张照片`,
+      nextItems,
+      affected: itemsRef.current.map((item) => item.fileName),
+    })
+    setSubmitNotice({ type: "success", text: `已将展出地点与 GPS 应用到 ${nextItems.length} 张图片` })
   }
 
   function updateSharedForm(patch: Partial<FormState>) {
-    setSharedForm((current) => ({ ...current, ...patch }))
+    const changedKeys = (Object.keys(patch) as Array<keyof FormState>).filter((key) => (
+      JSON.stringify(sharedForm[key]) !== JSON.stringify(patch[key])
+    ))
+    if (changedKeys.length === 0) return
+    const nextSharedForm = { ...sharedForm, ...patch }
+    const labels = changedKeys.map((key) => FORM_HISTORY_LABELS[key] ?? String(key))
+    recordSharedFormChange({
+      label: `编辑共享${labels.join("、")}`,
+      detail: `共享文物信息 · ${describeFormChange(sharedForm, patch, changedKeys)}`,
+      nextSharedForm,
+      mergeKey: `shared:${changedKeys.sort().join(",")}`,
+    })
   }
 
   function fillSharedFromSelected() {
     if (!selectedItem) {
       return
     }
-    setSharedForm(cloneFormState(selectedItem.form))
+    recordSharedFormChange({
+      label: "采用当前照片的共享信息",
+      detail: selectedItem.fileName,
+      nextSharedForm: cloneFormState(selectedItem.form),
+    })
     setSubmitNotice({ type: "success", text: "已用当前图片内容刷新共享文物信息" })
   }
 
@@ -2428,13 +2652,19 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       return
     }
     const nextShared = cloneFormState(sharedForm)
-    setItems((current) => current.map((item) => ({
+    const nextItems = itemsRef.current.map((item) => ({
       ...item,
       form: applySharedForm(item.form, nextShared),
       submitState: item.submitState === "submitted" ? "idle" : item.submitState,
       submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    })))
-    setSubmitNotice({ type: "success", text: `已将共享字段应用到 ${items.length} 张图片` })
+    }))
+    recordItemsChange({
+      label: "应用共享文物信息",
+      detail: `应用到 ${nextItems.length} 张照片`,
+      nextItems,
+      affected: nextItems.map((item) => item.fileName),
+    })
+    setSubmitNotice({ type: "success", text: `已将共享字段应用到 ${nextItems.length} 张图片` })
   }
 
   async function createWorkbenchItem(
@@ -2589,6 +2819,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }
 
       setDirectoryHandle(nextDirectoryHandle)
+      if (builtItems.length > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
       const matchCount = builtItems.filter((item) => item.existingArtifactCandidates.length > 0).length
       setSubmitNotice({
         type: "success",
@@ -2709,6 +2940,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         }
       }))
       setDirectoryHandle(nextDirectoryHandle)
+      clearOperationHistory(EXIF_HISTORY_SCOPE)
       const summary = [`已绑定 ${matched} 张`]
       if (exactMatched > 0) summary.push(`精确匹配 ${exactMatched} 张`)
       if (fallbackMatched > 0) summary.push(`文件名和大小匹配 ${fallbackMatched} 张`)
@@ -2765,6 +2997,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         const seedForm = builtItems.find((item) => hasMeaningfulFormValue(item.form))?.form
         return seedForm ? cloneFormState(seedForm) : current
       })
+      if (builtItems.length > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
       const matchCount = builtItems.filter((item) => item.existingArtifactCandidates.length > 0).length
       setSubmitNotice({
         type: "success",
@@ -2797,6 +3030,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       // Removing a queue item should still work if browser storage is unavailable.
     }
     revokePreviewUrl(target.previewUrl)
+    clearOperationHistory(EXIF_HISTORY_SCOPE)
     const remaining = items.filter((item) => item.id !== itemId)
     setItems(remaining)
     setSelectedId((current) => (current === itemId ? remaining[0]?.id ?? null : current))
@@ -2810,6 +3044,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       // Clearing the queue should still work if browser storage is unavailable.
     }
     currentItems.forEach((item) => revokePreviewUrl(item.previewUrl))
+    clearOperationHistory(EXIF_HISTORY_SCOPE)
     setItems([])
     setSelectedId(null)
     setDirectoryHandle(null)
@@ -2947,8 +3182,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         : `默认采用：${generated.provider} / ${generated.model}${generated.research_id ? ` · 研究 ${generated.research_id.slice(0, 8)}` : ""}`
 
       if (isSharedTarget) {
-        setSharedForm(nextSharedForm)
-        setItems((current) => current.map((item) => ({
+        const nextItems = itemsRef.current.map((item) => ({
           ...item,
           form: applySharedForm(item.form, nextSharedForm),
           candidates: nextCandidates,
@@ -2957,13 +3191,26 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           verificationDecisions: {},
           submitState: item.submitState === "submitted" ? "idle" : item.submitState,
           submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-        })))
+        }))
+        const before = createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm)
+        const after = createExifHistorySnapshot(nextItems, selectedId, nextSharedForm)
+        replaceWorkbenchItems(nextItems)
+        setSharedForm(nextSharedForm)
+        recordOperation({
+          scope: EXIF_HISTORY_SCOPE,
+          scopeLabel: "快速录入",
+          label: "生成并应用共享描述",
+          detail: `${generated.provider} / ${generated.model} · ${nextItems.length} 张照片`,
+          affected: nextItems.map((item) => item.fileName),
+          before,
+          after,
+        })
         setSubmitNotice({
           type: "success",
-          text: `已根据共享字段并行请求千问和豆包，并把完整描述应用到 ${items.length} 张图片`,
+          text: `已根据共享字段并行请求千问和豆包，并把完整描述应用到 ${nextItems.length} 张图片`,
         })
       } else {
-        updateItem(selectedItem.id, (item) => ({
+        const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? {
           ...item,
           form: {
             ...item.form,
@@ -2974,7 +3221,13 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           unavailableProviders: nextUnavailableProviders,
           descriptionMeta: nextMeta,
           verificationDecisions: {},
-        }))
+        } : item)
+        recordItemsChange({
+          label: "生成文物描述",
+          detail: `${selectedItem.fileName} · ${generated.provider} / ${generated.model}`,
+          nextItems,
+          affected: [selectedItem.fileName],
+        })
         setSubmitNotice({ type: "success", text: "已根据名称、年代、博物馆与出土地点生成完整描述" })
       }
     } catch (error) {
@@ -2993,7 +3246,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (!selectedItem || candidate.status !== "success") {
       return
     }
-    updateItem(selectedItem.id, (item) => ({
+    const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? {
       ...item,
       form: {
         ...item.form,
@@ -3001,27 +3254,30 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         tags: [...item.form.tags],
       },
       descriptionMeta: `当前采用：${candidate.provider} / ${candidate.model}`,
-    }))
+    } : item)
+    recordItemsChange({
+      label: "切换描述版本",
+      detail: `${selectedItem.fileName} · ${candidate.provider} / ${candidate.model}`,
+      nextItems,
+      affected: [selectedItem.fileName],
+    })
     setSubmitNotice({ type: "success", text: `已采用 ${candidate.provider} 的描述；标签仍可跨模型单独点选` })
   }
 
   function toggleCandidateTag(tag: string) {
     if (!selectedItem) return
     const selected = selectedItem.form.tags.includes(tag)
-    updateItem(selectedItem.id, (item) => ({
-      ...item,
-      form: {
-        ...item.form,
-        tags: selected
-          ? item.form.tags.filter((entry) => entry !== tag)
-          : uniqueTags([...item.form.tags, tag]),
-      },
-    }))
+    updateSelectedForm({
+      tags: selected
+        ? selectedItem.form.tags.filter((entry) => entry !== tag)
+        : uniqueTags([...selectedItem.form.tags, tag]),
+    })
   }
 
   function reviewVerifiedClaim(claim: VerifiedClaim, decision: "accepted" | "rejected") {
     if (!selectedItem) return
-    updateItem(selectedItem.id, (item) => {
+    const nextItems = itemsRef.current.map((item) => {
+      if (item.id !== selectedItem.id) return item
       const withoutClaim = item.form.description
         .replace(claim.text, "")
         .replace(/\n{3,}/g, "\n\n")
@@ -3037,6 +3293,12 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           [claim.text]: decision,
         },
       }
+    })
+    recordItemsChange({
+      label: decision === "accepted" ? "采纳核验内容" : "移除核验内容",
+      detail: `${selectedItem.fileName} · ${claim.text.slice(0, 32)}${claim.text.length > 32 ? "…" : ""}`,
+      nextItems,
+      affected: [selectedItem.fileName],
     })
     setSubmitNotice({
       type: "success",
@@ -3056,6 +3318,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     }
     if (target.submitState === "submitted" && changedParts(target).length === 0) {
       setSubmitNotice({ type: "success", text: "该图片已入库且没有新的修改，无需重复提交。" })
+      clearOperationHistory(EXIF_HISTORY_SCOPE)
       return true
     }
     if (await confirmPreviouslySubmittedItem(apiBaseUrl, target)) {
@@ -3067,6 +3330,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         uploadStage: "已完成",
         originalForm: cloneFormState(item.form),
       }))
+      clearOperationHistory(EXIF_HISTORY_SCOPE)
       return true
     }
     if (!target.form.name.trim() || !target.form.museumName.trim()) {
@@ -3288,6 +3552,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         uploadProgress: 100,
         uploadStage: "已完成",
       }))
+      clearOperationHistory(EXIF_HISTORY_SCOPE)
       return true
     } catch (error) {
       updateItem(itemId, (item) => ({
@@ -3329,6 +3594,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       !item.fileHandle || (item.fileName !== item.originalFileName && !directoryHandle)
     ))
     if (unboundItems.length > 0) {
+      if (confirmedIds.size > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
       setSubmittingAll(false)
       setSelectedId(unboundItems[0].id)
       setItems((current) => current.map((item) => (
@@ -3362,6 +3628,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       }
     }
     await Promise.all(Array.from({ length: Math.min(2, pendingItems.length) }, () => worker()))
+    if (succeeded > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
     setSubmittingAll(false)
     setSubmitNotice(failed > 0
       ? { type: "error", text: `批量提交完成：${succeeded} 张成功，${failed} 张失败。可在队列中点击“重试”后再次提交。` }
@@ -3379,10 +3646,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     if (nextTags.length === 0) {
       return
     }
-    updateItem(selectedItem.id, (item) => ({
-      ...item,
-      form: { ...item.form, tags: uniqueTags([...item.form.tags, ...nextTags]) },
-    }))
+    updateSelectedForm({ tags: uniqueTags([...selectedItem.form.tags, ...nextTags]) })
     setTagInput("")
   }
 
@@ -3914,14 +4178,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                           >
                             应用到 {batchRenameCount} 张
                           </Button>
-                          <Button
-                            htmlType="button"
-                            icon={<RotateCcw size={13} aria-hidden="true" />}
-                            onClick={undoBatchRename}
-                            disabled={!batchRenameSnapshot}
-                          >
-                            撤销上次批量修改
-                          </Button>
                         </div>
                       </details>
                       {parsingFileName ? (
@@ -4346,10 +4602,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                               <Tag
                                 key={tag}
                                 closable
-                                onClose={() => updateItem(selectedItem.id, (item) => ({
-                                  ...item,
-                                  form: { ...item.form, tags: item.form.tags.filter((entry) => entry !== tag) },
-                                }))}
+                                onClose={() => updateSelectedForm({
+                                  tags: selectedItem.form.tags.filter((entry) => entry !== tag),
+                                })}
                               >
                                 {tag}
                               </Tag>

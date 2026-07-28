@@ -1,8 +1,9 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
-import { AutoComplete, Button, Input, Select, Tabs, Tag } from "antd"
+import { App as AntApp, AutoComplete, Button, Input, Select, Tabs, Tag } from "antd"
 import { Camera, Check, ChevronRight, CloudUpload, ImagePlus, RefreshCw, ScanSearch, Trash2 } from "lucide-react"
 import "./App.css"
+import { OperationHistoryControls, useOperationHistory } from "./OperationHistory"
 
 const BatchConsole = lazy(() => import("./BatchConsole"))
 const ExifConsole = lazy(() => import("./ExifConsole"))
@@ -408,6 +409,8 @@ function buildArtifactFormFromImage(image?: UploadedImage | null): ArtifactFormS
 }
 
 function App() {
+  const { modal } = AntApp.useApp()
+  const { hasChanges } = useOperationHistory()
   const [backendTarget, setBackendTarget] = useState<BackendTarget>(() => {
     if (!import.meta.env.DEV) {
       return "local"
@@ -441,6 +444,9 @@ function App() {
   const [artifactMessage, setArtifactMessage] = useState<string | null>(null)
   const [artifactError, setArtifactError] = useState<string | null>(null)
   const [view, setViewState] = useState<View>(() => normalizeViewFromPath(window.location.pathname))
+  const [visitedViews, setVisitedViews] = useState<Set<View>>(
+    () => new Set([normalizeViewFromPath(window.location.pathname)]),
+  )
   const [providerOrder, setProviderOrder] = useState<string[]>([])
   const [providerStreams, setProviderStreams] = useState<Record<string, ProviderStream>>({})
   const [unavailableProviders, setUnavailableProviders] = useState<string[]>([])
@@ -478,6 +484,12 @@ function App() {
   const setView = useCallback((nextView: View, options?: { replace?: boolean }) => {
     const resolvedView = isViewAvailable(nextView) ? nextView : getDefaultView()
     setViewState(resolvedView)
+    setVisitedViews((current) => {
+      if (current.has(resolvedView)) return current
+      const next = new Set(current)
+      next.add(resolvedView)
+      return next
+    })
     const targetPath = getPathForView(resolvedView)
     if (window.location.pathname !== targetPath) {
       const method = options?.replace ? "replaceState" : "pushState"
@@ -487,12 +499,28 @@ function App() {
   }, [])
 
   const handleViewChange = useCallback((nextView: View) => {
-    const nextItem = NAV_ITEMS.find((item) => item.view === nextView)
-    if (import.meta.env.DEV && backendTarget === "cloud" && nextItem && !nextItem.cloudVisible) {
-      setBackendTarget("local")
+    if (nextView === view) return
+    const navigate = () => {
+      const nextItem = NAV_ITEMS.find((item) => item.view === nextView)
+      if (import.meta.env.DEV && backendTarget === "cloud" && nextItem && !nextItem.cloudVisible) {
+        setBackendTarget("local")
+      }
+      setView(nextView)
     }
-    setView(nextView)
-  }, [backendTarget, setView])
+    if (!hasChanges(view)) {
+      navigate()
+      return
+    }
+    const currentLabel = NAV_ITEMS.find((item) => item.view === view)?.label ?? "当前页面"
+    modal.confirm({
+      title: "当前 Tab 还有未提交的更改",
+      content: `${currentLabel}中还有尚未入库的内容。切换后内容和本 Tab 的历史会保留，返回后可以继续处理。`,
+      okText: "仍然切换",
+      cancelText: "留在当前页",
+      centered: true,
+      onOk: navigate,
+    })
+  }, [backendTarget, hasChanges, modal, setView, view])
 
   const handleBackendTargetChange = useCallback((nextTarget: BackendTarget) => {
     setBackendTarget(nextTarget)
@@ -830,7 +858,14 @@ function App() {
     }
 
     const handlePopState = () => {
-      setViewState(normalizeViewFromPath(window.location.pathname))
+      const nextView = normalizeViewFromPath(window.location.pathname)
+      setViewState(nextView)
+      setVisitedViews((current) => {
+        if (current.has(nextView)) return current
+        const next = new Set(current)
+        next.add(nextView)
+        return next
+      })
     }
     window.addEventListener("popstate", handlePopState)
     return () => window.removeEventListener("popstate", handlePopState)
@@ -1226,6 +1261,10 @@ function App() {
               onChange={(value) => handleViewChange(value as View)}
             />
           </nav>
+          <OperationHistoryControls
+            scope={view}
+            scopeLabel={NAV_ITEMS.find((item) => item.view === view)?.label ?? "当前 Tab"}
+          />
           {import.meta.env.DEV ? (
             <label className={`backend-target-select-wrap ${health ? "online" : "offline"}`}>
               <span className="sr-only">后端环境</span>
@@ -1276,7 +1315,11 @@ function App() {
 
         {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 
-        {view === "exif" && !cloudOnly ? <ExifConsole apiBaseUrl={apiBaseUrl} /> : null}
+        {visitedViews.has("exif") && !cloudOnly ? (
+          <div className="persistent-view" hidden={view !== "exif"}>
+            <ExifConsole apiBaseUrl={apiBaseUrl} />
+          </div>
+        ) : null}
       </Suspense>
 
       {view === "single" && !cloudOnly ? (
