@@ -1147,21 +1147,26 @@ function applyExistingArtifactToForm(form: FormState, artifact: ExistingArtifact
   }
 }
 
-function applyReuploadHintToForm(form: FormState, hint: ReuploadHint): FormState {
+function resetFormForNewArtifact(
+  form: FormState,
+  parsedName: ParsedArtifactName | null,
+): FormState {
+  // A declined match must never leave copied artifact fields in the editor.
+  // Rebuild the identity from this photo's own filename parse while keeping
+  // its EXIF-derived camera and GPS values intact.
+  if (!parsedName) return form
   return {
     ...form,
-    museumName: hint.form.museumName || form.museumName,
-    name: hint.form.name || form.name,
-    era: hint.form.era || form.era,
-    placeOfExcavation: hint.form.placeOfExcavation || form.placeOfExcavation,
-    displayLocationName: hint.form.displayLocationName || form.displayLocationName,
-    exhibitionName: hint.form.exhibitionName || form.exhibitionName,
-    catalogExhibitionId: hint.form.catalogExhibitionId ?? form.catalogExhibitionId,
-    catalogExhibitionSourceId: hint.form.catalogExhibitionSourceId || form.catalogExhibitionSourceId,
-    latitude: hint.form.latitude || form.latitude,
-    longitude: hint.form.longitude || form.longitude,
-    description: hint.form.description || form.description,
-    tags: hint.form.tags.length > 0 ? [...hint.form.tags] : form.tags,
+    museumName: parsedName.museum_name ?? "",
+    name: parsedName.artifact_name ?? "",
+    era: parsedName.era ?? "",
+    placeOfExcavation: parsedName.Place_of_Excavation ?? "",
+    displayLocationName: parsedName.museum_name ?? form.displayLocationName,
+    exhibitionName: "",
+    catalogExhibitionId: null,
+    catalogExhibitionSourceId: "",
+    description: "",
+    tags: [],
   }
 }
 
@@ -1179,25 +1184,6 @@ function openExifDraftDatabase() {
     request.onsuccess = () => resolve(request.result)
     request.onerror = () => reject(request.error ?? new Error("无法打开本地草稿存储"))
   })
-}
-
-async function readReuploadHint(fileName: string) {
-  const database = await openExifDraftDatabase()
-  try {
-    for (const key of normalizedReuploadHintKeys(fileName)) {
-      const hint = await new Promise<ReuploadHint | null>((resolve, reject) => {
-        const request = database.transaction(EXIF_REUPLOAD_HINT_STORE_NAME, "readonly")
-          .objectStore(EXIF_REUPLOAD_HINT_STORE_NAME)
-          .get(key)
-        request.onsuccess = () => resolve((request.result as ReuploadHint | undefined) ?? null)
-        request.onerror = () => reject(request.error ?? new Error("读取重新上传线索失败"))
-      })
-      if (hint?.version === 1) return hint
-    }
-    return null
-  } finally {
-    database.close()
-  }
 }
 
 async function writeReuploadHints(items: ExifWorkbenchItem[]) {
@@ -2328,15 +2314,21 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
 
   function rejectExistingArtifactMatches() {
     if (!artifactMatchReviewItem) return
-    const nextItems = itemsRef.current.map((item) => item.id === artifactMatchReviewItem.id ? {
-      ...item,
-      existingArtifactId: null,
-      existingArtifactMatch: null,
-      existingArtifactCandidates: [],
-      existingArtifactReviewKey: artifactReviewIdentityKey(item.form),
-      descriptionMeta: null,
-      submitMessage: "已选择不复用已有文物信息，本次将按新文物提交。",
-    } : item)
+    const nextItems = itemsRef.current.map((item) => {
+      if (item.id !== artifactMatchReviewItem.id) return item
+      const nextForm = resetFormForNewArtifact(item.form, item.parsedName)
+      return {
+        ...item,
+        form: nextForm,
+        originalForm: cloneFormState(nextForm),
+        existingArtifactId: null,
+        existingArtifactMatch: null,
+        existingArtifactCandidates: [],
+        existingArtifactReviewKey: artifactReviewIdentityKey(nextForm),
+        descriptionMeta: null,
+        submitMessage: "已选择不复用已有文物信息，本次将按当前照片的文件名与 EXIF 信息作为新文物提交。",
+      }
+    })
     recordItemsChange({
       label: "按新文物填写",
       detail: artifactMatchReviewItem.fileName,
@@ -2746,12 +2738,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       // keep default form
     }
 
-    try {
-      const hint = await readReuploadHint(file.name)
-      if (hint) form = applyReuploadHintToForm(form, hint)
-    } catch {
-      // A missing local hint must not block normal image intake.
-    }
+    // Do not auto-fill from a browser-local prior upload solely by filename.
+    // A filename can be reused for a completely different object, so existing
+    // artifact data is only applied after the operator explicitly selects it.
     existingArtifactCandidates = await lookupExistingArtifactCandidates(apiBaseUrl, form)
 
     return {

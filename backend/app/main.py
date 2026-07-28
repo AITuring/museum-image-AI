@@ -2335,31 +2335,11 @@ def find_existing_artifact_match(
             reason="名称完全一致，且时代、馆藏一致。",
         )
 
-    if len(compact_name) < 3:
-        return None
-
-    candidates = list(
-        db.scalars(
-            base_query.order_by(
-                Artifact.created_at.asc(),
-                Artifact.id.asc(),
-            )
-        )
-    )
-    best_match = None
-    best_score = -1
-    for candidate in candidates:
-        score = artifact_name_match_score(name, candidate.name)
-        if score > best_score:
-            best_match = candidate
-            best_score = score
-    if best_match is None or best_score < 0.68:
-        return None
-    return ArtifactMatchCandidate(
-        artifact=best_match,
-        score=best_score,
-        reason="名称大部分一致，且时代、馆藏一致。",
-    )
+    # Auto-reuse changes an existing collection record, so it requires an
+    # exact normalized name in addition to the exact museum and era above.
+    # Near-name candidates may still be surfaced for a human to inspect, but
+    # must never be selected automatically for ingestion.
+    return None
 
 
 async def fetch_cloud_artifact_match(
