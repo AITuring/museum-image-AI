@@ -6,6 +6,25 @@
     var(--ui-canvas);
 }
 
+.exhibition-catalog {
+  min-height: calc(100dvh - 64px);
+  padding: clamp(24px, 3vw, 42px) clamp(16px, 3.2vw, 48px) 72px;
+  background:
+    radial-gradient(circle at 8% 0%, rgb(132 102 58 / 0.08), transparent 30%),
+    transparent;
+}
+
+.exhibition-hero h2 {
+  color: var(--ui-text-primary);
+  text-wrap: balance;
+}
+
+.exhibition-sync-card {
+  border: 1px solid var(--ui-line-subtle);
+  background: rgb(255 253 249 / 0.86);
+  box-shadow: var(--ui-shadow-card);
+}
+
 .exhibition-hero {
   display: flex;
   max-width: 1480px;
@@ -27,7 +46,7 @@
 .exhibition-hero h2 {
   margin: 0;
   font-family: "Songti SC", "Noto Serif SC", serif;
-  font-size: clamp(28px, 3vw, 42px);
+  font-size: clamp(24px, 2vw, 28px);
   font-weight: 600;
   letter-spacing: -0.045em;
 }

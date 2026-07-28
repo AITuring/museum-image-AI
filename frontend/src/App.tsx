@@ -1197,9 +1197,17 @@ function App() {
 
   return (
     <main className="app-shell">
+      <a className="skip-link" href="#main-content">跳到主要内容</a>
       <header className="topbar">
         <div className="brand">
-          <img className="brand-mark" src="/logo.png" alt="文物数据库" />
+          <img
+            className="brand-mark"
+            src="/logo.png"
+            alt=""
+            width={28}
+            height={28}
+            aria-hidden="true"
+          />
           <div className="brand-copy">
             <h1>Museum · 藏影录</h1>
             <p className="brand-lead">文物图像采集与归档</p>
@@ -1220,8 +1228,11 @@ function App() {
           </nav>
           {import.meta.env.DEV ? (
             <label className={`backend-target-select-wrap ${health ? "online" : "offline"}`}>
+              <span className="sr-only">后端环境</span>
               <select
                 className="backend-target-select"
+                aria-label="后端环境"
+                name="backend-environment"
                 value={backendTarget}
                 onChange={(event) => handleBackendTargetChange(event.target.value as BackendTarget)}
                 title={
@@ -1255,6 +1266,7 @@ function App() {
         </div>
       </header>
 
+      <div id="main-content" className="app-content" tabIndex={-1}>
       <Suspense fallback={lazyViewFallback}>
         {view === "gallery" ? <Gallery apiBaseUrl={apiBaseUrl} /> : null}
 
@@ -1865,6 +1877,7 @@ function App() {
         : null}
       </>
       ) : null}
+      </div>
     </main>
   )
 }

@@ -287,7 +287,7 @@ function MetadataSyncFieldControls({
         <section key={group.key} className="metadata-sync-field-group">
           <header>
             <strong>{group.title}</strong>
-            <span>{group.description}</span>
+            {context === "preview" ? <span>{group.description}</span> : null}
           </header>
           <div className="metadata-sync-field-list">
             {group.fields.map((field) => (
@@ -3328,7 +3328,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
       <section className="panel workbench-head exif-workbench-head">
         <div>
           <h2>文物图片入库工作台</h2>
-          <p className="muted">解析文件名、校对展出地点、补全描述，一次完成本地 EXIF、OSS 和云数据库。</p>
+          <p className="muted">校对后直接写回并入库。</p>
         </div>
         <div className="upload-actions exif-toolbar">
           {directoryHandle ? <Tag color="success">已授权：{directoryHandle.name}</Tag> : null}
@@ -3347,11 +3347,21 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             htmlType="button"
             icon={uploadActivity === "directory"
               ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-              : <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />}
-            onClick={() => void handleSelectDirectory()}
+              : directoryHandle && !needsDirectoryAuthorization
+                ? <Check size={14} strokeWidth={2} aria-hidden="true" />
+                : <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />}
+            onClick={() => void (needsDirectoryAuthorization ? handleBindDirectory() : handleSelectDirectory())}
             disabled={uploading || bindingDirectory}
           >
-            {uploadActivity === "directory" ? "正在载入文件夹…" : "载入文件夹"}
+            {bindingDirectory
+              ? "正在授权…"
+              : uploadActivity === "directory"
+                ? "正在载入文件夹…"
+                : needsDirectoryAuthorization
+                  ? "授权原文件"
+                  : directoryHandle
+                    ? "已授权文件夹"
+                    : "载入文件夹"}
           </Button>
         </div>
         <input
@@ -3372,52 +3382,8 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             <div className="section-heading compact">
               <div className="exif-sidebar-head">
                 <h2>图片列表</h2>
-                <p className="muted">当前批次 {stats.itemCount} 张，优先处理名称和地点信息</p>
               </div>
               <Space className="exif-queue-actions" size={6} role="toolbar" aria-label="图片列表操作">
-                <Tooltip title={uploadActivity === "files" ? "正在读取图片" : "添加指定图片"} mouseEnterDelay={0.45}>
-                  <Button
-                    htmlType="button"
-                    size="small"
-                    icon={uploadActivity === "files"
-                      ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                      : <ImagePlus size={15} strokeWidth={1.8} aria-hidden="true" />}
-                    onClick={handleSelectImages}
-                    disabled={uploading}
-                    aria-label={uploadActivity === "files" ? "正在读取图片" : "添加图片"}
-                  />
-                </Tooltip>
-                <Tooltip
-                  title={bindingDirectory
-                    ? "正在授权并匹配原文件"
-                    : uploadActivity === "directory"
-                      ? "正在载入文件夹"
-                      : needsDirectoryAuthorization
-                        ? "继续授权队列照片的原文件"
-                        : directoryHandle
-                          ? `已授权：${directoryHandle.name}；点击可载入其他文件夹`
-                          : "载入文件夹全部照片"}
-                  mouseEnterDelay={0.45}
-                >
-                  <Button
-                    htmlType="button"
-                    size="small"
-                    icon={bindingDirectory || uploadActivity === "directory"
-                      ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                      : directoryHandle && !needsDirectoryAuthorization
-                        ? <Check size={15} strokeWidth={2.1} aria-hidden="true" />
-                        : <FolderOpen size={15} strokeWidth={1.8} aria-hidden="true" />}
-                    onClick={() => void (needsDirectoryAuthorization ? handleBindDirectory() : handleSelectDirectory())}
-                    disabled={uploading || bindingDirectory}
-                    aria-label={bindingDirectory
-                      ? "正在授权原文件夹"
-                      : needsDirectoryAuthorization
-                        ? "授权队列照片的原文件"
-                        : directoryHandle
-                          ? "原文件夹已授权"
-                          : "载入文件夹"}
-                  />
-                </Tooltip>
                 <Tooltip title="清空图片列表" mouseEnterDelay={0.45}>
                   <Button
                     htmlType="button"
@@ -3470,10 +3436,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                 <summary>
                   <span className="exif-tool-summary-copy">
                     <strong>从照片同步信息</strong>
-                    <small>逐项选择要复用的地点、时间、参数与内容</small>
                   </span>
                   <span className="exif-tool-summary-meta">
-                    <span className="exif-tool-summary-count">{items.length > 1 ? `${items.length - 1} 张可同步` : "至少需要 2 张"}</span>
+                    <span className="exif-tool-summary-count">{items.length > 1 ? `${items.length - 1} 张可同步` : "需 2 张"}</span>
                     <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
                   </span>
                 </summary>
@@ -3482,7 +3447,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     <span>来源照片</span>
                     <Select
                       value={metadataSyncSourceId || undefined}
-                      placeholder="选择包含完整信息的照片"
+                      placeholder="选择来源照片"
                       options={items.map((item, index) => ({
                         value: item.id,
                         label: indexedFileName(item.fileName, index),
@@ -3501,24 +3466,24 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     onClick={() => selectedItem && setMetadataSyncSourceId(selectedItem.id)}
                     disabled={!selectedItem || selectedItem.id === metadataSyncSourceId}
                   >
-                    当前图片设为来源
+                    使用当前图片
                   </Button>
                 </div>
                 <div className="metadata-sync-target-row">
-                  <span>同步到</span>
+                  <span>目标</span>
                   <Segmented<MetadataSyncTargetMode>
                     size="small"
                     value={metadataSyncTargetMode}
                     options={[
                       { label: "当前图片", value: "current" },
                       { label: "指定照片", value: "selected" },
-                      { label: "全部其他图片", value: "others" },
+                      { label: "其他图片", value: "others" },
                     ]}
                     onChange={setMetadataSyncTargetMode}
                   />
                 </div>
                 <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
-                  <span>快捷选择</span>
+                  <span>预设</span>
                   <Space.Compact size="small">
                     <Button htmlType="button" onClick={() => selectMetadataSyncPreset("default")}>默认</Button>
                     <Button htmlType="button" onClick={() => selectMetadataSyncPreset("location")}>地点</Button>
@@ -3741,7 +3706,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               <div className="section-heading exif-editor-heading">
                 <div>
                   <h2>{selectedItem.form.name || "校对文物信息"}</h2>
-                  <p className="muted">自动解析结果已填入表单，只需修正有误字段</p>
                 </div>
               </div>
 
@@ -3919,9 +3883,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                           </Button>
                         </div>
                       </details>
-                      <p className="muted exif-file-parse-status">
-                        {parsingFileName ? "正在从文件名更新字段…" : "文件名变化会自动回填时代、名称、出土与馆藏"}
-                      </p>
+                      {parsingFileName ? (
+                        <p className="muted exif-file-parse-status">正在从文件名更新字段…</p>
+                      ) : null}
                       {selectedItem.parsedName ? (
                         <div className="result-meta">
                           {selectedItem.parsedName.era ? <Tag>时代：{selectedItem.parsedName.era}</Tag> : null}
@@ -4309,7 +4273,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                               </>
                             ) : <p className="error-text">{candidate.error || "模型调用失败"}</p>}
                           </article>
-                        )) : <p className="muted">点击上方按钮生成两份结果。</p>}
+                        )) : null}
                       </div>
                       {selectedItem.unavailableProviders.length > 0 ? (
                         <p className="muted">未配置模型：{selectedItem.unavailableProviders.join(" / ")}</p>

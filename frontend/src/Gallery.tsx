@@ -1213,15 +1213,25 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   return (
-    <section className="panel form-wide">
-      <form className="gallery-search" onSubmit={handleSearch}>
+    <section className="gallery-workbench" aria-labelledby="gallery-page-title">
+      <header className="gallery-page-head">
+        <div className="gallery-page-copy">
+          <span className="page-kicker">COLLECTION ARCHIVE</span>
+          <h2 id="gallery-page-title">文物图库</h2>
+          <p>按名称、时代与馆藏快速检索图像档案。</p>
+        </div>
+        <form className="gallery-search" role="search" onSubmit={handleSearch}>
         <Input
+          prefix={<Search size={16} aria-hidden="true" />}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="搜索名称、时代、馆藏、出土地点或描述，按回车检索"
           aria-label="图库搜索"
+          name="gallery-search"
+          autoComplete="off"
         />
-      </form>
+        </form>
+      </header>
 
       {error ? <p className="error-text">{error}</p> : null}
 
@@ -1251,6 +1261,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                     src={getBackendImageVariantUrl(apiBaseUrl, cover.url, 480)}
                     fallbackSrc={toAbsoluteUrl(apiBaseUrl, cover.url)}
                     alt={artifact.name}
+                    width={480}
+                    height={360}
                     loading="lazy"
                   />
                 ) : (

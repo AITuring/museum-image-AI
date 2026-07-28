@@ -1038,14 +1038,12 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   return (
-    <section className="panel form-wide museum-console">
+    <section className="museum-console" aria-labelledby="museum-page-title">
       <div className="museum-console-head">
-        <div className="section-heading">
-          <span className="step-badge">M</span>
-          <div>
-            <h2>博物馆浏览</h2>
-            <p className="muted">先选博物馆，再按展览看图片；地图和卡片共用同一套详情。</p>
-          </div>
+        <div className="museum-page-copy">
+          <span className="page-kicker">MUSEUM DIRECTORY</span>
+          <h2 id="museum-page-title">博物馆浏览</h2>
+          <p>先选博物馆，再按展览查看图像与地点档案。</p>
         </div>
 
         <div className="museum-console-tools">

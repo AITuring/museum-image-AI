@@ -1,48 +1,66 @@
 :root {
   color-scheme: light;
-  --ui-canvas: var(--museum-color-bg-layout, #f6f6f4);
-  --ui-surface-default: var(--museum-color-bg-container, #ffffff);
-  --ui-surface-muted: var(--museum-color-fill-quaternary, #f7f7f5);
-  --ui-surface-accent: var(--museum-color-fill-tertiary, #f1f1ef);
-  --ui-surface-accent-strong: var(--museum-color-fill-secondary, #e7e7e4);
-  --ui-surface-wash: var(--museum-color-fill-quaternary, #f7f7f5);
-  --ui-surface-tint: var(--museum-color-fill-tertiary, #ebebe8);
-  --ui-text-primary: var(--museum-color-text, #151515);
-  --ui-text-secondary: var(--museum-color-text-secondary, #5f605f);
-  --ui-text-tertiary: var(--museum-color-text-tertiary, #929390);
-  --ui-text-muted: var(--museum-color-text-tertiary, #929390);
-  --ui-text-on-accent: var(--museum-color-text-light-solid, #ffffff);
-  --ui-primary: var(--museum-color-primary, #111111);
-  --ui-primary-hover: var(--museum-color-primary-hover, #2a2a2a);
-  --ui-primary-strong: var(--museum-color-primary-active, #050505);
-  --ui-primary-deep: var(--museum-color-primary-active, #000000);
-  --ui-secondary-bg: var(--museum-color-fill-quaternary, #f7f7f5);
-  --ui-secondary-hover: var(--museum-color-fill-tertiary, #ebebe8);
-  --ui-secondary-text: var(--museum-color-text, #000000);
-  --ui-human: #7d6b55;
-  --ui-human-wash: #faf8f5;
-  --ui-line-subtle: var(--museum-color-border-secondary, rgb(22 22 22 / 0.1));
-  --ui-line-strong: var(--museum-color-border, rgb(22 22 22 / 0.2));
-  --ui-line-accent: var(--museum-color-border-secondary, rgb(22 22 22 / 0.12));
-  --ui-danger: var(--museum-color-error, #d14343);
-  --ui-success: var(--museum-color-success, #2f8f57);
-  --ui-success-muted: oklch(0.95 0.035 150);
-  --ui-warning: var(--museum-color-warning, #ad7a17);
-  --ui-warning-muted: oklch(0.96 0.035 78);
-  --ui-overlay: rgb(18 18 18 / 0.44);
-  --ui-media-dark: #151515;
-  --ui-shadow-soft: 0 1px 2px rgb(16 16 16 / 0.04);
-  --ui-shadow-card: 0 8px 24px rgb(16 16 16 / 0.06);
-  --ui-shadow-float: 0 18px 54px rgb(16 16 16 / 0.12);
-  --ui-shadow-accent: 0 2px 8px rgb(17 17 17 / 0.16);
-  --ui-shadow-accent-hover: 0 4px 12px rgb(17 17 17 / 0.18);
-  --ui-shadow-hover: 0 8px 18px rgb(17 17 17 / 0.08);
-  --ui-shadow-selected: 0 6px 18px rgb(17 17 17 / 0.08);
-  --ui-ring: 0 0 0 3px rgb(17 17 17 / 0.1);
-  --ui-radius-sm: 5px;
-  --ui-radius-md: 7px;
-  --ui-radius-lg: 9px;
+  --ui-canvas: var(--museum-color-bg-layout, #f3f0ea);
+  --ui-surface-default: var(--museum-color-bg-container, #fffdf9);
+  --ui-surface-muted: #f7f4ee;
+  --ui-surface-accent: #f1ece4;
+  --ui-surface-accent-strong: #e8e0d5;
+  --ui-surface-wash: #faf8f3;
+  --ui-surface-tint: #eee7de;
+  --ui-text-primary: var(--museum-color-text, #24221f);
+  --ui-text-secondary: var(--museum-color-text-secondary, #66615a);
+  --ui-text-tertiary: #756f68;
+  --ui-text-muted: #756f68;
+  --ui-text-on-accent: #fffdf9;
+  --ui-primary: var(--museum-color-primary, #70543b);
+  --ui-primary-hover: #5f452f;
+  --ui-primary-strong: #503824;
+  --ui-primary-deep: #3f2b1d;
+  --ui-secondary-bg: #f4efe8;
+  --ui-secondary-hover: #eae2d8;
+  --ui-secondary-text: #302b26;
+  --ui-human: #70543b;
+  --ui-human-wash: #f8f3ec;
+  --ui-line-subtle: rgb(75 61 48 / 0.12);
+  --ui-line-strong: rgb(75 61 48 / 0.24);
+  --ui-line-accent: rgb(112 84 59 / 0.22);
+  --ui-danger: var(--museum-color-error, #b94d45);
+  --ui-success: var(--museum-color-success, #48745b);
+  --ui-success-muted: #edf5ef;
+  --ui-warning: var(--museum-color-warning, #a56c23);
+  --ui-warning-muted: #fbf3e5;
+  --ui-overlay: rgb(35 28 22 / 0.52);
+  --ui-media-dark: #1d1b19;
+  --ui-shadow-soft: 0 1px 2px rgb(48 38 29 / 0.05);
+  --ui-shadow-card: 0 10px 28px rgb(48 38 29 / 0.07);
+  --ui-shadow-float: 0 22px 64px rgb(48 38 29 / 0.16);
+  --ui-shadow-accent: 0 4px 12px rgb(79 57 40 / 0.18);
+  --ui-shadow-accent-hover: 0 7px 18px rgb(79 57 40 / 0.2);
+  --ui-shadow-hover: 0 12px 26px rgb(48 38 29 / 0.1);
+  --ui-shadow-selected: 0 8px 22px rgb(48 38 29 / 0.1);
+  --ui-ring: 0 0 0 3px rgb(112 84 59 / 0.14);
+  --ui-radius-sm: 8px;
+  --ui-radius-md: 11px;
+  --ui-radius-lg: 15px;
   --ui-radius-pill: 999px;
+  --ui-type-caption: 11px;
+  --ui-type-label: 12px;
+  --ui-type-body: 14px;
+  --ui-type-section: 16px;
+  --ui-type-page: 24px;
+  --ui-leading-tight: 1.25;
+  --ui-leading-body: 1.5;
+  --ui-motion-fast: 120ms;
+  --ui-motion-base: 180ms;
+  --ui-motion-slow: 240ms;
+  --ui-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-6: 24px;
+  --ui-space-8: 32px;
 }
 
 * {
@@ -58,9 +76,13 @@ body,
 
 body {
   min-width: 320px;
-  background: var(--ui-canvas);
+  background:
+    radial-gradient(circle at 12% -10%, rgb(139 108 75 / 0.09), transparent 30rem),
+    var(--ui-canvas);
   color: var(--ui-text-primary);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -75,11 +97,28 @@ select {
 }
 
 button {
-  cursor: default;
+  cursor: pointer;
 }
 
 a {
   color: inherit;
+}
+
+::selection {
+  background: rgb(112 84 59 / 0.18);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 
 .app-tabs .ant-tabs-nav {
@@ -99,6 +138,23 @@ a {
   display: grid;
   gap: 6px;
   border-bottom: 1px solid var(--ui-line-subtle);
+}
+
+.ant-btn {
+  transition:
+    color var(--ui-motion-fast) ease,
+    background-color var(--ui-motion-fast) ease,
+    border-color var(--ui-motion-fast) ease,
+    transform var(--ui-motion-fast) var(--ui-ease-out);
+}
+
+.ant-btn:not(:disabled):active {
+  transform: translateY(1px) scale(0.985);
+}
+
+.ant-btn-primary:not(:disabled):hover {
+  box-shadow: var(--ui-shadow-accent);
+  transform: translateY(-1px);
 }
 
 @media (prefers-reduced-motion: reduce) {
