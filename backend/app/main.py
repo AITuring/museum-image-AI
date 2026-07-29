@@ -528,6 +528,18 @@ def run_startup_migrations(connection) -> None:
 
 
 def sync_reference_options(connection) -> None:
+    # This is a controlled vocabulary label, not operator-entered artifact
+    # metadata.  Keep the chooser on the complete historical term.
+    connection.execute(
+        text(
+            """
+            UPDATE era_options
+            SET name = '五代十国'
+            WHERE name = '五代'
+              AND NOT EXISTS (SELECT 1 FROM era_options WHERE name = '五代十国')
+            """
+        )
+    )
     for museum_name in WENWU_MUSEUM_OPTIONS:
         longitude, latitude = WENWU_MUSEUM_COORDINATES.get(museum_name, (None, None))
         connection.execute(
@@ -691,6 +703,11 @@ def is_allowed_remote_image_url(url: str) -> bool:
 
     hostname = parsed.hostname.lower()
     if hostname == "aliyuncs.com" or hostname.endswith(".aliyuncs.com"):
+        return True
+    # iMuseum exhibition covers are served from its own CDN, rather than OSS.
+    # Keep this narrowly scoped so the preview endpoint remains protected from
+    # arbitrary remote fetches.
+    if hostname == "icitycdn.com" or hostname.endswith(".icitycdn.com"):
         return True
 
     configured_hosts = {
@@ -1153,11 +1170,6 @@ def normalize_museum_directory_key(value: str | None) -> str:
         return ""
     normalized = unicodedata.normalize("NFKC", value).casefold()
     return re.sub(r"[\s·•・,，。．()（）\[\]【】<>《》\-—–_/]+", "", normalized)
-
-
-def catalog_museum_directory_id(venue: str, city: str, region: str) -> int:
-    digest = hashlib.sha256(f"{venue}\0{city}\0{region}".encode("utf-8")).digest()
-    return -(int.from_bytes(digest[:8], "big") % 2_000_000_000 + 1)
 
 
 def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
@@ -2110,6 +2122,94 @@ def fetch_cloud_artifact_payload(
     if last_error is not None:
         raise last_error
     return []
+
+
+def build_uploaded_museum_directory(
+    artifacts: list[ArtifactRead | dict],
+    q: str | None,
+    limit: int,
+) -> list[MuseumDirectoryRead]:
+    """Build the museum browser from the same uploaded images as Gallery.
+
+    A local desktop instance reads Gallery from the cloud API.  Its own
+    database may only hold a staging record, so deriving the directory from
+    local ``Museum`` rows makes nearly every uploaded photo disappear.
+    """
+    groups: dict[tuple[int, str], dict[str, object]] = {}
+    for raw_artifact in artifacts:
+        artifact = ArtifactRead.model_validate(raw_artifact)
+        if not artifact.images:
+            continue
+        museum_name = artifact.museum_name.strip()
+        if not museum_name:
+            continue
+        key = (artifact.museum_id, normalize_museum_directory_key(museum_name))
+        group = groups.setdefault(
+            key,
+            {
+                "id": artifact.museum_id,
+                "name": museum_name,
+                "artifact_ids": set(),
+                "image_count": 0,
+                "location": None,
+                "latitude": None,
+                "longitude": None,
+                "cover_url": None,
+                "exhibitions": {},
+            },
+        )
+        cast_artifact_ids = group["artifact_ids"]
+        assert isinstance(cast_artifact_ids, set)
+        cast_artifact_ids.add(artifact.id)
+        cast_exhibitions = group["exhibitions"]
+        assert isinstance(cast_exhibitions, dict)
+        for exhibition in artifact.exhibitions:
+            cast_exhibitions.setdefault(exhibition.id, exhibition)
+        for image in artifact.images:
+            group["image_count"] = int(group["image_count"]) + 1
+            if not group["cover_url"]:
+                group["cover_url"] = image.url
+            if not group["location"] and image.capture_location:
+                group["location"] = image.capture_location
+            if group["latitude"] is None and image.latitude is not None:
+                group["latitude"] = image.latitude
+            if group["longitude"] is None and image.longitude is not None:
+                group["longitude"] = image.longitude
+
+    directory: list[MuseumDirectoryRead] = []
+    for group in groups.values():
+        artifact_ids = group["artifact_ids"]
+        exhibitions = group["exhibitions"]
+        assert isinstance(artifact_ids, set)
+        assert isinstance(exhibitions, dict)
+        image_count = int(group["image_count"])
+        directory.append(
+            MuseumDirectoryRead(
+                id=int(group["id"]),
+                museum_id=int(group["id"]),
+                name=str(group["name"]),
+                location=str(group["location"]) if group["location"] else None,
+                latitude=group["latitude"] if isinstance(group["latitude"], (int, float)) else None,
+                longitude=group["longitude"] if isinstance(group["longitude"], (int, float)) else None,
+                description=f"图库已上传 {image_count} 张图片，覆盖 {len(artifact_ids)} 件文物。",
+                artifact_count=len(artifact_ids),
+                exhibition_count=len(exhibitions),
+                cover_url=str(group["cover_url"]) if group["cover_url"] else None,
+                exhibitions=list(exhibitions.values()),
+            )
+        )
+
+    search_text = normalize_museum_directory_key(q)
+    if search_text:
+        directory = [
+            item
+            for item in directory
+            if search_text in normalize_museum_directory_key(
+                " ".join(value for value in (item.name, item.location, item.description) if value)
+            )
+        ]
+    directory.sort(key=lambda item: (normalize_museum_directory_key(item.name), item.id))
+    return directory[:limit]
 
 
 def build_artifact_match_read(match: ArtifactMatchCandidate) -> ArtifactMatchRead:
@@ -4538,13 +4638,25 @@ def list_museum_directory(
     db: Session = Depends(get_db),
     catalog_db: Session = Depends(get_exhibition_db),
 ) -> list[MuseumDirectoryRead]:
+    if should_proxy_artifact_queries_to_cloud():
+        try:
+            cloud_artifacts = enrich_artifact_catalog_links(
+                merge_duplicate_artifact_reads(fetch_cloud_artifact_payload())
+            )
+        except Exception as exc:  # noqa: BLE001 - surface cloud gallery failure to the operator
+            raise HTTPException(status_code=502, detail=f"查询云端图库失败：{exc}") from exc
+        return build_uploaded_museum_directory(cloud_artifacts, q, limit)
+
     museums = list(
         db.scalars(
             select(Museum)
+            .join(Museum.artifacts)
+            .join(Artifact.images)
             .options(
                 selectinload(Museum.exhibitions),
                 selectinload(Museum.artifacts),
             )
+            .distinct()
             .order_by(Museum.name.asc())
         )
     )
@@ -4622,7 +4734,6 @@ def list_museum_directory(
         for row in address_rows
     }
 
-    groups: list[dict[str, object]] = []
     groups_by_name: dict[str, list[dict[str, object]]] = {}
     for row in catalog_rows:
         museum_name = str(row[0]).strip()
@@ -4640,21 +4751,17 @@ def list_museum_directory(
             "cover_url": str(row[7]) if row[7] else None,
             "match_by_address": False,
         }
-        groups.append(group)
         groups_by_name.setdefault(
             normalize_museum_directory_key(museum_name),
             [],
         ).append(group)
 
     directory: list[MuseumDirectoryRead] = []
-    matched_group_ids: set[int] = set()
     for museum in museums:
         candidates = groups_by_name.get(
             normalize_museum_directory_key(museum.name),
             [],
         )
-        for candidate in candidates:
-            matched_group_ids.add(id(candidate))
         matched_group = None
         if len(candidates) == 1:
             matched_group = candidates[0]
@@ -4781,43 +4888,6 @@ def list_museum_directory(
             )
         )
 
-    used_ids = {item.id for item in directory}
-    for group in groups:
-        if id(group) in matched_group_ids:
-            continue
-        museum_name = str(group["museum_name"])
-        city = str(group["city"])
-        region = str(group["region"])
-        directory_id = catalog_museum_directory_id(museum_name, city, region)
-        while directory_id in used_ids:
-            directory_id -= 1
-        used_ids.add(directory_id)
-        count = int(group["count"])
-        location = (
-            str(group["address"]) if group["address"] else None
-        ) or " · ".join(part for part in (city, region) if part)
-        directory.append(
-            MuseumDirectoryRead(
-                id=directory_id,
-                name=museum_name,
-                location=location or None,
-                description=f"根据公开展览目录整理，收录 {count} 场历年展览。",
-                artifact_count=0,
-                exhibition_count=count,
-                catalog_exhibition_count=count,
-                first_year=group["first_year"],
-                last_year=group["last_year"],
-                cover_url=(
-                    str(group["cover_url"]) if group["cover_url"] else None
-                ),
-                catalog_museum_name=museum_name,
-                catalog_venue=museum_name,
-                catalog_city=city or None,
-                catalog_region=region or None,
-                derived_from_catalog=True,
-            )
-        )
-
     search_text = normalize_museum_directory_key(q)
     if search_text:
         directory = [
@@ -4926,6 +4996,13 @@ def get_era_timeline(
     artifacts: list[ArtifactRead] = []
     if selected is not None:
         artifacts = [artifact for artifact in all_artifacts if matches_era(artifact.era, selected[1])]
+        if selected[0] == "五代十国":
+            artifacts = [
+                artifact.model_copy(update={"era": "五代十国"})
+                if artifact.era == "五代"
+                else artifact
+                for artifact in artifacts
+            ]
     return EraTimelineRead(
         eras=facets,
         selected_era=normalized_selected,

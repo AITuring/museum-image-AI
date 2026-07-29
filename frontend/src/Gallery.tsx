@@ -254,6 +254,14 @@ function getGalleryArtifactIdFromLocation() {
   return Number.isInteger(legacyId) && legacyId > 0 ? legacyId : null
 }
 
+function getGalleryReturnTarget() {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get("from") !== "eras") return { path: "/gallery", label: "图库" }
+  const era = params.get("era")?.trim()
+  const eraQuery = era ? `?${new URLSearchParams({ era }).toString()}` : ""
+  return { path: `/eras${eraQuery}`, label: "时代" }
+}
+
 function formatMetaDate(value?: string | null) {
   if (!value) return ""
   const normalized = value.replace("T", " ")
@@ -982,8 +990,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   function navigateToGallery() {
-    if (window.location.pathname !== "/gallery") {
-      window.history.pushState({}, "", "/gallery")
+    const returnTarget = getGalleryReturnTarget()
+    if (window.location.pathname !== returnTarget.path || window.location.search) {
+      window.history.pushState({}, "", returnTarget.path)
     }
     setArtifactRouteId(null)
     setActive(null)
@@ -1413,7 +1422,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   shape="circle"
                                   onClick={navigateToGallery}
                                   disabled={editing}
-                                  aria-label={editing ? "编辑中不可返回图库" : "返回图库"}
+                                  aria-label={editing ? "编辑中不可返回" : `返回${getGalleryReturnTarget().label}`}
                                 >
                                   <ArrowLeft size={16} aria-hidden="true" />
                                 </Button>
@@ -1429,7 +1438,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   shape="circle"
                                   onClick={navigateToGallery}
                                   disabled={editing}
-                                  aria-label={editing ? "编辑中不可返回图库" : "返回图库"}
+                                  aria-label={editing ? "编辑中不可返回" : `返回${getGalleryReturnTarget().label}`}
                                 >
                                   <ArrowLeft size={16} aria-hidden="true" />
                                 </Button>
@@ -1479,16 +1488,21 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     <div className="field-row">
                                       <label className="field">
                                         <span>时代</span>
-                                        <Input
-                                          list="gallery-era-options"
+                                        <AutoComplete
                                           value={editForm.era}
-                                          onChange={(event) =>
+                                          options={eraOptions.map((era) => ({ value: era.name, label: era.name }))}
+                                          filterOption={(input, option) =>
+                                            String(option?.value ?? "").toLowerCase().includes(input.toLowerCase())
+                                          }
+                                          onChange={(value) =>
                                             setEditForm((current) =>
-                                              current ? { ...current, era: event.target.value } : current,
+                                              current ? { ...current, era: value } : current,
                                             )
                                           }
                                           placeholder={eraOptions.length > 0 ? "输入或选择时代…" : "加载时代选项中…"}
-                                        />
+                                        >
+                                          <Input />
+                                        </AutoComplete>
                                       </label>
                                       <label className="field">
                                         <span>出土地点</span>
@@ -1971,11 +1985,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       <datalist id="gallery-museum-options">
         {museumOptions.map((museum) => (
           <option key={museum.id} value={museum.name} />
-        ))}
-      </datalist>
-      <datalist id="gallery-era-options">
-        {eraOptions.map((era) => (
-          <option key={era.id} value={era.name} />
         ))}
       </datalist>
     </section>

@@ -148,6 +148,15 @@ type FolderEntry = {
   capturedAt: string | null
 }
 
+function museumIdFromPath(pathname: string) {
+  const match = pathname.match(/^\/museums\/(\d+)\/?$/)
+  return match ? Number(match[1]) : null
+}
+
+function museumDetailPath(museumId: number) {
+  return `/museums/${museumId}`
+}
+
 function toAbsoluteUrl(apiBaseUrl: string, url: string) {
   return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
 }
@@ -334,7 +343,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeId, setActiveId] = useState<number | null>(null)
-  const [detailModalOpen, setDetailModalOpen] = useState(false)
+  const [detailMuseumId, setDetailMuseumId] = useState<number | null>(() => museumIdFromPath(window.location.pathname))
   const [artifactStore, setArtifactStore] = useState<Record<number, MuseumArtifact[]>>({})
   const [artifactLoadingId, setArtifactLoadingId] = useState<number | null>(null)
   const [artifactErrors, setArtifactErrors] = useState<Record<number, string | null>>({})
@@ -362,8 +371,11 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [filteredMuseums])
 
   const activeMuseum = useMemo(
-    () => filteredMuseums.find((museum) => museum.id === activeId) ?? filteredMuseums[0] ?? null,
-    [activeId, filteredMuseums],
+    () => (detailMuseumId != null ? items.find((museum) => museum.id === detailMuseumId) : null)
+      ?? filteredMuseums.find((museum) => museum.id === activeId)
+      ?? filteredMuseums[0]
+      ?? null,
+    [activeId, detailMuseumId, filteredMuseums, items],
   )
 
   const activeArtifactsLoaded = activeMuseum ? Object.prototype.hasOwnProperty.call(artifactStore, activeMuseum.id) : false
@@ -423,6 +435,24 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       setLoading(false)
     }
   }, [apiBaseUrl])
+
+  const navigateToMuseum = useCallback((museumId: number) => {
+    setActiveId(museumId)
+    setDetailMuseumId(museumId)
+    const targetPath = museumDetailPath(museumId)
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, "", targetPath)
+      window.dispatchEvent(new PopStateEvent("popstate"))
+    }
+  }, [])
+
+  const returnToDirectory = useCallback(() => {
+    setDetailMuseumId(null)
+    if (window.location.pathname !== "/museums") {
+      window.history.pushState({}, "", "/museums")
+      window.dispatchEvent(new PopStateEvent("popstate"))
+    }
+  }, [])
 
   const loadMuseumArtifacts = useCallback(
     async (museum: MuseumRecord) => {
@@ -511,6 +541,12 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [loadMuseums])
 
   useEffect(() => {
+    const syncDetailRoute = () => setDetailMuseumId(museumIdFromPath(window.location.pathname))
+    window.addEventListener("popstate", syncDetailRoute)
+    return () => window.removeEventListener("popstate", syncDetailRoute)
+  }, [])
+
+  useEffect(() => {
     if (!activeMuseum) return
     if (Object.prototype.hasOwnProperty.call(artifactStore, activeMuseum.id)) return
     void loadMuseumArtifacts(activeMuseum)
@@ -521,25 +557,6 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     if (Object.prototype.hasOwnProperty.call(historyStore, activeMuseum.id)) return
     void loadMuseumHistory(activeMuseum)
   }, [activeMuseum, historyStore, loadMuseumHistory])
-
-  useEffect(() => {
-    if (!detailModalOpen) return
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setDetailModalOpen(false)
-      }
-    }
-
-    window.addEventListener("keydown", onKeyDown)
-    return () => window.removeEventListener("keydown", onKeyDown)
-  }, [detailModalOpen])
-
-  useEffect(() => {
-    if (mode !== "cards" && detailModalOpen) {
-      setDetailModalOpen(false)
-    }
-  }, [detailModalOpen, mode])
 
   useEffect(() => {
     if (folders.length === 0) {
@@ -805,9 +822,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       })
 
       marker.on("click", () => {
-        setActiveId(museum.id)
-        infoWindow?.setContent?.(buildMarkerInfoHtml(museum))
-        infoWindow?.open?.(map, [museum.longitude, museum.latitude])
+        navigateToMuseum(museum.id)
       })
 
       marker.setMap(map)
@@ -815,7 +830,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     })
 
     markersRef.current = markers
-  }, [activeMuseum?.id, museumsWithCoordinates])
+  }, [activeMuseum?.id, museumsWithCoordinates, navigateToMuseum])
 
   useEffect(() => {
     if (mode !== "map" || !mapReady) return
@@ -1037,13 +1052,28 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     )
   }
 
+  if (detailMuseumId != null) {
+    return (
+      <section className="museum-console museum-detail-page" aria-labelledby="museum-detail-title">
+        <header className="museum-detail-page-head">
+          <div>
+            <span className="page-kicker">MUSEUM DIRECTORY</span>
+            <h2>场馆详情</h2>
+          </div>
+          <Button onClick={returnToDirectory}>返回场馆列表</Button>
+        </header>
+        {renderMuseumStage()}
+      </section>
+    )
+  }
+
   return (
     <section className="museum-console" aria-labelledby="museum-page-title">
       <div className="museum-console-head">
         <div className="museum-page-copy">
           <span className="page-kicker">MUSEUM DIRECTORY</span>
           <h2 id="museum-page-title">博物馆浏览</h2>
-          <p>先选博物馆，再按展览查看图像与地点档案。</p>
+          <p>仅展示图库中已上传图片的博物馆；选馆后可按展览查看图像与地点档案。</p>
         </div>
 
         <div className="museum-console-tools">
@@ -1069,7 +1099,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       </div>
 
       <p className="museum-console-summary">
-        {filteredMuseums.length} / {items.length} 座博物馆，{museumsWithCoordinates.length} 座已落点
+        {filteredMuseums.length} / {items.length} 座有图库图片的博物馆，{museumsWithCoordinates.length} 座已落点
       </p>
 
       {error ? <p className="error-text">{error}</p> : null}
@@ -1102,8 +1132,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                   key={museum.id}
                   className={`museum-summary-card ${activeMuseum?.id === museum.id ? "active" : ""}`}
                   onClick={() => {
-                    setActiveId(museum.id)
-                    setDetailModalOpen(true)
+                    navigateToMuseum(museum.id)
                   }}
                   onMouseEnter={() => ensureMuseumArtifacts(museum)}
                   onFocus={() => ensureMuseumArtifacts(museum)}
@@ -1115,6 +1144,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                           key={`${museum.id}-preview-${index}`}
                           className={`museum-summary-photo photo-${index + 1}`}
                           src={previewUrl}
+                          fallbackSrc={museum.cover_url ? toAbsoluteUrl(apiBaseUrl, museum.cover_url) : undefined}
                           alt=""
                           loading="lazy"
                           referrerPolicy="no-referrer"
@@ -1189,26 +1219,6 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           </section>
 
           {renderMuseumStage()}
-        </div>
-      ) : null}
-
-      {detailModalOpen && activeMuseum && mode === "cards" ? (
-        <div className="museum-detail-modal" role="dialog" aria-modal="true" aria-labelledby="museum-detail-title">
-          <button data-ui="interactive-surface"
-            type="button"
-            className="museum-detail-modal-backdrop"
-            aria-label="关闭博物馆详情弹窗"
-            onClick={() => setDetailModalOpen(false)}
-          />
-          <div className="museum-detail-modal-body">
-            <div className="museum-detail-modal-bar">
-              <span className="museum-detail-modal-kicker">博物馆详情</span>
-              <Button htmlType="button" type="text" onClick={() => setDetailModalOpen(false)}>
-                关闭
-              </Button>
-            </div>
-            <div className="museum-detail-modal-content">{renderMuseumStage()}</div>
-          </div>
         </div>
       ) : null}
     </section>

@@ -1,274 +1,35 @@
 import { useEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
 import { AutoComplete, Button, Input, Select, Tag } from "antd"
 import { isMissingValue, needsSelection, normalizeTags, statusClass } from "./lib/batchHelpers"
+import { fetchBatchJson as fetchJson } from "./lib/batchApi"
+import { GooglePhotosConfigModal } from "./components/batch/GooglePhotosConfigModal"
+import { BatchSubmitNotice } from "./components/batch/BatchSubmitNotice"
+import { BatchImportPanel } from "./components/batch/BatchImportPanel"
+import {
+  enrichPendingItemTags,
+  normalizePersistedPendingItem,
+  STATUS_LABEL,
+  type BatchScanResponse,
+  type EraOption,
+  type ExhibitionOption,
+  type ExistingArtifactMatch,
+  type FileWithRelativePath,
+  type GooglePhotosConfig,
+  type GooglePhotosImportResult,
+  type GooglePhotosMediaItem,
+  type GooglePhotosMediaList,
+  type GooglePhotosPickerSession,
+  type GooglePhotosStatus,
+  type MuseumOption,
+  type PendingArtifact,
+  type PendingArtifactSubmitResult,
+  type RawPendingArtifact,
+  type SubmitNotice,
+  type VisionAnalyzeResponse,
+  type VisionCandidate,
+} from "./lib/batchDomain"
 
 const Textarea = Input.TextArea
-
-type PendingArtifact = {
-  id: number
-  source_path: string
-  image_url: string
-  file_name: string
-  status: string
-  error: string | null
-  museum_name: string | null
-  name: string | null
-  era: string | null
-  description: string | null
-  tags: string[]
-  camera_model: string | null
-  lens_model: string | null
-  capture_museum_name: string | null
-  exhibition_name: string | null
-  latitude: number | null
-  longitude: number | null
-  captured_at: string | null
-  shutter_speed: string | null
-  aperture: string | null
-  iso: number | null
-  edit_method: string | null
-  confidence: number | null
-  provider: string | null
-  analysis: string | null
-  existing_artifact_id: number | null
-  cloud_artifact_id: number | null
-  created_at: string
-  updated_at: string
-}
-
-type RawPendingArtifact = Omit<PendingArtifact, "image_url">
-
-type VisionCandidate = {
-  provider: string
-  model: string
-  artifact_name: string
-  era: string | null
-  museum_name: string | null
-  tags: string[]
-  description: string
-  confidence: number | null
-  analysis: string | null
-  reasoning: string | null
-}
-
-type VisionAnalyzeResponse = {
-  candidates: VisionCandidate[]
-  unavailable_providers: string[]
-  failed_providers: string[]
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  pending: "待识别",
-  identifying: "识别中…",
-  identified: "已识别",
-  submitting: "提交中…",
-  submitted: "已入库",
-  failed: "失败",
-}
-
-
-
-type MuseumOption = {
-  id: number
-  name: string
-}
-
-type EraOption = {
-  id: number
-  name: string
-  sort_order: number
-}
-
-type ExhibitionOption = {
-  id: number
-  museum_id: number
-  museum_name: string
-  name: string
-  start_at: string | null
-  end_at: string | null
-}
-
-type ExistingArtifactImage = {
-  id: number
-  url: string
-}
-
-type ExistingArtifactMatch = {
-  artifact: {
-    id: number
-    name: string
-    era: string | null
-    description: string | null
-    museum_name: string
-    tags: string[]
-    images: ExistingArtifactImage[]
-  }
-  match_score: number
-  match_reason: string
-}
-
-type SubmitNotice = {
-  type: "success" | "error"
-  text: string
-}
-
-type FileWithRelativePath = File & {
-  webkitRelativePath?: string
-}
-
-type GooglePhotosStatus = {
-  enabled: boolean
-  auth_configured: boolean
-  connected: boolean
-  detail: string | null
-}
-
-type GooglePhotosConfig = {
-  client_id: string
-  redirect_uri: string
-  has_client_secret: boolean
-}
-
-type GooglePhotosPickerSession = {
-  id: string
-  picker_uri: string
-  media_items_set: boolean
-  poll_interval_ms: number | null
-  timeout_in_ms: number | null
-  expire_time: string | null
-}
-
-type GooglePhotosMediaItem = {
-  id: string
-  filename: string
-  base_url: string
-  product_url: string | null
-  mime_type: string | null
-  width: number | null
-  height: number | null
-  creation_time: string | null
-  thumbnail_url: string | null
-}
-
-type GooglePhotosMediaList = {
-  items: GooglePhotosMediaItem[]
-  next_page_token: string | null
-}
-
-type GooglePhotosImportResult = {
-  imported: number
-  skipped: number
-  warnings: string[]
-  items: RawPendingArtifact[]
-}
-
-type BatchScanResponse = {
-  scanned: number
-  added: number
-  skipped: number
-  items: RawPendingArtifact[]
-}
-
-type PendingArtifactSubmitResult = {
-  item: RawPendingArtifact
-  duplicate_image_skipped: boolean
-  duplicate_image_replaced: boolean
-  duplicate_image_detail: string | null
-}
-
-function buildPendingPreviewUrl(apiBaseUrl: string, id: number) {
-  return `${apiBaseUrl}/api/batch/pending/${id}/image`
-}
-
-function normalizePersistedPendingItem(apiBaseUrl: string, item: RawPendingArtifact): PendingArtifact {
-  return {
-    ...item,
-    image_url: buildPendingPreviewUrl(apiBaseUrl, item.id),
-  }
-}
-
- function deriveTagsFromAnalysis(
-  analysis: string | null | undefined,
-  options?: { artifactName?: string | null; era?: string | null; museumName?: string | null },
-) {
-  const text = (analysis ?? "").trim()
-  if (!text) {
-    return []
-  }
-
-  const lines = text.replace(/\r\n/g, "\n").split("\n").map((line) => line.trim())
-  const marker = /^(?:适合入库的|可(?:入库|检索)的?)?(?:(?:入库|推荐|建议)\s*)?(?:标签|关键词)(?:建议|如下)?\s*[:：]?\s*(.*)$/
-  const stopMarker = /^(?:说明|备注|理由|依据|补充|器型与材质|纹饰与工艺|用途与历史背景|出土与墓葬信息|详细描述|描述|名称|时代|馆藏|博物馆)[:：]?$/
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]
-    const match = line.match(marker)
-    if (!match) {
-      continue
-    }
-    const tagLines = [match[1]?.trim() ?? ""].filter(Boolean)
-    for (const remainder of lines.slice(index + 1)) {
-      if (!remainder) break
-      if (stopMarker.test(remainder)) break
-      tagLines.push(remainder)
-    }
-    const tags = normalizeTags(
-      tagLines
-        .join("\n")
-        .split(/[,\n，、；;|/]+/)
-        .map((tag) => tag.replace(/^\d+[.)、]\s*/, "").trim().replace(/[【】[\]<>《》"'']/g, "")),
-    )
-    if (tags.length > 0) {
-      const blocked = new Set(
-        [options?.artifactName, options?.era, options?.museumName]
-          .map((value) => (value ?? "").trim().toLowerCase())
-          .filter(Boolean),
-      )
-      return tags.filter((tag) => !blocked.has(tag.toLowerCase()))
-    }
-  }
-
-  const keywordCandidates = [
-    "青铜器",
-    "金器",
-    "银器",
-    "玉器",
-    "陶器",
-    "瓷器",
-    "石器",
-    "佛像",
-    "礼器",
-    "摆件",
-    "铭文",
-    "龙纹",
-    "凤纹",
-    "兽面纹",
-    "鎏金",
-    "彩绘",
-    "秘色瓷",
-    "越窑",
-    "红山文化",
-    "墓葬",
-    "出土文物",
-  ]
-  const derived = keywordCandidates.filter((keyword) => text.includes(keyword)).slice(0, 8)
-  return normalizeTags(derived)
-}
-
-function enrichPendingItemTags(item: PendingArtifact): PendingArtifact {
-  if ((item.tags ?? []).length > 0) {
-    return item
-  }
-  const derivedTags = deriveTagsFromAnalysis(item.analysis, {
-    artifactName: item.name,
-    era: item.era,
-    museumName: item.museum_name,
-  })
-  if (derivedTags.length === 0) {
-    return item
-  }
-  return { ...item, tags: derivedTags }
-}
 
  export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [items, setItems] = useState<PendingArtifact[]>([])
@@ -298,6 +59,7 @@ function enrichPendingItemTags(item: PendingArtifact): PendingArtifact {
     Record<number, ExhibitionOption[]>
   >({})
   const [matchedArtifacts, setMatchedArtifacts] = useState<Record<number, ExistingArtifactMatch | null>>({})
+
   const [sameArtifactDecisions, setSameArtifactDecisions] = useState<Record<number, "yes" | "no" | null>>({})
   const [matchIdentityKeys, setMatchIdentityKeys] = useState<Record<number, string>>({})
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
@@ -306,23 +68,6 @@ function enrichPendingItemTags(item: PendingArtifact): PendingArtifact {
   const previewUrlStoreRef = useRef<Map<number, string>>(new Map())
   const matchingIdsRef = useRef<Set<number>>(new Set())
   const submittingIdsRef = useRef<Set<number>>(new Set())
-
-  async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(input, init)
-    if (!response.ok) {
-      let message = `HTTP ${response.status}`
-      try {
-        const data = (await response.json()) as { detail?: string }
-        if (data.detail) {
-          message = data.detail
-        }
-      } catch {
-        // Ignore non-JSON error bodies.
-      }
-      throw new Error(message)
-    }
-    return (await response.json()) as T
-  }
 
   async function refreshGooglePhotosStatus() {
     try {
@@ -1200,209 +945,15 @@ function enrichPendingItemTags(item: PendingArtifact): PendingArtifact {
 
   return (
     <section className="panel form-wide batch-workbench">
-      <div className="section-heading">
-        <div>
-          <h2>批量识别入库</h2>
-          <p className="muted">支持本地文件夹或 Google Photos 导入，逐条识别、微调后提交到云端（图片入 OSS）。</p>
-        </div>
-      </div>
-
-      <div className="scan-row">
-        <div className="field scan-input">
-          <span>本地文件夹</span>
-          <Button
-            htmlType="button"
-            type="primary"
-            onClick={() => folderInputRef.current?.click()}
-            disabled={scanning}
-          >
-            {scanning ? "上传中…" : "选择文件夹并上传"}
-          </Button>
-          <input
-            ref={folderInputRef}
-            type="file"
-            multiple
-            className="hidden-folder-input"
-            onChange={(event) => void handleScan(event.target.files)}
-            {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
-          />
-          <span className="field-help">
-            {selectedFolderLabel ?? "点击按钮后直接选择本地文件夹，无需再手填路径。"}
-          </span>
-        </div>
-      </div>
-
-      <div className="field">
-        <span>Google Photos</span>
-        <div className="upload-actions">
-          <Button
-            htmlType="button"
-            type="primary"
-            onClick={handleGooglePhotosPrimaryAction}
-            disabled={
-              googlePhotosBusy ||
-              (googlePhotosStatus?.enabled === false)
-            }
-          >
-            {googlePhotosBusy
-              ? "处理中…"
-              : googlePhotosStatus?.connected
-                ? "重新连接 Google Photos"
-                : googlePhotosStatus?.auth_configured === false
-                  ? "配置 Google Photos"
-                : "连接 Google Photos"}
-          </Button>
-          {googlePhotosStatus?.enabled !== false ? (
-            <Button
-              htmlType="button"
-              type="text"
-              onClick={() => void openGooglePhotosConfigModal()}
-              disabled={googlePhotosBusy}
-            >
-              修改配置
-            </Button>
-          ) : null}
-          {googlePhotosStatus?.auth_configured ? (
-            <Button
-              htmlType="button"
-              type="text"
-              danger
-              onClick={() => void handleClearGooglePhotosToken()}
-              disabled={googlePhotosBusy}
-            >
-              清除授权
-            </Button>
-          ) : null}
-          {googlePhotosStatus?.connected ? (
-            <>
-              <Button
-                htmlType="button"
-                type="text"
-                onClick={() => void handleConnectGooglePhotos()}
-                disabled={googlePhotosBusy}
-              >
-                打开 Picker 选图
-              </Button>
-              <Button
-                htmlType="button"
-                type="primary"
-                onClick={() => void importGooglePhotosSelection()}
-                disabled={googlePhotosBusy || googlePhotosSelectedIds.length === 0}
-              >
-                {googlePhotosBusy ? "导入中…" : `导入所选图片（${googlePhotosSelectedIds.length}）`}
-              </Button>
-            </>
-          ) : null}
-        </div>
-        <span className="field-help">
-          {googlePhotosStatus?.detail ??
-            "点击按钮后可在前端直接填写 Google Photos OAuth 配置，再通过 Google Picker 选图导入。"}
-        </span>
-        {googlePhotosStatus?.connected && googlePhotosMedia.length > 0 ? (
-          <>
-            <div className="tag-row">
-              {googlePhotosMedia.map((item) => {
-                const checked = googlePhotosSelectedIds.includes(item.id)
-                return (
-                  <Button
-                    key={item.id}
-                    htmlType="button"
-                    size="small"
-                    type={checked ? "primary" : "default"}
-                    className="google-photo-chip"
-                    onClick={() =>
-                      setGooglePhotosSelectedIds((current) =>
-                        current.includes(item.id)
-                          ? current.filter((existingId) => existingId !== item.id)
-                          : [...current, item.id],
-                      )
-                    }
-                  >
-                    {checked ? "已选" : "选择"} · {item.filename}
-                  </Button>
-                )
-              })}
-            </div>
-            <div className="existing-artifact-gallery">
-              {googlePhotosMedia.map((item) => {
-                const checked = googlePhotosSelectedIds.includes(item.id)
-                return (
-                  <button
-                    key={`google-photo-${item.id}`}
-                    type="button"
-                    data-ui="interactive-surface"
-                    className={`existing-artifact-thumb ${checked ? "selected-action" : ""}`}
-                    onClick={() =>
-                      setGooglePhotosSelectedIds((current) =>
-                        current.includes(item.id)
-                          ? current.filter((existingId) => existingId !== item.id)
-                          : [...current, item.id],
-                      )
-                    }
-                    title={item.filename}
-                  >
-                    <img src={item.thumbnail_url ?? item.base_url} alt={item.filename} loading="lazy" />
-                  </button>
-                )
-              })}
-            </div>
-            {googlePhotosNextPageToken ? (
-              <div className="upload-actions">
-                <Button
-                  htmlType="button"
-                  type="text"
-                  onClick={() =>
-                    void loadGooglePhotosMedia({
-                      sessionId: googlePhotosSession?.id ?? "",
-                      pageToken: googlePhotosNextPageToken,
-                      append: true,
-                    })
-                  }
-                  disabled={googlePhotosBusy || !googlePhotosSession?.id}
-                >
-                  加载更多
-                </Button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </div>
-
-      <div className="upload-actions">
-        <Button
-          htmlType="button"
-          type="primary"
-          onClick={() => void handleIdentifyAll([])}
-          disabled={identifying || googlePhotosBusy || pendingCount === 0}
-        >
-          {identifying ? "识别中…" : `开始识别（${pendingCount} 张待识别）`}
-        </Button>
-        <Button
-          htmlType="button"
-          type="text"
-          danger
-          onClick={() => void handleClearAll()}
-          disabled={identifying || scanning || googlePhotosBusy || items.length === 0}
-        >
-          全部清除
-        </Button>
-        {progress ? (
-          <span className="muted">
-            进度 {progress.done}/{progress.total}
-          </span>
-        ) : null}
-      </div>
-
-      {message ? <p className="success-text">{message}</p> : null}
-      {error ? <p className="error-text">{error}</p> : null}
-
-      {items.length === 0 ? (
-        <div className="empty-state">
-          <strong>暂无待处理图片</strong>
-          <p className="muted">点击上方按钮选择本地文件夹，或连接 Google Photos 导入图片。</p>
-        </div>
-      ) : null}
-
+      <BatchImportPanel
+        folderInputRef={folderInputRef} scanning={scanning} selectedFolderLabel={selectedFolderLabel} onScan={(files) => void handleScan(files)}
+        googleStatus={googlePhotosStatus} googleBusy={googlePhotosBusy} media={googlePhotosMedia} selectedIds={googlePhotosSelectedIds} nextPageToken={googlePhotosNextPageToken} session={googlePhotosSession}
+        onPrimary={handleGooglePhotosPrimaryAction} onConfig={() => void openGooglePhotosConfigModal()} onClearToken={() => void handleClearGooglePhotosToken()} onConnect={() => void handleConnectGooglePhotos()} onImport={() => void importGooglePhotosSelection()}
+        onToggleMedia={(id) => setGooglePhotosSelectedIds((current) => current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id])}
+        onLoadMore={() => void loadGooglePhotosMedia({ sessionId: googlePhotosSession?.id ?? "", pageToken: googlePhotosNextPageToken, append: true })}
+        identifying={identifying} pendingCount={pendingCount} itemCount={items.length} progress={progress} message={message} error={error}
+        onIdentifyAll={() => void handleIdentifyAll([])} onClearAll={() => void handleClearAll()}
+      />
       <div className="batch-list">
         {items.map((item) => {
           const hasMuseumOptions = museumOptions.length > 0
@@ -1856,89 +1407,16 @@ function enrichPendingItemTags(item: PendingArtifact): PendingArtifact {
           <option key={era.id} value={era.name} />
         ))}
       </datalist>
-      {submitNotice ? (
-        <div className={`submit-toast ${submitNotice.type}`}>
-          <div className="submit-toast-body">
-            <strong>{submitNotice.type === "error" ? "操作失败" : "操作成功"}</strong>
-            <p>{submitNotice.text}</p>
-          </div>
-          <Button htmlType="button" type="text" shape="circle" aria-label="关闭提交提示" onClick={() => setSubmitNotice(null)}>
-            ×
-          </Button>
-        </div>
-      ) : null}
-      {showGooglePhotosConfigModal
-        ? createPortal(
-            <div className="gallery-modal" onClick={() => setShowGooglePhotosConfigModal(false)}>
-              <div className="gallery-modal-body bridge-login-modal" onClick={(event) => event.stopPropagation()}>
-                <div className="gallery-detail-head">
-                  <div>
-                    <h2>配置 Google Photos</h2>
-                    <p className="muted">在这里填写 OAuth 参数，保存后会继续拉起 Google 授权。</p>
-                  </div>
-                </div>
-                <div className="form-fields">
-                  <label className="field">
-                    <span>Client ID</span>
-                    <Input
-                      value={googlePhotosConfigForm.clientId}
-                      onChange={(event) =>
-                        setGooglePhotosConfigForm((current) => ({ ...current, clientId: event.target.value }))
-                      }
-                      placeholder="Google Cloud Console 的 OAuth Client ID"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Client Secret</span>
-                    <Input
-                      type="password"
-                      value={googlePhotosConfigForm.clientSecret}
-                      onChange={(event) =>
-                        setGooglePhotosConfigForm((current) => ({ ...current, clientSecret: event.target.value }))
-                      }
-                      placeholder="Google Cloud Console 的 OAuth Client Secret"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Redirect URI</span>
-                    <Input
-                      value={googlePhotosConfigForm.redirectUri}
-                      onChange={(event) =>
-                        setGooglePhotosConfigForm((current) => ({ ...current, redirectUri: event.target.value }))
-                      }
-                      placeholder={`${apiBaseUrl}/api/google-photos/callback`}
-                    />
-                    <span className="field-help">这个地址要和 Google Cloud Console 里的 Authorized redirect URI 完全一致。</span>
-                  </label>
-                </div>
-                <div className="gallery-form-footer bridge-login-actions">
-                  <Button
-                    htmlType="button"
-                    type="primary"
-                    disabled={
-                      googlePhotosBusy ||
-                      !googlePhotosConfigForm.clientId.trim() ||
-                      !googlePhotosConfigForm.clientSecret.trim() ||
-                      !googlePhotosConfigForm.redirectUri.trim()
-                    }
-                    onClick={() => void handleSaveGooglePhotosConfig()}
-                  >
-                    {googlePhotosBusy ? "保存中…" : "保存并继续连接"}
-                  </Button>
-                  <Button
-                    htmlType="button"
-                    type="text"
-                    disabled={googlePhotosBusy}
-                    onClick={() => setShowGooglePhotosConfigModal(false)}
-                  >
-                    取消
-                  </Button>
-                </div>
-              </div>
-            </div>,
-            document.body,
-          )
-        : null}
+      <BatchSubmitNotice notice={submitNotice} onClose={() => setSubmitNotice(null)} />
+      <GooglePhotosConfigModal
+        open={showGooglePhotosConfigModal}
+        apiBaseUrl={apiBaseUrl}
+        busy={googlePhotosBusy}
+        value={googlePhotosConfigForm}
+        onChange={setGooglePhotosConfigForm}
+        onClose={() => setShowGooglePhotosConfigModal(false)}
+        onSave={() => void handleSaveGooglePhotosConfig()}
+      />
     </section>
   )
 }

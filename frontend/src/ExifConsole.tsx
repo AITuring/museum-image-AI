@@ -1,114 +1,84 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AutoComplete, Button, Card, Dropdown, Input, Modal, Segmented, Select, Space, Tag, Tooltip } from "antd"
+import { Button, Card, Dropdown, Modal, Space, Tag, Tooltip } from "antd"
 import {
-  Camera,
   Check,
-  ChevronDown,
   CloudUpload,
-  FileCheck2,
   FolderOpen,
   ImagePlus,
-  Landmark,
   Loader2,
-  MapPin,
-  RefreshCw,
-  Search,
-  Sparkles,
   Trash2,
-  X,
-  type LucideIcon,
 } from "lucide-react"
 import { useOperationHistory } from "./OperationHistory"
-import {
-  DEFAULT_METADATA_SYNC_SELECTION,
-  METADATA_SYNC_FIELD_COUNT,
-  METADATA_SYNC_GROUPS,
-  MetadataSyncFieldControls,
-  metadataSyncSelectionFor,
-  type MetadataSyncFieldKey,
-  type MetadataSyncSelection,
-} from "./components/exif/MetadataSyncFieldControls"
-import { AnnotatedDescription, FieldReviewBadge, type ArtifactFieldWarning } from "./components/exif/ReviewIndicators"
-import { GpsMapPicker, geocodeLocationName, reverseGeocodeCoordinates } from "./components/exif/GpsMapPicker"
-import {
-  MetadataSyncPreview,
-  type MetadataSyncDiffRow,
-  type MetadataSyncTargetMode,
-} from "./components/exif/MetadataSyncPreview"
+import type { ArtifactFieldWarning } from "./components/exif/ReviewIndicators"
+import { reverseGeocodeCoordinates } from "./components/exif/GpsMapPicker"
+import { ExifQueueList } from "./components/exif/ExifQueueList"
+import { SharedArtifactForm } from "./components/exif/SharedArtifactForm"
+import { ExifFilePreview } from "./components/exif/ExifFilePreview"
+import { ExifCaptureCard } from "./components/exif/ExifCaptureCard"
+import { BasicArtifactInfoCard } from "./components/exif/BasicArtifactInfoCard"
+import { ExifLocationCard } from "./components/exif/ExifLocationCard"
+import { ExifMetadataEditor } from "./components/exif/ExifMetadataEditor"
+import { ExifDescriptionCandidates } from "./components/exif/ExifDescriptionCandidates"
+import { MetadataSyncSidebar } from "./components/exif/MetadataSyncSidebar"
+import { BatchLocationPanel } from "./components/exif/BatchLocationPanel"
+import { ExifWorkbenchFooter } from "./components/exif/ExifWorkbenchFooter"
+import { ExifEmptyState } from "./components/exif/ExifEmptyState"
+import { useExifMetadataSync } from "./hooks/useExifMetadataSync"
+import { useExifBatchLocation } from "./hooks/useExifBatchLocation"
+import { useExifFileIntake } from "./hooks/useExifFileIntake"
+import { useExifDirectoryAuthorization } from "./hooks/useExifDirectoryAuthorization"
+import { useExifDescriptionOperations } from "./hooks/useExifDescriptionOperations"
+import { useExifBatchSubmission } from "./hooks/useExifBatchSubmission"
+import { useExifArtifactMatchReview } from "./hooks/useExifArtifactMatchReview"
+import { useExifFilenameActions } from "./hooks/useExifFilenameActions"
+import { useExifSharedFormActions } from "./hooks/useExifSharedFormActions"
+import { useExifLocationLookup } from "./hooks/useExifLocationLookup"
+import { useExifDraftPersistence } from "./hooks/useExifDraftPersistence"
+import { useExifEditorEffects } from "./hooks/useExifEditorEffects"
+import { createExifSubmitOne } from "./lib/exifSubmission"
+import { MetadataSyncPreview } from "./components/exif/MetadataSyncPreview"
 import { formatCapturedAt, indexedFileName } from "./lib/exifDisplay"
-import { createFallbackPreviewUrl, createRestoredPreviewUrl } from "./lib/exifPreview"
+import {
+  buildItemId,
+  changedParts,
+  ensureCandidates,
+  fileBaseName,
+  fileExtension,
+  hasValidGpsCoordinates,
+  normalizedFileName,
+  researchSourceUrl,
+  toNullableNumber,
+  uniqueTags,
+} from "./lib/exifFormDomain"
+import {
+  buildBaseForm,
+  cloneFormState,
+  cloneHistoryItems,
+  createExifHistorySnapshot,
+  describeFormChange,
+  FORM_HISTORY_LABELS,
+  type ExifHistorySnapshot,
+} from "./lib/exifWorkbenchFormState"
 import type {
-  ArtifactSubmitResult as ArtifactSubmitResultType,
-  DescriptionCandidate as DescriptionCandidateType,
-  ExhibitionRecommendation as ExhibitionRecommendationType,
-  ExistingArtifact as ExistingArtifactType,
-  ExistingArtifactMatch as ExistingArtifactMatchType,
-  ExifWorkbenchItem as ExifWorkbenchItemType,
-  FilePickerWindow as FilePickerWindowType,
-  FormState as FormStateType,
-  GeneratedDescription as GeneratedDescriptionType,
-  ImageExifMetadata as ImageExifMetadataType,
-  LiveProviderState as LiveProviderStateType,
-  MuseumOption as MuseumOptionType,
-  ParsedArtifactName as ParsedArtifactNameType,
-  PersistedExifDraft as PersistedExifDraftType,
-  PersistedExifDraftItem as PersistedExifDraftItemType,
-  ReuploadHint as ReuploadHintType,
-  SubmitNotice as SubmitNoticeType,
-  UploadActivity as UploadActivityType,
-  VerifiedClaim as VerifiedClaimType,
-  WritableDirectoryHandle as WritableDirectoryHandleType,
-  WritableFileHandle as WritableFileHandleType,
+  ExistingArtifact,
+  ExifWorkbenchItem,
+  FormState,
+  GeneratedDescription,
+  LiveProviderState,
+  MuseumOption,
+  SubmitNotice,
+  UploadActivity,
+  WritableDirectoryHandle,
 } from "./components/exif/types"
 
 const EXIF_HISTORY_SCOPE = "exif"
 
-const Textarea = Input.TextArea
 const SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY = true
-
-type ParsedArtifactName = ParsedArtifactNameType
-
-type DescriptionCandidate = DescriptionCandidateType
-
-type VerifiedClaim = VerifiedClaimType
-
-type LiveProviderState = LiveProviderStateType
-
-type GeneratedDescription = GeneratedDescriptionType
-
-type MuseumOption = MuseumOptionType
-
-type ExhibitionRecommendation = ExhibitionRecommendationType
-
-type SubmitNotice = SubmitNoticeType
-
-type UploadActivity = UploadActivityType
-
-type ArtifactSubmitResult = ArtifactSubmitResultType
-
-type ExistingArtifact = ExistingArtifactType
-
-type ExistingArtifactMatch = ExistingArtifactMatchType
-
-type FormState = FormStateType
-type ImageExifMetadata = ImageExifMetadataType
-type ExifWorkbenchItem = ExifWorkbenchItemType
-type PersistedExifDraftItem = PersistedExifDraftItemType
-type PersistedExifDraft = PersistedExifDraftType
-type ReuploadHint = ReuploadHintType
-type WritableFileHandle = WritableFileHandleType
-type WritableDirectoryHandle = WritableDirectoryHandleType
-type FilePickerWindow = FilePickerWindowType
 
 type ExifConsoleProps = {
   apiBaseUrl: string
 }
 
-const IMAGE_FILE_PATTERN = /\.(?:jpe?g|png|webp|tiff?)$/i
-const EXIF_DRAFT_DB_NAME = "museum-exif-drafts"
-const EXIF_DRAFT_STORE_NAME = "workbench"
-const EXIF_DRAFT_RECORD_KEY = "active"
-const EXIF_REUPLOAD_HINT_STORE_NAME = "reupload-hints"
 
 function yieldToMainThread() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 0))
@@ -118,43 +88,8 @@ function yieldToMainThread() {
   if (url.startsWith("blob:")) URL.revokeObjectURL(url)
 }
 
-const EMPTY_FORM: FormState = {
-  museumName: "",
-  name: "",
-  era: "",
-  placeOfExcavation: "",
-  displayLocationName: "",
-  exhibitionName: "常设",
-  catalogExhibitionId: null,
-  catalogExhibitionSourceId: "",
-  latitude: "",
-  longitude: "",
-  cameraModel: "",
-  lensModel: "",
-  capturedAt: "",
-  shutterSpeed: "",
-  aperture: "",
-  iso: "",
-  description: "",
-  tags: [],
-}
 
 const EXIF_FILE_INPUT_ID = "exif-workbench-file-input"
-
-function FormSectionHeader({ icon: Icon, title, description }: {
-  icon: LucideIcon
-  title: string
-  description: string
-}) {
-  return (
-    <Tooltip title={description} placement="topLeft" trigger={["hover", "focus"]}>
-      <span className="exif-section-title" tabIndex={0}>
-        <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
-        <span>{title}</span>
-      </span>
-    </Tooltip>
-  )
-}
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
@@ -175,1001 +110,10 @@ async function responseErrorMessage(response: Response, prefix?: string) {
   return prefix ? `${prefix}：${detail}` : detail
 }
 
-function waitForRetry(delayMs: number) {
-  return new Promise<void>((resolve) => {
-    window.setTimeout(resolve, delayMs)
-  })
-}
 
-function formatRecommendationDate(item: ExhibitionRecommendation) {
-  if (item.is_permanent) return "常设展"
-  if (item.start_date && item.end_date) return `${item.start_date} — ${item.end_date}`
-  if (item.start_date) return `${item.start_date} 起`
-  if (item.end_date) return `至 ${item.end_date}`
-  return "日期待确认"
-}
 
-function ExhibitionRecommendationPicker({
-  apiBaseUrl,
-  capturedAt,
-  latitude,
-  longitude,
-  location,
-  selectedSourceId,
-  selectedName,
-  onSelect,
-  onManualChange,
-}: {
-  apiBaseUrl: string
-  capturedAt: string
-  latitude: string
-  longitude: string
-  location: string
-  selectedSourceId: string
-  selectedName: string
-  onSelect: (item: ExhibitionRecommendation | null) => void
-  onManualChange: (value: string) => void
-}) {
-  const [recommendations, setRecommendations] = useState<ExhibitionRecommendation[]>([])
-  const [query, setQuery] = useState("")
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    const hasContext = Boolean(
-      capturedAt.trim()
-      || location.trim()
-      || (latitude.trim() && longitude.trim())
-      || query.trim(),
-    )
-    if (!hasContext) {
-      const resetTimer = window.setTimeout(() => {
-        setRecommendations([])
-        setError(null)
-      }, 0)
-      return () => window.clearTimeout(resetTimer)
-    }
 
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => {
-      const params = new URLSearchParams({ limit: "10" })
-      if (capturedAt.trim()) params.set("captured_at", capturedAt.trim())
-      if (location.trim()) params.set("location", location.trim())
-      if (latitude.trim()) params.set("latitude", latitude.trim())
-      if (longitude.trim()) params.set("longitude", longitude.trim())
-      if (query.trim()) params.set("q", query.trim())
-      setLoading(true)
-      setError(null)
-      void fetchJson<ExhibitionRecommendation[]>(
-        `${apiBaseUrl}/api/exhibition-catalog/recommendations?${params.toString()}`,
-        { signal: controller.signal },
-      )
-        .then((items) => setRecommendations(items))
-        .catch((nextError) => {
-          if (!controller.signal.aborted) {
-            setError(nextError instanceof Error ? nextError.message : "展览推荐加载失败")
-          }
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setLoading(false)
-        })
-    }, 320)
-
-    return () => {
-      window.clearTimeout(timer)
-      controller.abort()
-    }
-  }, [apiBaseUrl, capturedAt, latitude, longitude, location, query])
-
-  const options = recommendations.map((item) => ({
-    value: item.source_id,
-    label: (
-      <div className="exhibition-option">
-        <strong>{item.title}</strong>
-        <span>
-          {Array.from(
-            new Set(
-              [item.city, item.museum_name, item.venue, formatRecommendationDate(item)]
-                .filter((value): value is string => Boolean(value)),
-            ),
-          ).join(" · ")}
-        </span>
-        {item.match_reasons.length ? <small>{item.match_reasons.join("；")}</small> : null}
-      </div>
-    ),
-  }))
-  if (
-    selectedSourceId
-    && !options.some((option) => option.value === selectedSourceId)
-  ) {
-    options.unshift({
-      value: selectedSourceId,
-      label: (
-        <div className="exhibition-option">
-          <strong>{selectedName || "已关联展览"}</strong>
-          <span>已保存的展览关联</span>
-        </div>
-      ),
-    })
-  }
-
-  return (
-    <div className="exhibition-picker">
-      <Select
-        allowClear
-        showSearch
-        filterOption={false}
-        loading={loading}
-        value={selectedSourceId || undefined}
-        placeholder={
-          capturedAt || latitude || longitude || location
-            ? "按 EXIF 时间与地点推荐展览"
-            : "照片含时间或定位后自动推荐"
-        }
-        options={options}
-        popupMatchSelectWidth={420}
-        notFoundContent={loading ? "正在检索…" : "没有符合条件的展览"}
-        onSearch={setQuery}
-        onClear={() => onSelect(null)}
-        onSelect={(sourceId) => {
-          const item = recommendations.find((candidate) => candidate.source_id === sourceId)
-          if (item) onSelect(item)
-        }}
-      />
-      <Input
-        value={selectedName}
-        placeholder="找不到时可手动填写展览名称"
-        onChange={(event) => onManualChange(event.target.value)}
-      />
-      {error ? <span className="field-help error">{error}</span> : null}
-      {!error && recommendations.length > 0 ? (
-        <span className="field-help">
-          已按展出地点筛选，并结合拍摄日期排序；匹配地点的常设展也会持续参与推荐。
-        </span>
-      ) : null}
-    </div>
-  )
-}
-
-function postFormDataWithProgress<T>(url: string, formData: FormData, onProgress: (progress: number) => void): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest()
-    request.open("POST", url)
-    request.timeout = 150_000
-    request.upload.onprogress = (event) => {
-      if (event.lengthComputable) onProgress(Math.min(95, 45 + Math.round((event.loaded / event.total) * 50)))
-    }
-    request.onerror = () => reject(new Error("图片上传连接失败"))
-    request.ontimeout = () => reject(new Error("等待云端入库确认超时"))
-    request.onload = () => {
-      let payload: { detail?: string } | T | null = null
-      try { payload = JSON.parse(request.responseText) as { detail?: string } | T } catch { /* non-json error */ }
-      if (request.status < 200 || request.status >= 300) {
-        reject(new Error((payload as { detail?: string } | null)?.detail || `HTTP ${request.status}`))
-        return
-      }
-      resolve(payload as T)
-    }
-    request.send(formData)
-  })
-}
-
-async function confirmSubmittedSourceHash(apiBaseUrl: string, sourceHash: string) {
-  for (const delayMs of [0, 800, 1600]) {
-    if (delayMs > 0) await waitForRetry(delayMs)
-    try {
-      const response = await fetch(
-        `${apiBaseUrl}/api/artifact-images/by-source-hash?${new URLSearchParams({ source_hash: sourceHash }).toString()}`,
-      )
-      if (response.ok && await response.json()) return true
-    } catch {
-      // A failed confirmation request should fall through to the normal retry.
-    }
-  }
-  return false
-}
-
-async function confirmSubmittedFileHash(apiBaseUrl: string, file: File) {
-  try {
-    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer())
-    const imageHash = Array.from(new Uint8Array(digest))
-      .map((byte) => byte.toString(16).padStart(2, "0"))
-      .join("")
-    const response = await fetch(
-      `${apiBaseUrl}/api/artifact-images/by-hash?${new URLSearchParams({ image_hash: imageHash }).toString()}`,
-    )
-    return response.ok && Boolean(await response.json())
-  } catch {
-    return false
-  }
-}
-
-function shouldCheckLegacySubmittedDraft(item: Pick<ExifWorkbenchItem, "submitState" | "submitMessage" | "uploadProgress" | "uploadStage">) {
-  return item.submitState === "submitting"
-    || item.uploadProgress >= 45
-    || item.uploadStage === "等待重试"
-    || item.submitMessage?.includes("页面刷新前提交未完成") === true
-}
-
-async function confirmPreviouslySubmittedItem(apiBaseUrl: string, item: ExifWorkbenchItem | PersistedExifDraftItem) {
-  if (item.sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, item.sourceHash)) return true
-  return shouldCheckLegacySubmittedDraft(item)
-    ? confirmSubmittedFileHash(apiBaseUrl, item.localFile)
-    : false
-}
-
-async function loadMuseumSuggestions(
-  apiBaseUrl: string,
-  keyword: string,
-  setter: (items: MuseumOption[]) => void,
-) {
-  try {
-    const params = new URLSearchParams({ limit: "8" })
-    if (keyword) {
-      params.set("q", keyword)
-    }
-    const items = await fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?${params.toString()}`)
-    setter(items)
-  } catch {
-    setter([])
-  }
-}
-
-async function verifyWritablePermission(handle: WritableFileHandle | WritableDirectoryHandle) {
-  const descriptor = { mode: "readwrite" as const }
-  try {
-    if (await handle.queryPermission?.(descriptor) === "granted") return true
-    if (await handle.requestPermission?.(descriptor) === "granted") return true
-    return !handle.queryPermission && !handle.requestPermission
-  } catch {
-    return false
-  }
-}
-
-async function listDirectoryImageEntries(handle: WritableDirectoryHandle) {
-  const entries: Array<{ handle: WritableFileHandle; file: File }> = []
-  for await (const entry of handle.values()) {
-    if (entry.kind === "directory" || !IMAGE_FILE_PATTERN.test(entry.name)) continue
-    const fileHandle = entry as WritableFileHandle
-    entries.push({ handle: fileHandle, file: await fileHandle.getFile() })
-  }
-  return entries.sort((left, right) => left.file.name.localeCompare(right.file.name, "zh-CN"))
-}
-
-async function resolveMuseum(apiBaseUrl: string, name: string): Promise<MuseumOption | null> {
-  const items = await fetchJson<MuseumOption[]>(
-    `${apiBaseUrl}/api/museums?${new URLSearchParams({ q: name, limit: "8" }).toString()}`,
-  )
-  const exact = items.find((item) => item.name === name)
-  return exact ?? items[0] ?? null
-}
-
-async function lookupExistingArtifact(
-  apiBaseUrl: string,
-  form: FormState,
-): Promise<ExistingArtifactMatch | null> {
-  if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return null
-  const params = new URLSearchParams({
-    name: form.name.trim(),
-    museum_name: form.museumName.trim(),
-    era: form.era.trim(),
-  })
-  try {
-    return await fetchJson<ExistingArtifactMatch | null>(
-      `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
-    )
-  } catch {
-    return null
-  }
-}
-
-function compactArtifactIdentity(value: string | null | undefined) {
-  return (value ?? "")
-    .trim()
-    .toLocaleLowerCase("zh-CN")
-    .replace(/[\s\p{P}\p{S}_]+/gu, "")
-}
-
-function artifactReviewIdentityKey(form: FormState) {
-  if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return ""
-  return [
-    compactArtifactIdentity(form.name),
-    compactArtifactIdentity(form.museumName),
-    compactArtifactIdentity(form.era),
-  ].join("|")
-}
-
-async function lookupExistingArtifactCandidates(
-  apiBaseUrl: string,
-  form: FormState,
-): Promise<ExistingArtifactMatch[]> {
-  if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return []
-  const params = new URLSearchParams({
-    q: form.name.trim(),
-    era: form.era.trim(),
-  })
-  const [bestMatch, searchResults] = await Promise.all([
-    lookupExistingArtifact(apiBaseUrl, form),
-    fetchJson<ExistingArtifact[]>(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
-      .catch(() => []),
-  ])
-  const normalizedMuseum = compactArtifactIdentity(form.museumName)
-  const normalizedEra = compactArtifactIdentity(form.era)
-  const normalizedName = compactArtifactIdentity(form.name)
-  const candidates = new Map<string, ExistingArtifactMatch>()
-  const candidateIdentity = (artifact: ExistingArtifact) => [
-    compactArtifactIdentity(artifact.name),
-    compactArtifactIdentity(artifact.museum_name),
-    compactArtifactIdentity(artifact.era),
-  ].join("|")
-  if (bestMatch) candidates.set(candidateIdentity(bestMatch.artifact), bestMatch)
-  searchResults.forEach((artifact) => {
-    if (
-      compactArtifactIdentity(artifact.museum_name) !== normalizedMuseum
-      || compactArtifactIdentity(artifact.era) !== normalizedEra
-    ) return
-    const candidateName = compactArtifactIdentity(artifact.name)
-    const exact = candidateName === normalizedName
-    const related = candidateName.includes(normalizedName) || normalizedName.includes(candidateName)
-    if (!exact && !related) return
-    const identity = candidateIdentity(artifact)
-    const nextMatch: ExistingArtifactMatch = {
-      artifact,
-      match_score: exact ? 1 : 0.8,
-      match_reason: exact
-        ? "名称完全一致，且时代、馆藏一致。"
-        : "名称相近，且时代、馆藏一致。",
-    }
-    const current = candidates.get(identity)
-    if (!current || nextMatch.match_score > current.match_score) {
-      candidates.set(identity, nextMatch)
-    }
-  })
-  return Array.from(candidates.values())
-    .sort((left, right) => right.match_score - left.match_score)
-    .slice(0, 6)
-}
-
-function buildBaseForm(): FormState {
-  return {
-    ...EMPTY_FORM,
-  }
-}
-
-function cloneFormState(form: FormState): FormState {
-  return {
-    ...form,
-    catalogExhibitionId: form.catalogExhibitionId ?? null,
-    catalogExhibitionSourceId: form.catalogExhibitionSourceId ?? "",
-    tags: [...form.tags],
-  }
-}
-
-type ExifHistorySnapshot = {
-  items: ExifWorkbenchItem[]
-  selectedId: string | null
-  sharedForm: FormState
-}
-
-function cloneHistoryItems(items: ExifWorkbenchItem[]) {
-  return items.map((item) => ({
-    ...item,
-    form: cloneFormState(item.form),
-    originalForm: cloneFormState(item.originalForm),
-    parsedName: item.parsedName ? { ...item.parsedName } : null,
-    candidates: ensureCandidates(item.candidates),
-    unavailableProviders: [...item.unavailableProviders],
-    existingArtifactCandidates: [...item.existingArtifactCandidates],
-    verificationDecisions: item.verificationDecisions ? { ...item.verificationDecisions } : undefined,
-  }))
-}
-
-function createExifHistorySnapshot(
-  items: ExifWorkbenchItem[],
-  selectedId: string | null,
-  sharedForm: FormState,
-): ExifHistorySnapshot {
-  return {
-    items: cloneHistoryItems(items),
-    selectedId,
-    sharedForm: cloneFormState(sharedForm),
-  }
-}
-
-const FORM_HISTORY_LABELS: Partial<Record<keyof FormState, string>> = {
-  museumName: "馆藏单位",
-  name: "文物名称",
-  era: "时代",
-  placeOfExcavation: "出土地",
-  cameraModel: "相机型号",
-  lensModel: "镜头型号",
-  capturedAt: "拍摄时间",
-  shutterSpeed: "快门",
-  aperture: "光圈",
-  iso: "ISO",
-  displayLocationName: "展出地点",
-  exhibitionName: "对应展览",
-  latitude: "纬度",
-  longitude: "经度",
-  description: "描述",
-  tags: "标签",
-}
-
-function historyFieldValue(key: keyof FormState, value: FormState[keyof FormState]) {
-  if (key === "tags") {
-    const tags = value as string[]
-    return tags.length > 0 ? tags.join("、").slice(0, 32) : "空"
-  }
-  const text = String(value ?? "").trim()
-  if (key === "description") return text ? `${text.length} 字` : "空"
-  return text ? (text.length > 28 ? `${text.slice(0, 28)}…` : text) : "空"
-}
-
-function describeFormChange(
-  current: FormState,
-  patch: Partial<FormState>,
-  changedKeys: Array<keyof FormState>,
-) {
-  if (changedKeys.length !== 1) {
-    return changedKeys.map((key) => FORM_HISTORY_LABELS[key] ?? String(key)).join("、")
-  }
-  const key = changedKeys[0]
-  return `${FORM_HISTORY_LABELS[key] ?? String(key)}：${historyFieldValue(key, current[key])} → ${historyFieldValue(key, patch[key] as FormState[keyof FormState])}`
-}
-
-function shouldReplaceParsedField(currentValue: string, previousParsedValue: string | null | undefined) {
-  const current = currentValue.trim()
-  const previous = previousParsedValue?.trim() ?? ""
-  return !current || Boolean(previous && current === previous)
-}
-
-function applyFilenameParseWithoutOverwritingEdits(
-  form: FormState,
-  previous: ParsedArtifactName | null,
-  next: ParsedArtifactName,
-): FormState {
-  return {
-    ...form,
-    name: next.artifact_name && shouldReplaceParsedField(form.name, previous?.artifact_name)
-      ? next.artifact_name
-      : form.name,
-    era: next.era && shouldReplaceParsedField(form.era, previous?.era)
-      ? next.era
-      : form.era,
-    museumName: next.museum_name && shouldReplaceParsedField(form.museumName, previous?.museum_name)
-      ? next.museum_name
-      : form.museumName,
-    placeOfExcavation: next.Place_of_Excavation
-      && shouldReplaceParsedField(form.placeOfExcavation, previous?.Place_of_Excavation)
-      ? next.Place_of_Excavation
-      : form.placeOfExcavation,
-    displayLocationName: next.museum_name
-      && shouldReplaceParsedField(form.displayLocationName, previous?.museum_name)
-      ? next.museum_name
-      : form.displayLocationName,
-  }
-}
-
-function normalizedReuploadHintKeys(fileName: string) {
-  const normalized = fileName.trim().toLocaleLowerCase("zh-CN")
-  const base = fileBaseName(normalized)
-  return Array.from(new Set([normalized, base].filter(Boolean)))
-}
-
-function applyExistingArtifactToForm(form: FormState, artifact: ExistingArtifact): FormState {
-  const capture = artifact.images.find((image) => (
-    image.capture_location
-    || image.capture_museum_name
-    || image.exhibition_name
-    || image.latitude !== null
-    || image.longitude !== null
-  ))
-  return {
-    ...form,
-    museumName: artifact.museum_name || form.museumName,
-    name: artifact.name || form.name,
-    era: artifact.era ?? form.era,
-    placeOfExcavation: artifact.Place_of_Excavation ?? form.placeOfExcavation,
-    displayLocationName: form.displayLocationName
-      || capture?.capture_location
-      || capture?.capture_museum_name
-      || artifact.museum_name,
-    exhibitionName: capture?.exhibition_name || form.exhibitionName,
-    catalogExhibitionId: capture?.catalog_exhibition_id ?? form.catalogExhibitionId,
-    catalogExhibitionSourceId: capture?.catalog_exhibition_source_id || form.catalogExhibitionSourceId,
-    latitude: form.latitude || capture?.latitude?.toString() || "",
-    longitude: form.longitude || capture?.longitude?.toString() || "",
-    description: artifact.description ?? form.description,
-    // Camera and lens tags describe individual source photos, so do not copy
-    // them onto a newly uploaded image. Its own EXIF fields remain authoritative.
-    tags: uniqueTags(artifact.tags.filter((tag) => !/^(机型|镜头)\s*[:：]/.test(tag))),
-  }
-}
-
-function resetFormForNewArtifact(
-  form: FormState,
-  parsedName: ParsedArtifactName | null,
-): FormState {
-  // A declined match must never leave copied artifact fields in the editor.
-  // Rebuild the identity from this photo's own filename parse while keeping
-  // its EXIF-derived camera and GPS values intact.
-  if (!parsedName) return form
-  return {
-    ...form,
-    museumName: parsedName.museum_name ?? "",
-    name: parsedName.artifact_name ?? "",
-    era: parsedName.era ?? "",
-    placeOfExcavation: parsedName.Place_of_Excavation ?? "",
-    displayLocationName: parsedName.museum_name ?? form.displayLocationName,
-    exhibitionName: "",
-    catalogExhibitionId: null,
-    catalogExhibitionSourceId: "",
-    description: "",
-    tags: [],
-  }
-}
-
-function openExifDraftDatabase() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = window.indexedDB.open(EXIF_DRAFT_DB_NAME, 2)
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains(EXIF_DRAFT_STORE_NAME)) {
-        request.result.createObjectStore(EXIF_DRAFT_STORE_NAME)
-      }
-      if (!request.result.objectStoreNames.contains(EXIF_REUPLOAD_HINT_STORE_NAME)) {
-        request.result.createObjectStore(EXIF_REUPLOAD_HINT_STORE_NAME)
-      }
-    }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error ?? new Error("无法打开本地草稿存储"))
-  })
-}
-
-async function writeReuploadHints(items: ExifWorkbenchItem[]) {
-  const candidates = items.filter((item) => (
-    item.form.name.trim()
-    && item.form.museumName.trim()
-    && (item.form.description.trim() || item.form.tags.length > 0)
-  ))
-  if (candidates.length === 0) return
-  const database = await openExifDraftDatabase()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction(EXIF_REUPLOAD_HINT_STORE_NAME, "readwrite")
-      const store = transaction.objectStore(EXIF_REUPLOAD_HINT_STORE_NAME)
-      candidates.forEach((item) => {
-        const hint: ReuploadHint = {
-          version: 1,
-          form: cloneFormState(item.form),
-          existingArtifactId: item.existingArtifactId ?? null,
-          updatedAt: new Date().toISOString(),
-        }
-        const keys = new Set([
-          ...normalizedReuploadHintKeys(item.originalFileName),
-          ...normalizedReuploadHintKeys(item.fileName),
-        ])
-        keys.forEach((key) => store.put(hint, key))
-      })
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error ?? new Error("保存重新上传线索失败"))
-      transaction.onabort = () => reject(transaction.error ?? new Error("保存重新上传线索失败"))
-    })
-  } finally {
-    database.close()
-  }
-}
-
-async function readExifDraft() {
-  const database = await openExifDraftDatabase()
-  try {
-    return await new Promise<PersistedExifDraft | null>((resolve, reject) => {
-      const request = database.transaction(EXIF_DRAFT_STORE_NAME, "readonly")
-        .objectStore(EXIF_DRAFT_STORE_NAME)
-        .get(EXIF_DRAFT_RECORD_KEY)
-      request.onsuccess = () => resolve((request.result as PersistedExifDraft | undefined) ?? null)
-      request.onerror = () => reject(request.error ?? new Error("读取本地草稿失败"))
-    })
-  } finally {
-    database.close()
-  }
-}
-
-async function writeExifDraft(draft: PersistedExifDraft) {
-  const database = await openExifDraftDatabase()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const request = database.transaction(EXIF_DRAFT_STORE_NAME, "readwrite")
-        .objectStore(EXIF_DRAFT_STORE_NAME)
-        .put(draft, EXIF_DRAFT_RECORD_KEY)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error ?? new Error("保存本地草稿失败"))
-    })
-  } finally {
-    database.close()
-  }
-}
-
-async function clearExifDraft() {
-  const database = await openExifDraftDatabase()
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const request = database.transaction(EXIF_DRAFT_STORE_NAME, "readwrite")
-        .objectStore(EXIF_DRAFT_STORE_NAME)
-        .delete(EXIF_DRAFT_RECORD_KEY)
-      request.onsuccess = () => resolve()
-      request.onerror = () => reject(request.error ?? new Error("清理本地草稿失败"))
-    })
-  } finally {
-    database.close()
-  }
-}
-
-function serializeExifDraftItem(item: ExifWorkbenchItem): PersistedExifDraftItem {
-  const { previewUrl: _previewUrl, fileHandle: _fileHandle, ...persistedItem } = item
-  return {
-    ...persistedItem,
-    form: cloneFormState(item.form),
-    originalForm: cloneFormState(item.originalForm),
-    candidates: ensureCandidates(item.candidates),
-    unavailableProviders: ensureStringList(item.unavailableProviders),
-    // A directory permission cannot be silently restored after reload. The
-    // photo and its edits are retained; the operator can re-authorize later.
-    submitState: item.submitState === "submitting" ? "error" : item.submitState,
-    submitMessage: item.submitState === "submitting" ? "页面刷新前提交未完成，请确认后重试" : item.submitMessage,
-    uploadProgress: item.submitState === "submitting" ? 0 : item.uploadProgress,
-    uploadStage: item.submitState === "submitting" ? "等待重试" : item.uploadStage,
-  }
-}
-
-async function restoreExifDraftItems(draft: PersistedExifDraftItem[], apiBaseUrl: string) {
-  return Promise.all(draft.map(async (item) => {
-    const sourceHash = item.sourceHash ?? null
-    const confirmedSubmitted = await confirmPreviouslySubmittedItem(apiBaseUrl, {
-      ...item,
-      sourceHash,
-    })
-    return {
-      ...item,
-      form: cloneFormState(item.form),
-      originalForm: cloneFormState(item.originalForm),
-      candidates: ensureCandidates(item.candidates),
-      unavailableProviders: ensureStringList(item.unavailableProviders),
-      existingArtifactId: item.existingArtifactId ?? null,
-      existingArtifactMatch: item.existingArtifactMatch ?? null,
-      existingArtifactCandidates: item.existingArtifactCandidates ?? [],
-      existingArtifactReviewKey: item.existingArtifactReviewKey ?? null,
-      sourceHash,
-      fileHandle: null,
-      previewUrl: await createRestoredPreviewUrl(item.localFile, apiBaseUrl, fetchJson),
-      submitState: confirmedSubmitted ? "submitted" as const : item.submitState,
-      submitMessage: confirmedSubmitted ? "已从云端确认这张图片完成入库。" : item.submitMessage,
-      uploadProgress: confirmedSubmitted ? 100 : item.uploadProgress,
-      uploadStage: confirmedSubmitted ? "已完成" : item.uploadStage,
-    }
-  }))
-}
-
-function metadataSyncValue(value: string | string[]) {
-  if (Array.isArray(value)) return value.length > 0 ? value.join("、") : "未填写"
-  return value.trim() || "未填写"
-}
-
-function buildMetadataSyncDiffRows(
-  target: FormState,
-  source: FormState,
-  field: MetadataSyncFieldKey,
-): MetadataSyncDiffRow[] {
-  const fields: Array<{ label: string; target: string | string[]; source: string | string[] }> = field === "displayLocation"
-    ? [{ label: "展出地点", target: target.displayLocationName, source: source.displayLocationName }]
-    : field === "exhibition"
-      ? [
-          { label: "对应展览", target: target.exhibitionName, source: source.exhibitionName },
-          {
-            label: "展览目录关联",
-            target: target.catalogExhibitionSourceId,
-            source: source.catalogExhibitionSourceId,
-          },
-        ]
-      : field === "gps"
-        ? [
-            { label: "纬度", target: target.latitude, source: source.latitude },
-            { label: "经度", target: target.longitude, source: source.longitude },
-          ]
-        : field === "cameraModel"
-          ? [{ label: "相机型号", target: target.cameraModel, source: source.cameraModel }]
-          : field === "lensModel"
-            ? [{ label: "镜头型号", target: target.lensModel, source: source.lensModel }]
-            : field === "shutterSpeed"
-              ? [{ label: "快门", target: target.shutterSpeed, source: source.shutterSpeed }]
-              : field === "aperture"
-                ? [{ label: "光圈", target: target.aperture, source: source.aperture }]
-                : field === "iso"
-                  ? [{ label: "ISO", target: target.iso, source: source.iso }]
-                  : field === "capturedAt"
-                    ? [{ label: "拍摄时间", target: formatCapturedAt(target.capturedAt), source: formatCapturedAt(source.capturedAt) }]
-                    : field === "description"
-                      ? [{ label: "描述", target: target.description, source: source.description }]
-                      : [{ label: "标签", target: target.tags, source: source.tags }]
-
-  return fields.map((field) => {
-    const targetValue = metadataSyncValue(field.target)
-    const sourceValue = metadataSyncValue(field.source)
-    const sourceIsEmpty = sourceValue === "未填写"
-    return {
-      label: field.label,
-      targetValue,
-      sourceValue,
-      changed: targetValue !== sourceValue,
-      willClearTarget: sourceIsEmpty && targetValue !== "未填写",
-    }
-  })
-}
-
-function applySourceMetadata(
-  target: FormState,
-  source: FormState,
-  selection: MetadataSyncSelection,
-): FormState {
-  return {
-    ...target,
-    ...(selection.displayLocation ? {
-      displayLocationName: source.displayLocationName,
-    } : {}),
-    ...(selection.exhibition ? {
-      exhibitionName: source.exhibitionName,
-      catalogExhibitionId: source.catalogExhibitionId,
-      catalogExhibitionSourceId: source.catalogExhibitionSourceId,
-    } : {}),
-    ...(selection.gps ? {
-      latitude: source.latitude,
-      longitude: source.longitude,
-    } : {}),
-    ...(selection.cameraModel ? { cameraModel: source.cameraModel } : {}),
-    ...(selection.lensModel ? { lensModel: source.lensModel } : {}),
-    ...(selection.shutterSpeed ? { shutterSpeed: source.shutterSpeed } : {}),
-    ...(selection.aperture ? { aperture: source.aperture } : {}),
-    ...(selection.iso ? { iso: source.iso } : {}),
-    ...(selection.capturedAt ? { capturedAt: source.capturedAt } : {}),
-    ...(selection.description ? { description: source.description } : {}),
-    ...(selection.tags ? { tags: [...source.tags] } : {}),
-  }
-}
-
-function hasMeaningfulFormValue(form: FormState) {
-  return Boolean(
-    form.museumName.trim() ||
-      form.name.trim() ||
-      form.era.trim() ||
-      form.placeOfExcavation.trim() ||
-      form.displayLocationName.trim() ||
-      form.exhibitionName.trim() ||
-      form.latitude.trim() ||
-      form.longitude.trim() ||
-      form.cameraModel.trim() ||
-      form.lensModel.trim() ||
-      form.capturedAt.trim() ||
-      form.shutterSpeed.trim() ||
-      form.aperture.trim() ||
-      form.iso.trim() ||
-      form.description.trim() ||
-      form.tags.length > 0,
-  )
-}
-
-function applySharedForm(current: FormState, shared: FormState): FormState {
-  return {
-    ...current,
-    museumName: shared.museumName,
-    name: shared.name,
-    era: shared.era,
-    placeOfExcavation: shared.placeOfExcavation,
-    displayLocationName: shared.displayLocationName,
-    exhibitionName: shared.exhibitionName,
-    catalogExhibitionId: shared.catalogExhibitionId,
-    catalogExhibitionSourceId: shared.catalogExhibitionSourceId,
-    latitude: shared.latitude,
-    longitude: shared.longitude,
-    description: shared.description,
-    tags: [...shared.tags],
-  }
-}
-
-function buildItemId(file: File, index: number) {
-  return `${file.name}-${file.lastModified}-${index}`
-}
-
-function uniqueTags(tags: string[]) {
-  return Array.from(new Set(tags.map((item) => item.trim()).filter(Boolean)))
-}
-
-function ensureCandidates(value: DescriptionCandidate[] | undefined | null): DescriptionCandidate[] {
-  return Array.isArray(value)
-    ? value.map((candidate) => {
-        const normalized = normalizeVerifiedClaims(candidate.description, candidate.verified_claims)
-        return {
-          ...candidate,
-          description: normalized.description,
-          field_warnings: ensureFieldWarnings(candidate.field_warnings),
-          verified_claims: normalized.claims,
-          search_hits: Array.isArray(candidate.search_hits) ? candidate.search_hits : [],
-        }
-      })
-    : []
-}
-
-function normalizeVerifiedClaims(description: string, value: unknown) {
-  const claims: VerifiedClaim[] = Array.isArray(value)
-    ? value.flatMap((item) => {
-        if (!item || typeof item !== "object") return []
-        const claim = item as Partial<VerifiedClaim>
-        const text = String(claim.text || "").replace(/\[(?:联网核验|来源\d+)\]/g, "").trim()
-        if (!text) return []
-        return [{
-          text: /[。！？]$/.test(text) ? text : `${text}。`,
-          source_refs: ensureStringList(claim.source_refs),
-        }]
-      })
-    : []
-  const legacyPattern = /([^。！？\n]+?)\[联网核验\]([。！？]?)/g
-  const cleanDescription = description.replace(legacyPattern, (_match, rawClaim: string, punctuation: string) => {
-    const text = rawClaim.trim().replace(/^[，,；;\s]+/, "")
-    if (text) {
-      const normalizedText = `${text}${punctuation || "。"}`
-      if (!claims.some((claim) => claim.text === normalizedText)) {
-        claims.push({ text: normalizedText, source_refs: ["联网核验"] })
-      }
-    }
-    return ""
-  }).replace(/\[联网核验\]/g, "").replace(/\n{3,}/g, "\n\n").trim()
-  return { description: cleanDescription, claims }
-}
-
-function ensureFieldWarnings(value: unknown): ArtifactFieldWarning[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((item) => {
-    if (!item || typeof item !== "object") return []
-    const warning = item as Partial<ArtifactFieldWarning>
-    if (!warning.field || !warning.reason) return []
-    return [{
-      field: String(warning.field),
-      label: String(warning.label || warning.field),
-      input_value: String(warning.input_value || ""),
-      suggested_value: warning.suggested_value ? String(warning.suggested_value) : null,
-      reason: String(warning.reason),
-      source_refs: ensureStringList(warning.source_refs),
-    }]
-  })
-}
-
-function ensureStringList(value: string[] | undefined | null): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []
-}
-
-function researchSourceUrl(apiBaseUrl: string, url: string) {
-  if (url.startsWith("http://") || url.startsWith("https://")) return url
-  return `${apiBaseUrl}${url.startsWith("/") ? url : `/${url}`}`
-}
-
-function toNullableNumber(value: string) {
-  const text = value.trim()
-  if (!text) {
-    return null
-  }
-  const numeric = Number(text)
-  return Number.isFinite(numeric) ? numeric : null
-}
-
-function hasValidGpsCoordinates(latitude: string, longitude: string) {
-  const lat = toNullableNumber(latitude)
-  const lng = toNullableNumber(longitude)
-  return lat !== null
-    && lng !== null
-    && Math.abs(lat) <= 90
-    && Math.abs(lng) <= 180
-}
-
-function exposureSeconds(value: string | null | undefined) {
-  const text = (value ?? "").trim().toLowerCase().replace(/s$/, "")
-  if (!text) return null
-  if (text.includes("/")) {
-    const [numerator, denominator] = text.split("/", 2).map(Number)
-    return Number.isFinite(numerator) && Number.isFinite(denominator) && denominator !== 0
-      ? numerator / denominator
-      : null
-  }
-  const numeric = Number(text)
-  return Number.isFinite(numeric) ? numeric : null
-}
-
-function apertureNumber(value: string | null | undefined) {
-  const numeric = Number((value ?? "").trim().toLowerCase().replace(/^f\//, ""))
-  return Number.isFinite(numeric) ? numeric : null
-}
-
-function assertWrittenExif(metadata: ImageExifMetadata, form: FormState) {
-  const expectedLatitude = toNullableNumber(form.latitude)
-  const expectedLongitude = toNullableNumber(form.longitude)
-  if (
-    expectedLatitude !== null
-    && expectedLongitude !== null
-    && (
-      metadata.latitude === null
-      || metadata.longitude === null
-      || Math.abs(metadata.latitude - expectedLatitude) > 0.00001
-      || Math.abs(metadata.longitude - expectedLongitude) > 0.00001
-    )
-  ) {
-    throw new Error("本地图片 GPS 写入校验失败")
-  }
-
-  if ((metadata.camera_model ?? "").trim() !== form.cameraModel.trim()) {
-    throw new Error("本地图片相机型号写入校验失败")
-  }
-  if ((metadata.lens_model ?? "").trim() !== form.lensModel.trim()) {
-    throw new Error("本地图片镜头型号写入校验失败")
-  }
-  if (
-    form.capturedAt.trim()
-    && formatCapturedAt(metadata.captured_at) !== formatCapturedAt(form.capturedAt)
-  ) {
-    throw new Error("本地图片拍摄时间写入校验失败")
-  }
-
-  const expectedShutter = exposureSeconds(form.shutterSpeed)
-  const writtenShutter = exposureSeconds(metadata.shutter_speed)
-  if (
-    expectedShutter !== null
-    && (writtenShutter === null || Math.abs(writtenShutter - expectedShutter) > 0.000001)
-  ) {
-    throw new Error("本地图片快门信息写入校验失败")
-  }
-
-  const expectedAperture = apertureNumber(form.aperture)
-  const writtenAperture = apertureNumber(metadata.aperture)
-  if (
-    expectedAperture !== null
-    && (writtenAperture === null || Math.abs(writtenAperture - expectedAperture) > 0.001)
-  ) {
-    throw new Error("本地图片光圈信息写入校验失败")
-  }
-
-  const expectedIso = toNullableNumber(form.iso)
-  if (expectedIso !== null && metadata.iso !== expectedIso) {
-    throw new Error("本地图片 ISO 写入校验失败")
-  }
-}
-
-function fileExtension(name: string) {
-  const index = name.lastIndexOf(".")
-  return index > 0 ? name.slice(index) : ""
-}
-
-function fileBaseName(name: string) {
-  const extension = fileExtension(name)
-  return extension ? name.slice(0, -extension.length) : name
-}
-
-function normalizedFileName(baseName: string, referenceName: string) {
-  const normalized = baseName.trim().replace(/[\\/:*?"<>|]/g, "")
-  return normalized ? `${normalized}${fileExtension(referenceName)}` : referenceName
-}
-
-function changedParts(item: ExifWorkbenchItem) {
-  const changed: string[] = []
-  if (item.fileName !== item.originalFileName) changed.push("名称")
-  const initial = item.originalForm
-  const current = item.form
-  if (initial.latitude !== current.latitude || initial.longitude !== current.longitude) changed.push("GPS")
-  if (
-    initial.displayLocationName !== current.displayLocationName
-    || initial.exhibitionName !== current.exhibitionName
-    || initial.catalogExhibitionSourceId !== current.catalogExhibitionSourceId
-  ) changed.push("展出")
-  if (initial.cameraModel !== current.cameraModel || initial.lensModel !== current.lensModel || initial.capturedAt !== current.capturedAt || initial.shutterSpeed !== current.shutterSpeed || initial.aperture !== current.aperture || initial.iso !== current.iso) changed.push("拍摄")
-  if (initial.name !== current.name || initial.era !== current.era || initial.museumName !== current.museumName || initial.placeOfExcavation !== current.placeOfExcavation) changed.push("信息")
-  if (initial.description !== current.description || initial.tags.join("\u0000") !== current.tags.join("\u0000")) changed.push("内容")
-  return changed
-}
 
 function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const {
@@ -1182,8 +126,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const itemsRef = useRef<ExifWorkbenchItem[]>([])
   const locatingDisplayLocationRef = useRef(false)
-  const draftWriteTimerRef = useRef<number | null>(null)
-  const draftStorageFailureRef = useRef(false)
   const artifactMatchLookupRef = useRef(new Set<string>())
   const batchRenameRevisionRef = useRef(0)
   const filenameHistoryOperationRef = useRef(new Map<string, string>())
@@ -1209,18 +151,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [batchPrefix, setBatchPrefix] = useState("")
   const [batchSuffix, setBatchSuffix] = useState("")
   const [batchRemove, setBatchRemove] = useState("")
-  const [batchLocationName, setBatchLocationName] = useState("")
-  const [batchExhibitionName, setBatchExhibitionName] = useState("常设")
-  const [batchCatalogExhibitionId, setBatchCatalogExhibitionId] = useState<number | null>(null)
-  const [batchCatalogExhibitionSourceId, setBatchCatalogExhibitionSourceId] = useState("")
-  const [batchLatitude, setBatchLatitude] = useState("")
-  const [batchLongitude, setBatchLongitude] = useState("")
-  const [batchLocationOpen, setBatchLocationOpen] = useState(false)
-  const [metadataSyncSourceId, setMetadataSyncSourceId] = useState("")
-  const [metadataSyncTargetMode, setMetadataSyncTargetMode] = useState<MetadataSyncTargetMode>("others")
-  const [metadataSyncTargetIds, setMetadataSyncTargetIds] = useState<string[]>([])
-  const [metadataSyncSelection, setMetadataSyncSelection] = useState<MetadataSyncSelection>(DEFAULT_METADATA_SYNC_SELECTION)
-  const [metadataSyncPreviewOpen, setMetadataSyncPreviewOpen] = useState(false)
   const [uploadPermissionOpen, setUploadPermissionOpen] = useState(false)
   const [artifactMatchReviewIds, setArtifactMatchReviewIds] = useState<string[]>([])
   const [openUploadPermissionAfterArtifactReview, setOpenUploadPermissionAfterArtifactReview] = useState(false)
@@ -1228,12 +158,59 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const [parsingFileName, setParsingFileName] = useState(false)
   const [submittingAll, setSubmittingAll] = useState(false)
   const [submitNotice, setSubmitNotice] = useState<SubmitNotice | null>(null)
-  const [draftStorageReady, setDraftStorageReady] = useState(false)
 
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
   )
+  const {
+    open: batchLocationOpen,
+    setOpen: setBatchLocationOpen,
+    locationName: batchLocationName,
+    setLocationName: setBatchLocationName,
+    exhibitionName: batchExhibitionName,
+    updateExhibitionName: setBatchExhibitionName,
+    latitude: batchLatitude,
+    setLatitude: setBatchLatitude,
+    longitude: batchLongitude,
+    setLongitude: setBatchLongitude,
+    useSelectedLocation: useSelectedLocationForBatch,
+    apply: applyBatchLocation,
+  } = useExifBatchLocation({
+    itemsRef,
+    selectedItem,
+    onItemsChange: recordItemsChange,
+    onNotice: setSubmitNotice,
+    toNullableNumber,
+  })
+  const {
+    source: metadataSyncSource,
+    sourceId: metadataSyncSourceId,
+    setSourceId: setMetadataSyncSourceId,
+    targetMode: metadataSyncTargetMode,
+    setTargetMode: setMetadataSyncTargetMode,
+    targetIds: metadataSyncTargetIds,
+    setTargetIds: setMetadataSyncTargetIds,
+    selection: metadataSyncSelection,
+    setSelection: setMetadataSyncSelection,
+    previewOpen: metadataSyncPreviewOpen,
+    setPreviewOpen: setMetadataSyncPreviewOpen,
+    availableTargets: metadataSyncAvailableTargets,
+    targets: metadataSyncTargets,
+    diffs: metadataSyncDiffs,
+    selectedFieldCount: metadataSyncSelectedCount,
+    changedCount: metadataSyncChangedCount,
+    selectPreset: selectMetadataSyncPreset,
+    openPreview: openMetadataSyncPreview,
+    openSelectedItemSync: syncSelectedMetadataToOthers,
+    apply: applyMetadataSync,
+  } = useExifMetadataSync({
+    items,
+    selectedItem,
+    itemsRef,
+    onItemsChange: recordItemsChange,
+    onNotice: setSubmitNotice,
+  })
   const artifactMatchReviewItem = useMemo(
     () => items.find((item) => item.id === artifactMatchReviewIds[0]) ?? null,
     [artifactMatchReviewIds, items],
@@ -1277,54 +254,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   const batchRenameCount = useMemo(() => items.filter((item) => (
     normalizedFileName(`${batchPrefix}${fileBaseName(item.fileName).split(batchRemove).join("")}${batchSuffix}`, item.fileName) !== item.fileName
   )).length, [items, batchPrefix, batchRemove, batchSuffix])
-
-  const metadataSyncSource = useMemo(
-    () => items.find((item) => item.id === metadataSyncSourceId) ?? null,
-    [items, metadataSyncSourceId],
-  )
-
-  const metadataSyncAvailableTargets = useMemo(
-    () => items.filter((item) => item.id !== metadataSyncSource?.id),
-    [items, metadataSyncSource],
-  )
-
-  const metadataSyncTargets = useMemo(() => {
-    if (!metadataSyncSource) return []
-    if (metadataSyncTargetMode === "current") {
-      return selectedItem && selectedItem.id !== metadataSyncSource.id ? [selectedItem] : []
-    }
-    if (metadataSyncTargetMode === "selected") {
-      const targetIds = new Set(metadataSyncTargetIds)
-      return metadataSyncAvailableTargets.filter((item) => targetIds.has(item.id))
-    }
-    return items.filter((item) => item.id !== metadataSyncSource.id)
-  }, [
-    items,
-    metadataSyncAvailableTargets,
-    metadataSyncSource,
-    metadataSyncTargetIds,
-    metadataSyncTargetMode,
-    selectedItem,
-  ])
-
-  const metadataSyncDiffs = useMemo(() => metadataSyncTargets.map((target) => {
-    const rows = METADATA_SYNC_GROUPS
-      .flatMap((group) => group.fields)
-      .filter((field) => metadataSyncSelection[field.key])
-      .flatMap((field) => buildMetadataSyncDiffRows(target.form, metadataSyncSource?.form ?? EMPTY_FORM, field.key))
-      .filter((row) => row.changed)
-    return { target, rows }
-  }), [metadataSyncSelection, metadataSyncSource, metadataSyncTargets])
-
-  const metadataSyncSelectedCount = useMemo(
-    () => Object.values(metadataSyncSelection).filter(Boolean).length,
-    [metadataSyncSelection],
-  )
-
-  const metadataSyncChangedCount = useMemo(
-    () => metadataSyncDiffs.reduce((count, entry) => count + entry.rows.length, 0),
-    [metadataSyncDiffs],
-  )
 
   function replaceWorkbenchItems(nextItems: ExifWorkbenchItem[]) {
     itemsRef.current = nextItems
@@ -1416,268 +345,52 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     })
   }), [registerHistoryScope])
 
-  useEffect(() => {
-    let disposed = false
-    void (async () => {
-      try {
-        // Ask the browser to retain large, unsubmitted image drafts when it
-        // supports persistent storage. A refusal still falls back to IndexedDB.
-        await navigator.storage?.persist?.()
-        const draft = await readExifDraft()
-        if (disposed || !draft || draft.version !== 1 || draft.items.length === 0) return
-        const restoredItems = await restoreExifDraftItems(draft.items, apiBaseUrl)
-        if (disposed) {
-          restoredItems.forEach((item) => revokePreviewUrl(item.previewUrl))
-          return
-        }
-        setItems(restoredItems)
-        setSelectedId(restoredItems.some((item) => item.id === draft.selectedId) ? draft.selectedId : restoredItems[0]?.id ?? null)
-        setSharedForm(cloneFormState(draft.sharedForm))
-        setSubmitNotice({ type: "success", text: `已恢复 ${restoredItems.length} 张未提交图片的本地草稿；如需回写原文件，请重新授权照片文件夹。` })
-      } catch {
-        if (!disposed) setSubmitNotice({ type: "error", text: "本地草稿无法恢复；请重新添加图片。" })
-      } finally {
-        if (!disposed) setDraftStorageReady(true)
-      }
-    })()
-    return () => { disposed = true }
-  }, [])
-
-  useEffect(() => {
-    if (!draftStorageReady) return
-    if (draftWriteTimerRef.current !== null) window.clearTimeout(draftWriteTimerRef.current)
-    const pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
-    draftWriteTimerRef.current = window.setTimeout(() => {
-      const persist = pendingItems.length > 0
-        ? writeExifDraft({
-            version: 1,
-            items: pendingItems.map(serializeExifDraftItem),
-            selectedId: pendingItems.some((item) => item.id === selectedId) ? selectedId : pendingItems[0]?.id ?? null,
-            sharedForm: cloneFormState(sharedForm),
-          })
-        : clearExifDraft()
-      void Promise.all([persist, writeReuploadHints(items)]).then(() => {
-        draftStorageFailureRef.current = false
-      }).catch(() => {
-        if (draftStorageFailureRef.current) return
-        draftStorageFailureRef.current = true
-        setSubmitNotice({ type: "error", text: "本地草稿存储空间不足，未提交内容仍保留在当前页面；请先完成部分入库或清理浏览器站点数据。" })
-      })
-    }, 650)
-    return () => {
-      if (draftWriteTimerRef.current !== null) window.clearTimeout(draftWriteTimerRef.current)
-    }
-  }, [draftStorageReady, items, selectedId, sharedForm])
-
-  useEffect(() => {
-    if (!draftStorageReady) return
-    const target = items.find((item) => {
-      if (item.existingArtifactId != null || (item.existingArtifactCandidates?.length ?? 0) > 0) return false
-      const identity = artifactReviewIdentityKey(item.form)
-      return Boolean(identity) && item.existingArtifactReviewKey !== identity
-    })
-    if (!target) return
-    const identity = artifactReviewIdentityKey(target.form)
-    const lookupKey = `${target.id}:${identity}`
-    if (artifactMatchLookupRef.current.has(lookupKey)) return
-    artifactMatchLookupRef.current.add(lookupKey)
-    setItems((current) => current.map((item) => item.id === target.id
-      ? { ...item, existingArtifactReviewKey: identity }
-      : item))
-    void lookupExistingArtifactCandidates(apiBaseUrl, target.form)
-      .then((matches) => {
-        if (matches.length === 0) return
-        setItems((current) => current.map((item) => item.id === target.id ? {
-          ...item,
-          existingArtifactCandidates: matches,
-          descriptionMeta: `发现 ${matches.length} 件可能对应的已入库文物，请确认后填入。`,
-          submitMessage: "发现可能对应的已入库文物，请先选择是否复用。",
-        } : item))
-        setArtifactMatchReviewIds((current) => (
-          current.includes(target.id) ? current : [...current, target.id]
-        ))
-      })
-      .finally(() => artifactMatchLookupRef.current.delete(lookupKey))
-  }, [apiBaseUrl, draftStorageReady, items])
-
-  useEffect(() => {
-    if (metadataSyncSourceId && items.some((item) => item.id === metadataSyncSourceId)) return
-    setMetadataSyncSourceId(items[0]?.id ?? "")
-  }, [items, metadataSyncSourceId])
-
-  useEffect(() => {
-    const availableIds = new Set(metadataSyncAvailableTargets.map((item) => item.id))
-    setMetadataSyncTargetIds((current) => current.filter((id) => availableIds.has(id)))
-  }, [metadataSyncAvailableTargets])
-
-  useEffect(() => () => {
-    itemsRef.current.forEach((item) => revokePreviewUrl(item.previewUrl))
-  }, [])
-
-  useEffect(() => {
-    if (!selectedItem || !showMuseumSuggestions) {
-      return
-    }
-    const timer = window.setTimeout(() => {
-      void loadMuseumSuggestions(apiBaseUrl, selectedItem.form.museumName.trim(), setMuseumSuggestions)
-    }, 180)
-    return () => window.clearTimeout(timer)
-  }, [apiBaseUrl, selectedItem, showMuseumSuggestions])
-
-  useEffect(() => {
-    if (!selectedItem || !showLocationSuggestions) {
-      return
-    }
-    const timer = window.setTimeout(() => {
-      void loadMuseumSuggestions(apiBaseUrl, selectedItem.form.displayLocationName.trim(), setLocationSuggestions)
-    }, 180)
-    return () => window.clearTimeout(timer)
-  }, [apiBaseUrl, selectedItem, showLocationSuggestions])
-
-  useEffect(() => {
-    const query = selectedItem?.form.name.trim() ?? ""
-    if (!showArtifactSearch || query.length < 2) {
-      setArtifactSearchResults([])
-      return
-    }
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      void fetchJson<ExistingArtifact[]>(
-        `${apiBaseUrl}/api/artifacts?${new URLSearchParams({ q: query, limit: "8" }).toString()}`,
-      ).then((results) => {
-        if (!cancelled) setArtifactSearchResults(results)
-      }).catch(() => {
-        if (!cancelled) setArtifactSearchResults([])
-      })
-    }, 180)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [apiBaseUrl, selectedItem?.form.name, showArtifactSearch])
-
-  useEffect(() => {
-    if (!selectedItem?.fileName.trim()) return
-    if (selectedItem.parsedName?.original_name === selectedItem.fileName) return
-    let cancelled = false
-    const timer = window.setTimeout(async () => {
-      setParsingFileName(true)
-      try {
-        const parsed = await fetchJson<ParsedArtifactName>(
-          `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: selectedItem.fileName }).toString()}`,
-        )
-        if (cancelled) return
-        let museum: MuseumOption | null = null
-        if (parsed.museum_name) {
-          try { museum = await resolveMuseum(apiBaseUrl, parsed.museum_name) } catch { /* keep parsed metadata */ }
-        }
-        if (cancelled) return
-        updateItem(selectedItem.id, (item) => ({
-          ...item,
-          parsedName: parsed,
-          form: {
-            ...applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
-            latitude: item.form.latitude || museum?.latitude?.toString() || "",
-            longitude: item.form.longitude || museum?.longitude?.toString() || "",
-          },
-        }))
-        const operationId = filenameHistoryOperationRef.current.get(selectedItem.id)
-        if (operationId) {
-          updateOperationAfter(
-            operationId,
-            createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm),
-          )
-        }
-      } catch {
-        // Keep manual fields usable while the filename is incomplete.
-      } finally {
-        if (!cancelled) setParsingFileName(false)
-      }
-    }, 280)
-    return () => { cancelled = true; window.clearTimeout(timer) }
-  }, [apiBaseUrl, selectedId, selectedItem?.fileName, sharedForm, updateOperationAfter])
+  const draftStorageReady = useExifDraftPersistence({
+    apiBaseUrl,
+    items,
+    selectedId,
+    sharedForm,
+    setItems,
+    setSelectedId,
+    setSharedForm,
+    setNotice: setSubmitNotice,
+    fetchJson,
+    revokePreviewUrl,
+  })
 
   function updateItem(itemId: string, updater: (item: ExifWorkbenchItem) => ExifWorkbenchItem) {
-    const nextItems = itemsRef.current.map((item) => (item.id === itemId ? updater(item) : item))
-    replaceWorkbenchItems(nextItems)
+    replaceWorkbenchItems(itemsRef.current.map((item) => item.id === itemId ? updater(item) : item))
   }
 
-  function beginArtifactMatchReview(
-    builtItems: ExifWorkbenchItem[],
-    shouldOpenUploadPermission: boolean,
-  ) {
-    const reviewIds = builtItems
-      .filter((item) => (item.existingArtifactCandidates?.length ?? 0) > 0)
-      .map((item) => item.id)
-    if (reviewIds.length === 0) {
-      if (shouldOpenUploadPermission) setUploadPermissionOpen(true)
-      return
-    }
-    setArtifactMatchReviewIds(reviewIds)
-    setOpenUploadPermissionAfterArtifactReview(shouldOpenUploadPermission)
-  }
-
-  function advanceArtifactMatchReview() {
-    const remaining = artifactMatchReviewIds.slice(1)
-    setArtifactMatchReviewIds(remaining)
-    if (remaining.length === 0 && openUploadPermissionAfterArtifactReview) {
-      setOpenUploadPermissionAfterArtifactReview(false)
-      setUploadPermissionOpen(true)
-    }
-  }
-
-  function selectExistingArtifactMatch(match: ExistingArtifactMatch) {
-    if (!artifactMatchReviewItem) return
-    const itemId = artifactMatchReviewItem.id
-    const nextItems = itemsRef.current.map((item) => {
-      if (item.id !== itemId) return item
-      const nextForm = applyExistingArtifactToForm(item.form, match.artifact)
-      return {
-        ...item,
-        form: nextForm,
-        existingArtifactId: match.artifact.id,
-        existingArtifactMatch: match.match_reason,
-        existingArtifactCandidates: [],
-        existingArtifactReviewKey: artifactReviewIdentityKey(nextForm),
-        descriptionMeta: `已关联云端文物 #${match.artifact.id}`,
-        submitMessage: `已采用“${match.artifact.name}”的文物信息，新照片将追加到这件文物。`,
-      }
-    })
-    recordItemsChange({
-      label: "关联已有文物",
-      detail: `${artifactMatchReviewItem.fileName} · ${match.artifact.name}`,
-      nextItems,
-      affected: [artifactMatchReviewItem.fileName],
-    })
-    setSelectedId(itemId)
-    advanceArtifactMatchReview()
-  }
-
-  function rejectExistingArtifactMatches() {
-    if (!artifactMatchReviewItem) return
-    const nextItems = itemsRef.current.map((item) => {
-      if (item.id !== artifactMatchReviewItem.id) return item
-      const nextForm = resetFormForNewArtifact(item.form, item.parsedName)
-      return {
-        ...item,
-        form: nextForm,
-        originalForm: cloneFormState(nextForm),
-        existingArtifactId: null,
-        existingArtifactMatch: null,
-        existingArtifactCandidates: [],
-        existingArtifactReviewKey: artifactReviewIdentityKey(nextForm),
-        descriptionMeta: null,
-        submitMessage: "已选择不复用已有文物信息，本次将按当前照片的文件名与 EXIF 信息作为新文物提交。",
-      }
-    })
-    recordItemsChange({
-      label: "按新文物填写",
-      detail: artifactMatchReviewItem.fileName,
-      nextItems,
-      affected: [artifactMatchReviewItem.fileName],
-    })
-    advanceArtifactMatchReview()
-  }
+  useExifEditorEffects({
+    apiBaseUrl, ready: draftStorageReady, items, itemsRef, selectedItem, selectedId, sharedForm,
+    showMuseum: showMuseumSuggestions, showLocation: showLocationSuggestions, showArtifact: showArtifactSearch,
+    sourceId: metadataSyncSourceId, availableTargets: metadataSyncAvailableTargets,
+    lookupRef: artifactMatchLookupRef, filenameHistory: filenameHistoryOperationRef,
+    setItems, setSourceId: setMetadataSyncSourceId, setTargetIds: setMetadataSyncTargetIds,
+    setMuseumSuggestions, setLocationSuggestions, setArtifactResults: setArtifactSearchResults,
+    setReviewIds: setArtifactMatchReviewIds, setParsing: setParsingFileName,
+    updateItem, updateAfter: updateOperationAfter, revokePreview: revokePreviewUrl, fetchJson,
+  })
+  const {
+    beginReview: beginArtifactMatchReview,
+    selectMatch: selectExistingArtifactMatch,
+    rejectMatches: rejectExistingArtifactMatches,
+    selectSearchResult,
+  } = useExifArtifactMatchReview({
+    itemsRef,
+    reviewIds: artifactMatchReviewIds,
+    reviewItem: artifactMatchReviewItem,
+    openPermissionAfterReview: openUploadPermissionAfterArtifactReview,
+    artifactSearchResults,
+    setReviewIds: setArtifactMatchReviewIds,
+    setOpenPermissionAfterReview: setOpenUploadPermissionAfterArtifactReview,
+    setUploadPermissionOpen,
+    setSelectedId,
+    setShowArtifactSearch,
+    setArtifactSearchResults,
+    recordItemsChange,
+  })
 
   function updateSelectedForm(patch: Partial<FormState>) {
     if (!selectedItem) {
@@ -1706,1313 +419,160 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
   }
 
   function selectArtifactFromNameSearch(artifactId: number) {
-    if (!selectedItem) return
-    const artifact = artifactSearchResults.find((item) => item.id === artifactId)
-    if (!artifact) return
-    const nextItems = itemsRef.current.map((item) => {
-      if (item.id !== selectedItem.id) return item
-      const nextForm = applyExistingArtifactToForm(item.form, artifact)
-      return {
-        ...item,
-        form: nextForm,
-        existingArtifactId: artifact.id,
-        existingArtifactMatch: "手动搜索并选择已有文物。",
-        existingArtifactCandidates: [],
-        existingArtifactReviewKey: artifactReviewIdentityKey(nextForm),
-        descriptionMeta: `已手动关联云端文物 #${artifact.id}`,
-        submitMessage: `已导入“${artifact.name}”的信息；新照片将追加到这件文物。`,
-      }
-    })
-    recordItemsChange({
-      label: "搜索并复用已有文物",
-      detail: `${selectedItem.fileName} · ${artifact.name}`,
-      nextItems,
-      affected: [selectedItem.fileName],
-    })
-    setShowArtifactSearch(false)
-    setArtifactSearchResults([])
+    selectSearchResult(artifactId, selectedItem)
   }
 
-  async function locateDisplayLocation(locationName: string, preferredMuseum?: MuseumOption) {
-    if (!selectedItem || locatingDisplayLocationRef.current) return
-    const normalizedName = locationName.trim()
-    if (!normalizedName) {
-      setSubmitNotice({ type: "error", text: "请先输入展出地点名称" })
-      return
-    }
+  const { locateDisplayLocation } = useExifLocationLookup({
+    apiBaseUrl,
+    itemsRef,
+    selectedItem,
+    locationSuggestions,
+    locatingRef: locatingDisplayLocationRef,
+    recordItemsChange,
+    setShowSuggestions: setShowLocationSuggestions,
+    setNotice: setSubmitNotice,
+  })
+  const { renameSelected, applyBatchRename } = useExifFilenameActions({
+    apiBaseUrl,
+    itemsRef,
+    selectedItem,
+    selectedId,
+    sharedForm,
+    prefix: batchPrefix,
+    suffix: batchSuffix,
+    remove: batchRemove,
+    revisionRef: batchRenameRevisionRef,
+    historyOperationRef: filenameHistoryOperationRef,
+    recordItemsChange,
+    updateItem,
+    updateOperationAfter,
+    setNotice: setSubmitNotice,
+    fetchJson,
+  })
+  const { updateSharedForm, fillSharedFromSelected, applySharedToAll } = useExifSharedFormActions({
+    items,
+    itemsRef,
+    selectedItem,
+    sharedForm,
+    recordItemsChange,
+    recordSharedChange: recordSharedFormChange,
+    setNotice: setSubmitNotice,
+  })
+  const {
+    createItem: createWorkbenchItem,
+    selectImages: handleSelectImages,
+    uploadFiles: handleUpload,
+    removeItem,
+    clearAll: clearQueue,
+  } = useExifFileIntake({
+    apiBaseUrl,
+    fileInputRef,
+    itemsRef,
+    setItems,
+    setSelectedId,
+    setSharedForm,
+    setUploading,
+    setUploadActivity,
+    setRecentUploadedCount,
+    setSubmitNotice,
+    clearHistory: () => clearOperationHistory(EXIF_HISTORY_SCOPE),
+    beginArtifactMatchReview,
+    fetchJson,
+    buildItemId,
+    reverseGeocodeCoordinates,
+    revokePreviewUrl,
+    yieldToMainThread,
+  })
 
-    const itemId = selectedItem.id
-    locatingDisplayLocationRef.current = true
-    setSubmitNotice(null)
-    try {
-      let museum = preferredMuseum
-        ?? locationSuggestions.find((option) => option.name === normalizedName)
-        ?? null
-      if (!museum) {
-        try {
-          museum = await resolveMuseum(apiBaseUrl, normalizedName)
-        } catch {
-          museum = null
-        }
-      }
-
-      let coordinates = museum?.latitude !== null
-        && museum?.latitude !== undefined
-        && museum.longitude !== null
-        && museum.longitude !== undefined
-        ? { latitude: museum.latitude, longitude: museum.longitude }
-        : null
-      if (!coordinates) {
-        coordinates = await geocodeLocationName(normalizedName)
-      }
-      if (!coordinates) {
-        throw new Error("未找到可用坐标")
-      }
-
-      const currentItem = itemsRef.current.find((item) => item.id === itemId)
-      if (!currentItem) return
-      const nextItems = itemsRef.current.map((item) => item.id === itemId ? {
-        ...item,
-        form: {
-          ...item.form,
-          displayLocationName: museum?.name || normalizedName,
-          latitude: coordinates.latitude.toFixed(6),
-          longitude: coordinates.longitude.toFixed(6),
-        },
-        submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-        submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-      } : item)
-      recordItemsChange({
-        label: "定位展出地点",
-        detail: `${currentItem.fileName} · ${museum?.name || normalizedName}`,
-        nextItems,
-        affected: [currentItem.fileName],
-      })
-      setShowLocationSuggestions(false)
-      setSubmitNotice({ type: "success", text: `已定位“${museum?.name || normalizedName}”并补充 GPS` })
-    } catch {
-      setSubmitNotice({ type: "error", text: `未能定位“${normalizedName}”，请从候选地点中选择或在地图上取点` })
-    } finally {
-      locatingDisplayLocationRef.current = false
-    }
-  }
-
-  function renameSelected(baseName: string) {
-    if (!selectedItem) return
-    const currentItem = itemsRef.current.find((item) => item.id === selectedItem.id)
-    if (!currentItem) return
-    const nextFileName = normalizedFileName(baseName, currentItem.fileName)
-    if (nextFileName === currentItem.fileName) return
-    const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? {
-      ...item,
-      fileName: nextFileName,
-      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    } : item)
-    const operationId = recordItemsChange({
-      label: "修改目标文件名",
-      detail: `${currentItem.fileName} → ${nextFileName}`,
-      nextItems,
-      affected: [currentItem.fileName],
-      mergeKey: `filename:${currentItem.id}`,
-    })
-    filenameHistoryOperationRef.current.set(currentItem.id, operationId)
-  }
-
-  function applyBatchRename() {
-    if (!batchPrefix && !batchSuffix && !batchRemove) return
-    const revision = ++batchRenameRevisionRef.current
-    const currentItems = itemsRef.current
-    const renamed = currentItems.map((item) => ({
-      id: item.id,
-      fileName: normalizedFileName(
-        `${batchPrefix}${fileBaseName(item.fileName).split(batchRemove).join("")}${batchSuffix}`,
-        item.fileName,
-      ),
-    }))
-    const nextItems = currentItems.map((item) => ({
-      ...item,
-      fileName: renamed.find((entry) => entry.id === item.id)?.fileName ?? item.fileName,
-      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    }))
-    const changedItems = nextItems.filter((item, index) => item.fileName !== currentItems[index]?.fileName)
-    if (changedItems.length === 0) return
-    const operationId = recordItemsChange({
-      label: "批量修改目标文件名",
-      detail: `前缀“${batchPrefix || "无"}” · 后缀“${batchSuffix || "无"}” · 影响 ${changedItems.length} 张`,
-      nextItems,
-      affected: changedItems.map((item) => item.fileName),
-    })
-    void Promise.all(renamed.map(async (entry) => {
-      try {
-        const parsed = await fetchJson<ParsedArtifactName>(
-          `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: entry.fileName }).toString()}`,
-        )
-        updateItem(entry.id, (item) => (
-          batchRenameRevisionRef.current === revision && item.fileName === entry.fileName
-            ? {
-                ...item,
-                parsedName: parsed,
-                form: applyFilenameParseWithoutOverwritingEdits(item.form, item.parsedName, parsed),
-              }
-            : item
-        ))
-      } catch { /* retain the renamed filename and existing metadata */ }
-    })).then(() => {
-      if (batchRenameRevisionRef.current !== revision) return
-      updateOperationAfter(
-        operationId,
-        createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm),
-      )
-    })
-    setSubmitNotice({ type: "success", text: `已按规则更新 ${changedItems.length} 个目标文件名，入库时将使用新名称` })
-  }
-
-  function useSelectedLocationForBatch() {
-    if (!selectedItem) return
-    setBatchLocationName(selectedItem.form.displayLocationName)
-    setBatchExhibitionName(selectedItem.form.exhibitionName)
-    setBatchCatalogExhibitionId(selectedItem.form.catalogExhibitionId)
-    setBatchCatalogExhibitionSourceId(selectedItem.form.catalogExhibitionSourceId)
-    setBatchLatitude(selectedItem.form.latitude)
-    setBatchLongitude(selectedItem.form.longitude)
-    setSubmitNotice({ type: "success", text: "已带入当前图片的展出地点与 GPS，可继续微调后应用到全部图片" })
-  }
-
-  function selectMetadataSyncPreset(preset: "default" | "location" | "content" | "all" | "none") {
-    setMetadataSyncSelection(preset === "default"
-      ? { ...DEFAULT_METADATA_SYNC_SELECTION }
-      : preset === "location"
-        ? metadataSyncSelectionFor(["displayLocation", "exhibition", "gps"])
-        : preset === "content"
-          ? metadataSyncSelectionFor(["description", "tags"])
-          : metadataSyncSelectionFor(
-              preset === "all"
-                ? METADATA_SYNC_GROUPS.flatMap((group) => group.fields.map((field) => field.key))
-                : [],
-            ))
-  }
-
-  function openMetadataSyncPreview() {
-    if (!metadataSyncSource) {
-      setSubmitNotice({ type: "error", text: "请先选择一张来源照片" })
-      return
-    }
-    if (!Object.values(metadataSyncSelection).some(Boolean)) {
-      setSubmitNotice({ type: "error", text: "请至少开启一项需要同步的信息" })
-      return
-    }
-    if (metadataSyncTargets.length === 0 && metadataSyncTargetMode !== "selected") {
-      setSubmitNotice({
-        type: "error",
-        text: metadataSyncTargetMode === "current" && selectedItem?.id === metadataSyncSource.id
-          ? "当前图片就是来源照片，请选择另一张目标图片"
-          : "没有可同步的目标照片",
-      })
-      return
-    }
-    setMetadataSyncPreviewOpen(true)
-  }
-
-  function syncSelectedMetadataToOthers() {
-    if (!selectedItem || items.length < 2) {
-      setSubmitNotice({ type: "error", text: "至少需要两张图片，才能同步当前照片的信息" })
-      return
-    }
-    setMetadataSyncSourceId(selectedItem.id)
-    setMetadataSyncTargetMode("selected")
-    setMetadataSyncTargetIds([])
-    if (!Object.values(metadataSyncSelection).some(Boolean)) {
-      selectMetadataSyncPreset("default")
-    }
-    setMetadataSyncPreviewOpen(true)
-  }
-
-  function applyMetadataSync() {
-    if (!metadataSyncSource || metadataSyncTargets.length === 0) return
-    const targetIds = new Set(metadataSyncTargets.map((item) => item.id))
-    const nextItems = itemsRef.current.map((item) => targetIds.has(item.id) ? {
-      ...item,
-      form: applySourceMetadata(item.form, metadataSyncSource.form, metadataSyncSelection),
-      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    } : item)
-    recordItemsChange({
-      label: "同步照片信息",
-      detail: `从“${metadataSyncSource.fileName}”同步 ${metadataSyncChangedCount} 项到 ${metadataSyncTargets.length} 张照片`,
-      nextItems,
-      affected: metadataSyncTargets.map((item) => item.fileName),
-    })
-    setMetadataSyncPreviewOpen(false)
-    setSubmitNotice({
-      type: "success",
-      text: `已从“${metadataSyncSource.fileName}”同步 ${metadataSyncChangedCount} 项信息到 ${metadataSyncTargets.length} 张照片`,
-    })
-  }
-
-  function applyBatchLocation() {
-    const latitude = toNullableNumber(batchLatitude)
-    const longitude = toNullableNumber(batchLongitude)
-    if ((latitude === null) !== (longitude === null)) {
-      setSubmitNotice({ type: "error", text: "批量 GPS 需要同时填写纬度和经度" })
-      return
-    }
-    const nextItems = itemsRef.current.map((item) => ({
-      ...item,
-      form: {
-        ...item.form,
-        displayLocationName: batchLocationName.trim() || item.form.displayLocationName,
-        exhibitionName: batchExhibitionName.trim() || item.form.exhibitionName,
-        catalogExhibitionId: batchCatalogExhibitionId,
-        catalogExhibitionSourceId: batchCatalogExhibitionSourceId,
-        latitude: latitude === null ? item.form.latitude : String(latitude),
-        longitude: longitude === null ? item.form.longitude : String(longitude),
-      },
-      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    }))
-    recordItemsChange({
-      label: "统一展出地点与 GPS",
-      detail: `${batchLocationName.trim() || "保留地点"} · ${itemsRef.current.length} 张照片`,
-      nextItems,
-      affected: itemsRef.current.map((item) => item.fileName),
-    })
-    setSubmitNotice({ type: "success", text: `已将展出地点与 GPS 应用到 ${nextItems.length} 张图片` })
-  }
-
-  function updateSharedForm(patch: Partial<FormState>) {
-    const changedKeys = (Object.keys(patch) as Array<keyof FormState>).filter((key) => (
-      JSON.stringify(sharedForm[key]) !== JSON.stringify(patch[key])
-    ))
-    if (changedKeys.length === 0) return
-    const nextSharedForm = { ...sharedForm, ...patch }
-    const labels = changedKeys.map((key) => FORM_HISTORY_LABELS[key] ?? String(key))
-    recordSharedFormChange({
-      label: `编辑共享${labels.join("、")}`,
-      detail: `共享文物信息 · ${describeFormChange(sharedForm, patch, changedKeys)}`,
-      nextSharedForm,
-      mergeKey: `shared:${changedKeys.sort().join(",")}`,
-    })
-  }
-
-  function fillSharedFromSelected() {
-    if (!selectedItem) {
-      return
-    }
-    recordSharedFormChange({
-      label: "采用当前照片的共享信息",
-      detail: selectedItem.fileName,
-      nextSharedForm: cloneFormState(selectedItem.form),
-    })
-    setSubmitNotice({ type: "success", text: "已用当前图片内容刷新共享文物信息" })
-  }
-
-  function applySharedToAll() {
-    if (items.length === 0) {
-      return
-    }
-    const nextShared = cloneFormState(sharedForm)
-    const nextItems = itemsRef.current.map((item) => ({
-      ...item,
-      form: applySharedForm(item.form, nextShared),
-      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-    }))
-    recordItemsChange({
-      label: "应用共享文物信息",
-      detail: `应用到 ${nextItems.length} 张照片`,
-      nextItems,
-      affected: nextItems.map((item) => item.fileName),
-    })
-    setSubmitNotice({ type: "success", text: `已将共享字段应用到 ${nextItems.length} 张图片` })
-  }
-
-  async function createWorkbenchItem(
-    file: File,
-    index: number,
-    fileHandle: WritableFileHandle | null = null,
-  ): Promise<ExifWorkbenchItem> {
-    let parsedName: ParsedArtifactName | null = null
-    let form = buildBaseForm()
-    let previewUrl = ""
-    let existingArtifactId: number | null = null
-    let existingArtifactMatch: string | null = null
-    let existingArtifactCandidates: ExistingArtifactMatch[] = []
-
-    try {
-      const exifForm = new FormData()
-      exifForm.append("file", file)
-      const metadata = await fetchJson<ImageExifMetadata>(`${apiBaseUrl}/api/artifacts/extract-exif-file`, {
-        method: "POST",
-        body: exifForm,
-      })
-      form = {
-        ...form,
-        cameraModel: metadata.camera_model ?? "",
-        lensModel: metadata.lens_model ?? "",
-        capturedAt: formatCapturedAt(metadata.captured_at),
-        shutterSpeed: metadata.shutter_speed ?? "",
-        aperture: metadata.aperture ?? "",
-        iso: metadata.iso?.toString() ?? "",
-        latitude: metadata.latitude?.toString() ?? "",
-        longitude: metadata.longitude?.toString() ?? "",
-      }
-      if (metadata.latitude !== null && metadata.longitude !== null) {
-        try {
-          form = {
-            ...form,
-            displayLocationName: await reverseGeocodeCoordinates(
-              metadata.latitude,
-              metadata.longitude,
-            ),
-          }
-        } catch {
-          // GPS is still sufficient for nearest-museum recommendation.
-        }
-      }
-      previewUrl = metadata.preview_data_url ?? ""
-    } catch {
-      // Images without readable EXIF remain fully editable.
-    }
-
-    if (!previewUrl) previewUrl = await createFallbackPreviewUrl(file)
-
-    try {
-      parsedName = await fetchJson<ParsedArtifactName>(
-        `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: file.name }).toString()}`,
-      )
-      form = {
-        ...form,
-        museumName: parsedName.museum_name ?? form.museumName,
-        name: parsedName.artifact_name ?? form.name,
-        era: parsedName.era ?? form.era,
-        placeOfExcavation: parsedName.Place_of_Excavation ?? form.placeOfExcavation,
-        displayLocationName: parsedName.museum_name ?? form.displayLocationName,
-      }
-
-      if (parsedName.museum_name) {
-        const museum = await resolveMuseum(apiBaseUrl, parsedName.museum_name)
-        if (museum) {
-          form = {
-            ...form,
-            museumName: form.museumName || museum.name,
-            displayLocationName: form.displayLocationName || museum.name,
-            latitude: form.latitude || museum.latitude?.toString() || "",
-            longitude: form.longitude || museum.longitude?.toString() || "",
-          }
-        }
-      }
-    } catch {
-      // keep default form
-    }
-
-    // Do not auto-fill from a browser-local prior upload solely by filename.
-    // A filename can be reused for a completely different object, so existing
-    // artifact data is only applied after the operator explicitly selects it.
-    existingArtifactCandidates = await lookupExistingArtifactCandidates(apiBaseUrl, form)
-
-    return {
-      id: buildItemId(file, index),
-      fileName: file.name,
-      originalFileName: file.name,
-      previewUrl,
-      localFile: file,
-      fileHandle,
-      parsedName,
-      form,
-      originalForm: cloneFormState(form),
-      candidates: [],
-      unavailableProviders: [],
-      descriptionMeta: existingArtifactCandidates.length > 0
-        ? `发现 ${existingArtifactCandidates.length} 件可能对应的已入库文物，请确认后填入。`
-        : null,
-      existingArtifactId,
-      existingArtifactMatch,
-      existingArtifactCandidates,
-      existingArtifactReviewKey: artifactReviewIdentityKey(form) || null,
-      submitState: "idle",
-      submitMessage: existingArtifactCandidates.length > 0
-        ? "发现可能对应的已入库文物，请先选择是否复用。"
-        : null,
-      uploadProgress: 0,
-      uploadStage: null,
-      sourceHash: null,
-    }
-  }
-
-  function handleSelectImages() {
-    fileInputRef.current?.click()
-  }
-
-  async function handleSelectDirectory() {
-    const pickerWindow = window as FilePickerWindow
-    if (!pickerWindow.showDirectoryPicker) {
-      fileInputRef.current?.click()
-      setSubmitNotice({ type: "error", text: "当前浏览器不支持文件夹读写授权；保存并入库需要同步改名和写回 EXIF，请使用最新版 Chrome 或 Edge。" })
-      return
-    }
-    try {
-      setUploadActivity("directory")
-      setUploading(true)
-      const nextDirectoryHandle = await pickerWindow.showDirectoryPicker({ mode: "readwrite" })
-      if (!await verifyWritablePermission(nextDirectoryHandle)) {
-        setSubmitNotice({ type: "error", text: "需要授予文件夹读写权限，才能批量回写照片" })
-        return
-      }
-
-      const entries = await listDirectoryImageEntries(nextDirectoryHandle)
-
-      const currentNames = new Set(items.flatMap((item) => [item.fileName, item.originalFileName]))
-      const addedEntries = entries.filter((entry) => !currentNames.has(entry.file.name))
-      const builtItems: ExifWorkbenchItem[] = []
-      for (let index = 0; index < addedEntries.length; index += 1) {
-        const entry = addedEntries[index]
-        setSubmitNotice({ type: "success", text: `正在解析文件夹照片 ${index + 1}/${addedEntries.length}：${entry.file.name}` })
-        const builtItem = await createWorkbenchItem(entry.file, items.length + index, entry.handle)
-        builtItems.push(builtItem)
-        setItems((current) => [...current, builtItem])
-        setSelectedId((current) => current ?? builtItem.id)
-        await yieldToMainThread()
-      }
-
-      setDirectoryHandle(nextDirectoryHandle)
-      if (builtItems.length > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
-      const matchCount = builtItems.filter((item) => item.existingArtifactCandidates.length > 0).length
-      setSubmitNotice({
-        type: "success",
-        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片${matchCount > 0 ? `，其中 ${matchCount} 张发现已有文物候选，请确认选择` : ""}，并获得批量原地回写权限；未提交内容会自动保存在本机浏览器。`,
-      })
-      beginArtifactMatchReview(builtItems, false)
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return
-      setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "读取照片文件夹失败" })
-    } finally {
-      setUploading(false)
-      setUploadActivity(null)
-    }
-  }
-
-  async function handleBindDirectory() {
-    const pickerWindow = window as FilePickerWindow
-    if (!pickerWindow.showDirectoryPicker) {
-      setSubmitNotice({ type: "error", text: "当前浏览器不支持文件夹授权，请使用最新版 Chrome 或 Edge" })
-      return
-    }
-    if (items.length === 0) {
-      setSubmitNotice({ type: "error", text: "请先添加需要处理的图片，再授权其所在文件夹" })
-      return
-    }
-
-    setBindingDirectory(true)
-    try {
-      const nextDirectoryHandle = await pickerWindow.showDirectoryPicker({ mode: "readwrite" })
-      if (!await verifyWritablePermission(nextDirectoryHandle)) {
-        setSubmitNotice({ type: "error", text: "需要授予文件夹读写权限，才能绑定并回写原照片" })
-        return
-      }
-      const entries = await listDirectoryImageEntries(nextDirectoryHandle)
-      const entriesByName = new Map<string, Array<{ handle: WritableFileHandle; file: File; index: number }>>()
-      entries.forEach((entry, index) => {
-        const candidates = entriesByName.get(entry.file.name) ?? []
-        candidates.push({ ...entry, index })
-        entriesByName.set(entry.file.name, candidates)
-      })
-
-      let matched = 0
-      let exactMatched = 0
-      let fallbackMatched = 0
-      let nameMatched = 0
-      let missing = 0
-      let ambiguous = 0
-      const usedIndexes = new Set<number>()
-      const bindingResults = new Map<string, WritableFileHandle>()
-      const unresolved: Array<{ id: string; fileName: string; reason: string }> = []
-      const pendingItems = items.filter((item) => (
-        item.submitState !== "submitted" || changedParts(item).length > 0
-      ))
-
-      pendingItems.forEach((item) => {
-        const candidateMap = new Map<number, { handle: WritableFileHandle; file: File; index: number }>()
-        for (const fileName of new Set([item.originalFileName, item.fileName])) {
-          for (const entry of entriesByName.get(fileName) ?? []) {
-            if (!usedIndexes.has(entry.index)) candidateMap.set(entry.index, entry)
-          }
-        }
-        const candidates = Array.from(candidateMap.values())
-        if (candidates.length === 0) {
-          missing += 1
-          unresolved.push({ id: item.id, fileName: item.fileName, reason: "所选文件夹内未找到同名文件" })
-          return
-        }
-        const exact = candidates.filter((entry) => (
-          entry.file.size === item.localFile.size && entry.file.lastModified === item.localFile.lastModified
-        ))
-        if (exact.length === 1) {
-          usedIndexes.add(exact[0].index)
-          matched += 1
-          exactMatched += 1
-          bindingResults.set(item.id, exact[0].handle)
-          return
-        }
-        const sameSize = candidates.filter((entry) => entry.file.size === item.localFile.size)
-        if (sameSize.length === 1) {
-          usedIndexes.add(sameSize[0].index)
-          matched += 1
-          fallbackMatched += 1
-          bindingResults.set(item.id, sameSize[0].handle)
-          return
-        }
-        // A previous EXIF write changes file size and modification time. A
-        // unique filename inside the explicitly selected folder is still the
-        // correct writable original and must be allowed to refresh a stale
-        // browser handle.
-        if (candidates.length === 1) {
-          usedIndexes.add(candidates[0].index)
-          matched += 1
-          nameMatched += 1
-          bindingResults.set(item.id, candidates[0].handle)
-          return
-        }
-        ambiguous += 1
-        unresolved.push({ id: item.id, fileName: item.fileName, reason: "存在多个同名文件，无法唯一确认" })
-      })
-
-      setItems((current) => current.map((item) => {
-        const handle = bindingResults.get(item.id)
-        if (handle) {
-          return {
-            ...item,
-            fileHandle: handle,
-            submitState: item.submitState === "error" ? "idle" : item.submitState,
-            submitMessage: item.submitState === "error" ? null : item.submitMessage,
-          }
-        }
-        const issue = unresolved.find((entry) => entry.id === item.id)
-        if (!issue) return item
-        return {
-          ...item,
-          fileHandle: null,
-          submitState: "error",
-          submitMessage: `未绑定原文件：${issue.reason}（${issue.fileName}）`,
-        }
-      }))
-      setDirectoryHandle(nextDirectoryHandle)
-      clearOperationHistory(EXIF_HISTORY_SCOPE)
-      const summary = [`已绑定 ${matched} 张`]
-      if (exactMatched > 0) summary.push(`精确匹配 ${exactMatched} 张`)
-      if (fallbackMatched > 0) summary.push(`文件名和大小匹配 ${fallbackMatched} 张`)
-      if (nameMatched > 0) summary.push(`文件名匹配 ${nameMatched} 张`)
-      if (missing > 0) summary.push(`${missing} 张未找到`)
-      if (ambiguous > 0) summary.push(`${ambiguous} 张重名未绑定`)
-      if (unresolved.length > 0) setSelectedId(unresolved[0].id)
-      const unresolvedText = unresolved.length > 0
-        ? `；未绑定：${unresolved.slice(0, 3).map((item) => `“${item.fileName}”（${item.reason}）`).join("、")}${unresolved.length > 3 ? `等 ${unresolved.length} 张` : ""}`
-        : ""
-      setSubmitNotice({
-        type: unresolved.length === 0 ? "success" : "error",
-        text: `${nextDirectoryHandle.name}：${summary.join("，")}${unresolvedText}；未载入文件夹内其他照片`,
-      })
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        setSubmitNotice({
-          type: "success",
-          text: "已取消文件夹授权；队列图片仍会保留，可稍后点击图片列表上方的文件夹按钮继续。",
-        })
-        return
-      }
-      setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "授权并绑定原文件夹失败" })
-    } finally {
-      setBindingDirectory(false)
-    }
-  }
-
-  function retryQueueItem(item: ExifWorkbenchItem) {
-    const authorizationProblem = !item.fileHandle
-      || /授权|权限|未绑定原文件/.test(item.submitMessage ?? "")
-    if (authorizationProblem) {
-      void handleBindDirectory()
-      return
-    }
-    void submitOne(item.id)
-  }
-
-  async function handleUpload(nextFiles: File[]) {
-    if (nextFiles.length === 0) {
-      setSubmitNotice({ type: "error", text: "请先选择至少一张图片" })
-      return
-    }
-
-    setUploadActivity("files")
-    setUploading(true)
-    setSubmitNotice(null)
-    try {
-      const builtItems: ExifWorkbenchItem[] = []
-      const baseIndex = items.length
-      for (let index = 0; index < nextFiles.length; index += 1) {
-        const file = nextFiles[index]
-        setSubmitNotice({ type: "success", text: `正在解析 ${index + 1}/${nextFiles.length}：${file.name}` })
-        const builtItem = await createWorkbenchItem(file, baseIndex + index)
-        builtItems.push(builtItem)
-        setItems((current) => [...current, builtItem])
-        setSelectedId((current) => current ?? builtItem.id)
-        await yieldToMainThread()
-      }
-      setSharedForm((current) => {
-        if (hasMeaningfulFormValue(current)) {
-          return current
-        }
-        const seedForm = builtItems.find((item) => hasMeaningfulFormValue(item.form))?.form
-        return seedForm ? cloneFormState(seedForm) : current
-      })
-      if (builtItems.length > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
-      const matchCount = builtItems.filter((item) => item.existingArtifactCandidates.length > 0).length
-      setSubmitNotice({
-        type: "success",
-        text: `已读取 ${builtItems.length} 张图片${matchCount > 0 ? `，其中 ${matchCount} 张发现已有文物候选，请先确认选择` : ""}。`,
-      })
-      setRecentUploadedCount(builtItems.length)
-      beginArtifactMatchReview(builtItems, true)
-    } catch (error) {
-      setSubmitNotice({
-        type: "error",
-        text: error instanceof Error ? error.message : "载入图片失败",
-      })
-    } finally {
-      setUploading(false)
-      setUploadActivity(null)
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""
-      }
-    }
-  }
-
-  async function removeItem(itemId: string) {
-    const target = items.find((item) => item.id === itemId)
-    if (!target) {
-      return
-    }
-    try {
-      await writeReuploadHints([target])
-    } catch {
-      // Removing a queue item should still work if browser storage is unavailable.
-    }
-    revokePreviewUrl(target.previewUrl)
-    clearOperationHistory(EXIF_HISTORY_SCOPE)
-    const remaining = items.filter((item) => item.id !== itemId)
-    setItems(remaining)
-    setSelectedId((current) => (current === itemId ? remaining[0]?.id ?? null : current))
-  }
-
+  const {
+    selectDirectory: handleSelectDirectory,
+    bindDirectory: handleBindDirectory,
+    retryQueueItem,
+  } = useExifDirectoryAuthorization({
+    fileInputRef,
+    itemsRef,
+    setItems,
+    setSelectedId,
+    setDirectoryHandle,
+    setBindingDirectory,
+    setUploading,
+    setUploadActivity,
+    setSubmitNotice,
+    clearHistory: () => clearOperationHistory(EXIF_HISTORY_SCOPE),
+    createItem: createWorkbenchItem,
+    beginArtifactMatchReview,
+    submitOne: (itemId) => submitOne(itemId),
+    yieldToMainThread,
+  })
   async function clearAll() {
-    const currentItems = [...items]
-    try {
-      await writeReuploadHints(currentItems)
-    } catch {
-      // Clearing the queue should still work if browser storage is unavailable.
-    }
-    currentItems.forEach((item) => revokePreviewUrl(item.previewUrl))
-    clearOperationHistory(EXIF_HISTORY_SCOPE)
-    setItems([])
-    setSelectedId(null)
+    await clearQueue()
     setDirectoryHandle(null)
     setTagInput("")
-    setSharedForm(buildBaseForm())
-    setSubmitNotice(null)
   }
 
-  async function handleGenerateDescription(target: "selected" | "shared" = "selected") {
-    if (!selectedItem) {
-      return
-    }
-    const isSharedTarget = target === "shared"
-    const fallbackName = selectedItem.parsedName?.artifact_name || fileBaseName(selectedItem.fileName)
-    const targetForm = isSharedTarget ? sharedForm : selectedItem.form
-    const generationTargetIds = isSharedTarget ? items.map((item) => item.id) : [selectedItem.id]
-    const resolvedForm = targetForm.name.trim() ? targetForm : { ...targetForm, name: fallbackName }
-    if (!resolvedForm.name.trim()) return
-    if (!targetForm.name.trim()) {
-      if (isSharedTarget) setSharedForm((current) => ({ ...current, name: resolvedForm.name }))
-      else updateSelectedForm({ name: resolvedForm.name })
-    }
-
-    setGenerating(true)
-    setDescriptionGeneratingItemIds((current) => Array.from(new Set([...current, ...generationTargetIds])))
-    setDescriptionProgress(["正在整理名称、年代、博物馆与出土地点…"])
-    setLiveResearchSummary("")
-    setLiveProviders({})
-    setSubmitNotice(null)
-    try {
-      const descriptionForm = new FormData()
-      descriptionForm.append("museum_name", resolvedForm.museumName.trim())
-      descriptionForm.append("name", resolvedForm.name.trim())
-      descriptionForm.append("era", resolvedForm.era.trim())
-      descriptionForm.append("Place_of_Excavation", resolvedForm.placeOfExcavation.trim())
-      const response = await fetch(`${apiBaseUrl}/api/artifacts/generate-description-stream-file`, {
-        method: "POST",
-        body: descriptionForm,
-      })
-      if (!response.ok || !response.body) throw new Error(`生成描述失败（HTTP ${response.status}）`)
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let pending = ""
-      let generated: GeneratedDescription | null = null
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        pending += decoder.decode(value, { stream: true })
-        const lines = pending.split("\n")
-        pending = lines.pop() ?? ""
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue
-          const event = JSON.parse(line.slice(5).trim()) as {
-            type: string
-            message?: string
-            result?: GeneratedDescription
-            provider?: string
-            model?: string
-            reasoning?: string
-            summary?: string
-            description_length?: number
-            tag_count?: number
-          }
-          if (event.type === "progress" && event.message) {
-            const message = event.message
-            setDescriptionProgress((current) => current.includes(message) ? current : [...current, message])
-          }
-          if (event.type === "research_start" && event.message) {
-            setDescriptionProgress((current) => current.includes(event.message!) ? current : [...current, event.message!])
-          }
-          if (event.type === "research_complete") {
-            if (event.message) {
-              setDescriptionProgress((current) => current.includes(event.message!) ? current : [...current, event.message!])
-            }
-            setLiveResearchSummary(event.summary || "")
-          }
-          if (event.type === "provider_start" && event.provider) {
-            setLiveProviders((current) => ({
-              ...current,
-              [event.provider!]: {
-                model: event.model || "",
-                status: "running",
-                reasoning: "",
-                message: "正在阅读检索证据并组织描述…",
-                descriptionLength: 0,
-                tagCount: 0,
-              },
-            }))
-          }
-          if (event.type === "provider_complete" && event.provider) {
-            setLiveProviders((current) => ({
-              ...current,
-              [event.provider!]: {
-                model: event.model || current[event.provider!]?.model || "",
-                status: "complete",
-                reasoning: event.reasoning || "",
-                message: "核验摘要与候选描述已返回",
-                descriptionLength: event.description_length || 0,
-                tagCount: event.tag_count || 0,
-              },
-            }))
-          }
-          if (event.type === "provider_error" && event.provider) {
-            setLiveProviders((current) => ({
-              ...current,
-              [event.provider!]: {
-                model: event.model || current[event.provider!]?.model || "",
-                status: "error",
-                reasoning: "",
-                message: event.message || "模型调用失败",
-                descriptionLength: 0,
-                tagCount: 0,
-              },
-            }))
-          }
-          if (event.type === "result" && event.result) generated = event.result
-        }
-      }
-      if (!generated) throw new Error("模型未返回可用结果")
-
-      const nextCandidates = ensureCandidates(generated.candidates)
-      const preferredDescription = nextCandidates.find(
-        (candidate) => candidate.provider === generated.provider
-          && candidate.model === generated.model
-          && candidate.status === "success",
-      )?.description ?? normalizeVerifiedClaims(generated.description, []).description
-      const nextSharedForm: FormState = {
-        ...cloneFormState(resolvedForm),
-        description: preferredDescription,
-        tags: [...resolvedForm.tags],
-      }
-      const nextUnavailableProviders = ensureStringList(generated.unavailable_providers)
-      const nextMeta = isSharedTarget
-        ? `共享描述采用：${generated.provider} / ${generated.model}${generated.research_id ? ` · 研究 ${generated.research_id.slice(0, 8)}` : ""}`
-        : `默认采用：${generated.provider} / ${generated.model}${generated.research_id ? ` · 研究 ${generated.research_id.slice(0, 8)}` : ""}`
-
-      if (isSharedTarget) {
-        const nextItems = itemsRef.current.map((item) => ({
-          ...item,
-          form: applySharedForm(item.form, nextSharedForm),
-          candidates: nextCandidates,
-          unavailableProviders: nextUnavailableProviders,
-          descriptionMeta: nextMeta,
-          verificationDecisions: {},
-          submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-          submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
-        }))
-        const before = createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm)
-        const after = createExifHistorySnapshot(nextItems, selectedId, nextSharedForm)
-        replaceWorkbenchItems(nextItems)
-        setSharedForm(nextSharedForm)
-        recordOperation({
-          scope: EXIF_HISTORY_SCOPE,
-          scopeLabel: "快速录入",
-          label: "生成并应用共享描述",
-          detail: `${generated.provider} / ${generated.model} · ${nextItems.length} 张照片`,
-          affected: nextItems.map((item) => item.fileName),
-          before,
-          after,
-        })
-        setSubmitNotice({
-          type: "success",
-          text: `已根据共享字段并行请求千问和豆包，并把完整描述应用到 ${nextItems.length} 张图片`,
-        })
-      } else {
-        const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? {
-          ...item,
-          form: {
-            ...item.form,
-            description: preferredDescription,
-            tags: [...item.form.tags],
-          },
-          candidates: nextCandidates,
-          unavailableProviders: nextUnavailableProviders,
-          descriptionMeta: nextMeta,
-          verificationDecisions: {},
-        } : item)
-        recordItemsChange({
-          label: "生成文物描述",
-          detail: `${selectedItem.fileName} · ${generated.provider} / ${generated.model}`,
-          nextItems,
-          affected: [selectedItem.fileName],
-        })
-        setSubmitNotice({ type: "success", text: "已根据名称、年代、博物馆与出土地点生成完整描述" })
-      }
-    } catch (error) {
-      setSubmitNotice({
-        type: "error",
-        text: error instanceof Error ? error.message : "生成描述失败",
-      })
-    } finally {
-      setGenerating(false)
-      const completedIds = new Set(generationTargetIds)
-      setDescriptionGeneratingItemIds((current) => current.filter((id) => !completedIds.has(id)))
-    }
-  }
-
-  function applyCandidate(candidate: DescriptionCandidate) {
-    if (!selectedItem || candidate.status !== "success") {
-      return
-    }
-    const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? {
-      ...item,
-      form: {
-        ...item.form,
-        description: candidate.description,
-        tags: [...item.form.tags],
-      },
-      descriptionMeta: `当前采用：${candidate.provider} / ${candidate.model}`,
-    } : item)
-    recordItemsChange({
-      label: "切换描述版本",
-      detail: `${selectedItem.fileName} · ${candidate.provider} / ${candidate.model}`,
-      nextItems,
-      affected: [selectedItem.fileName],
-    })
-    setSubmitNotice({ type: "success", text: `已采用 ${candidate.provider} 的描述；标签仍可跨模型单独点选` })
-  }
-
-  function toggleCandidateTag(tag: string) {
-    if (!selectedItem) return
-    const selected = selectedItem.form.tags.includes(tag)
-    updateSelectedForm({
-      tags: selected
-        ? selectedItem.form.tags.filter((entry) => entry !== tag)
-        : uniqueTags([...selectedItem.form.tags, tag]),
+  function recordSharedDescription(
+    nextItems: ExifWorkbenchItem[],
+    nextSharedForm: FormState,
+    generated: GeneratedDescription,
+  ) {
+    const before = createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm)
+    const after = createExifHistorySnapshot(nextItems, selectedId, nextSharedForm)
+    replaceWorkbenchItems(nextItems)
+    setSharedForm(nextSharedForm)
+    recordOperation({
+      scope: EXIF_HISTORY_SCOPE,
+      scopeLabel: "快速录入",
+      label: "生成并应用共享描述",
+      detail: `${generated.provider} / ${generated.model} · ${nextItems.length} 张照片`,
+      affected: nextItems.map((item) => item.fileName),
+      before,
+      after,
     })
   }
 
-  function reviewVerifiedClaim(claim: VerifiedClaim, decision: "accepted" | "rejected") {
-    if (!selectedItem) return
-    const nextItems = itemsRef.current.map((item) => {
-      if (item.id !== selectedItem.id) return item
-      const withoutClaim = item.form.description
-        .replace(claim.text, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim()
-      const description = decision === "accepted"
-        ? [withoutClaim, claim.text].filter(Boolean).join(withoutClaim ? "\n\n" : "")
-        : withoutClaim
-      return {
-        ...item,
-        form: { ...item.form, description },
-        verificationDecisions: {
-          ...(item.verificationDecisions ?? {}),
-          [claim.text]: decision,
-        },
-      }
-    })
-    recordItemsChange({
-      label: decision === "accepted" ? "采纳核验内容" : "移除核验内容",
-      detail: `${selectedItem.fileName} · ${claim.text.slice(0, 32)}${claim.text.length > 32 ? "…" : ""}`,
-      nextItems,
-      affected: [selectedItem.fileName],
-    })
-    setSubmitNotice({
-      type: "success",
-      text: decision === "accepted"
-        ? "已将这条联网核验内容加入最终正文"
-        : "已从最终正文移除这条联网核验内容",
-    })
-  }
-
-  async function submitOne(itemId: string): Promise<boolean> {
-    // Read the latest form snapshot at click time. Filename parsing and other
-    // async updates must never cause a stale render closure to submit older
-    // name or excavation values after the operator has corrected them.
-    const target = itemsRef.current.find((item) => item.id === itemId)
-    if (!target) {
-      return false
-    }
-    if (target.submitState === "submitted" && changedParts(target).length === 0) {
-      setSubmitNotice({ type: "success", text: "该图片已入库且没有新的修改，无需重复提交。" })
-      clearOperationHistory(EXIF_HISTORY_SCOPE)
-      return true
-    }
-    if (await confirmPreviouslySubmittedItem(apiBaseUrl, target)) {
-      updateItem(itemId, (item) => ({
-        ...item,
-        submitState: "submitted",
-        submitMessage: "已从云端确认这张图片完成入库。",
-        uploadProgress: 100,
-        uploadStage: "已完成",
-        originalForm: cloneFormState(item.form),
-      }))
-      clearOperationHistory(EXIF_HISTORY_SCOPE)
-      return true
-    }
-    if (!target.form.name.trim() || !target.form.museumName.trim()) {
-      updateItem(itemId, (item) => ({
-        ...item,
-        submitState: "error",
-        submitMessage: "请先确认名称和馆藏信息",
-      }))
-      return false
-    }
-    if (!target.fileHandle && !directoryHandle) {
-      updateItem(itemId, (item) => ({
-        ...item,
-        submitState: "error",
-        submitMessage: "提交前请先点击图片列表上方的文件夹按钮并授权原文件；保存并入库会同时修改本地文件名和 EXIF。",
-      }))
-      return false
-    }
-    if (target.fileName !== target.originalFileName && !directoryHandle) {
-      updateItem(itemId, (item) => ({
-        ...item,
-        submitState: "error",
-        submitMessage: "目标文件名已修改，请先点击图片列表上方的文件夹按钮授权原文件，才能在本地完成重命名。",
-      }))
-      return false
-    }
-
-    updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null, uploadProgress: 8, uploadStage: "正在准备 EXIF 信息" }))
-    try {
-      // A retry click is a fresh user gesture, so request write permission
-      // before any network request can consume that activation.
-      let sourceHandle = target.fileHandle
-      if (directoryHandle) {
-        if (!await verifyWritablePermission(directoryHandle)) {
-          throw new Error("文件夹写入权限未授权，请重新选择照片文件夹")
-        }
-        // A directory grant is authoritative for its children. Reacquire the
-        // current child handle here instead of incorrectly demanding a second
-        // independent permission prompt for a file already imported from it.
-        try {
-          sourceHandle = await directoryHandle.getFileHandle(target.originalFileName)
-        } catch (error) {
-          if ((error as Error).name !== "NotFoundError" || target.fileName === target.originalFileName) throw error
-          // A prior attempt may have already completed the local rename.
-          sourceHandle = await directoryHandle.getFileHandle(target.fileName)
-        }
-      } else if (sourceHandle && !await verifyWritablePermission(sourceHandle)) {
-        throw new Error(`“${target.originalFileName}”的写入权限未授权，请点击图片列表上方的文件夹按钮重新授权`)
-      }
-      if (!sourceHandle) throw new Error("未找到可写原文件，请授权照片文件夹")
-
-      const latestLocalFile = await sourceHandle.getFile()
-      const latitude = toNullableNumber(target.form.latitude)
-      const longitude = toNullableNumber(target.form.longitude)
-      const appendMetadata = (data: FormData, includeArtifactLink = false) => {
-        data.append("museum_name", target.form.museumName.trim())
-        data.append("name", target.form.name.trim())
-        data.append("era", target.form.era.trim() || "")
-        data.append("Place_of_Excavation", target.form.placeOfExcavation.trim() || "")
-        data.append("description", target.form.description.trim() || "")
-        data.append("display_location_name", target.form.displayLocationName.trim() || "")
-        data.append("exhibition_name", target.form.exhibitionName.trim() || "常设")
-        if (target.form.catalogExhibitionSourceId) {
-          data.append("catalog_exhibition_source_id", target.form.catalogExhibitionSourceId)
-        }
-        if (target.form.catalogExhibitionId !== null) {
-          data.append("catalog_exhibition_id", String(target.form.catalogExhibitionId))
-        }
-        if (latitude !== null) data.append("latitude", String(latitude))
-        if (longitude !== null) data.append("longitude", String(longitude))
-        data.append("camera_model", target.form.cameraModel.trim())
-        data.append("lens_model", target.form.lensModel.trim())
-        if (target.form.capturedAt.trim()) data.append("captured_at", target.form.capturedAt.trim())
-        data.append("shutter_speed", target.form.shutterSpeed.trim())
-        data.append("aperture", target.form.aperture.trim())
-        if (target.form.iso.trim()) data.append("iso", target.form.iso.trim())
-        if (includeArtifactLink && target.existingArtifactId != null) {
-          data.append("existing_artifact_id", String(target.existingArtifactId))
-        }
-      }
-
-      let response: Response | null = null
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        const useCleanExif = attempt === 3
-        updateItem(itemId, (item) => ({
-          ...item,
-          uploadProgress: 13 + attempt * 3,
-          uploadStage: useCleanExif
-            ? "正在使用兼容模式重建 EXIF（第 3/3 次）"
-            : `正在生成最终 EXIF 图片（第 ${attempt}/3 次）`,
-        }))
-        const exifForm = new FormData()
-        exifForm.append("file", latestLocalFile)
-        appendMetadata(exifForm)
-        if (useCleanExif) exifForm.append("clean_exif", "true")
-        response = await fetch(`${apiBaseUrl}/api/artifacts/prepare-exif-file`, {
-          method: "POST",
-          body: exifForm,
-        })
-        if (response.ok) break
-
-        const message = await responseErrorMessage(response, "本地 EXIF 回写准备失败")
-        if (attempt === 3) throw new Error(`已重试 3 次，${message}`)
-        await waitForRetry(350 * attempt)
-      }
-      if (!response?.ok) throw new Error("本地 EXIF 回写准备失败")
-      const sourceHash = response.headers.get("X-Source-Hash")
-      const cleanRewriteUsed = response.headers.get("X-Exif-Rewrite-Mode") === "clean"
-      const editedBlob = await response.blob()
-      updateItem(itemId, (item) => ({ ...item, sourceHash: sourceHash || item.sourceHash }))
-
-      let resolvedWriteHandle = sourceHandle
-      if (directoryHandle && target.fileName !== target.originalFileName) {
-        try {
-          // A previous attempt may have completed the local rename and only
-          // failed during cloud submission. Reuse and overwrite that target
-          // instead of treating it as a duplicate.
-          resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName)
-        } catch (error) {
-          if ((error as Error).name !== "NotFoundError") throw error
-          resolvedWriteHandle = await directoryHandle.getFileHandle(target.fileName, { create: true })
-        }
-      } else if (!await verifyWritablePermission(resolvedWriteHandle)) {
-        throw new Error(`“${target.originalFileName}”的写入权限已失效，请点击图片列表上方的文件夹按钮重新授权`)
-      }
-
-      updateItem(itemId, (item) => ({ ...item, uploadProgress: 30, uploadStage: "正在改名并写回本地原图" }))
-      const writable = await resolvedWriteHandle.createWritable()
-      await writable.write(editedBlob)
-      await writable.close()
-      if (directoryHandle && target.fileName !== target.originalFileName) {
-        try {
-          await directoryHandle.removeEntry(target.originalFileName)
-        } catch (error) {
-          // Retrying after a successful local rename is normal: the old source
-          // name has already disappeared, while the target file is durable.
-          if ((error as Error).name !== "NotFoundError") throw error
-        }
-      }
-
-      const writtenFile = await resolvedWriteHandle.getFile()
-      if (writtenFile.name !== target.fileName || writtenFile.size !== editedBlob.size) {
-        throw new Error("本地图片写入校验失败，已停止云端提交")
-      }
-      const verifyForm = new FormData()
-      verifyForm.append("file", writtenFile)
-      const writtenMetadata = await fetchJson<ImageExifMetadata>(`${apiBaseUrl}/api/artifacts/extract-exif-file`, {
-        method: "POST",
-        body: verifyForm,
-      })
-      assertWrittenExif(writtenMetadata, target.form)
-      const uploadFile = new File([writtenFile], target.fileName, {
-        type: editedBlob.type || target.localFile.type,
-        lastModified: writtenFile.lastModified,
-      })
-
-      // The local save is already durable at this point. Keep the refreshed
-      // handle and filename even if the subsequent cloud request fails, so a
-      // retry does not look for the deleted pre-rename file.
-      updateItem(itemId, (item) => ({
-        ...item,
-        localFile: uploadFile,
-        fileHandle: resolvedWriteHandle,
-        originalFileName: item.fileName,
-        originalForm: cloneFormState(item.form),
-      }))
-
-      updateItem(itemId, (item) => ({ ...item, uploadProgress: 45, uploadStage: "正在上传 OSS 并写入档案" }))
-
-      const formData = new FormData()
-      formData.append("file", uploadFile)
-      appendMetadata(formData, true)
-      formData.append("tags", JSON.stringify(target.form.tags))
-      formData.append("exif_prepared", "true")
-      if (sourceHash) formData.append("source_hash", sourceHash)
-      let result: ArtifactSubmitResult | null = null
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        try {
-          updateItem(itemId, (item) => ({
-            ...item,
-            uploadStage: `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
-          }))
-          result = await postFormDataWithProgress<ArtifactSubmitResult>(
-            `${apiBaseUrl}/api/artifacts/exif-submit-file`,
-            formData,
-            (progress) => {
-              updateItem(itemId, (item) => ({
-                ...item,
-                uploadProgress: progress,
-                uploadStage: progress >= 95
-                  ? "图片已上传，正在等待云端入库确认"
-                  : `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
-              }))
-            },
-          )
-          break
-        } catch (error) {
-          if (sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, sourceHash)) {
-            result = {
-              reconciled_after_timeout: true,
-              duplicate_image_detail: "云端已确认这张图片完成入库。",
-            }
-            break
-          }
-          if (attempt === 3) {
-            const message = error instanceof Error ? error.message : "未知错误"
-            throw new Error(`云端提交已重试 3 次：${message}`, { cause: error })
-          }
-          await waitForRetry(700 * attempt)
-        }
-      }
-      if (!result) throw new Error("云端提交失败")
-      updateItem(itemId, (item) => ({
-        ...item,
-        localFile: uploadFile,
-        fileHandle: resolvedWriteHandle,
-        originalFileName: item.fileName,
-        originalForm: cloneFormState(item.form),
-        submitState: "submitted",
-        submitMessage: result.reconciled_after_timeout
-          ? (result.duplicate_image_detail || "云端已确认这张图片完成入库。")
-          : result.duplicate_image_replaced
-          ? (result.duplicate_image_detail || "已用本次校正覆盖云端已有图片。")
-          : result.duplicate_image_skipped
-          ? (result.duplicate_image_detail || "云端已存在相同原图，本次未重复上传。")
-          : cleanRewriteUsed
-            ? "已通过兼容模式重建 EXIF，并同步上传 OSS 与云端数据库"
-            : "已修改本地文件名与 EXIF，并同步上传 OSS 与云端数据库",
-        uploadProgress: 100,
-        uploadStage: "已完成",
-      }))
-      clearOperationHistory(EXIF_HISTORY_SCOPE)
-      return true
-    } catch (error) {
-      updateItem(itemId, (item) => ({
-        ...item,
-        submitState: "error",
-        submitMessage: error instanceof Error ? error.message : "提交失败",
-        uploadStage: "提交失败",
-      }))
-      return false
-    }
-  }
-
-  async function handleSubmitAll() {
-    if (items.length === 0) {
-      return
-    }
-    setSubmittingAll(true)
-    setSubmitNotice(null)
-    let pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
-    const confirmedIds = new Set(
-      (await Promise.all(pendingItems.map(async (item) => (
-        await confirmPreviouslySubmittedItem(apiBaseUrl, item)
-          ? item.id
-          : null
-      )))).filter((id): id is string => Boolean(id)),
-    )
-    if (confirmedIds.size > 0) {
-      setItems((current) => current.map((item) => confirmedIds.has(item.id) ? {
-        ...item,
-        submitState: "submitted",
-        submitMessage: "已从云端确认这张图片完成入库。",
-        uploadProgress: 100,
-        uploadStage: "已完成",
-        originalForm: cloneFormState(item.form),
-      } : item))
-      pendingItems = pendingItems.filter((item) => !confirmedIds.has(item.id))
-    }
-    const unboundItems = pendingItems.filter((item) => (
-      !item.fileHandle || (item.fileName !== item.originalFileName && !directoryHandle)
-    ))
-    if (unboundItems.length > 0) {
-      if (confirmedIds.size > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
-      setSubmittingAll(false)
-      setSelectedId(unboundItems[0].id)
-      setItems((current) => current.map((item) => (
-        unboundItems.some((unbound) => unbound.id === item.id)
-          ? {
-              ...item,
-              submitState: "error",
-              submitMessage: `未绑定可写原文件：${item.fileName}`,
-            }
-          : item
-      )))
-      const names = unboundItems.slice(0, 3).map((item) => `“${item.fileName}”`).join("、")
-      setSubmitNotice({
-        type: "error",
-        text: `未绑定可写原文件：${names}${unboundItems.length > 3 ? `等 ${unboundItems.length} 张` : ""}。已定位到第一张，请重新选择包含该原图的文件夹。`,
-      })
-      return
-    }
-    let succeeded = confirmedIds.size
-    let failed = 0
-    const queue = [...pendingItems]
-    const worker = async () => {
-      while (queue.length > 0) {
-        const item = queue.shift()
-        if (!item) return
-        if (await submitOne(item.id)) {
-          succeeded += 1
-        } else {
-          failed += 1
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(2, pendingItems.length) }, () => worker()))
-    if (succeeded > 0) clearOperationHistory(EXIF_HISTORY_SCOPE)
-    setSubmittingAll(false)
-    setSubmitNotice(failed > 0
-      ? { type: "error", text: `批量提交完成：${succeeded} 张成功，${failed} 张失败。可在队列中点击“重试”后再次提交。` }
-      : { type: "success", text: `已完成批量提交：${succeeded} 张图片已入库。` })
-  }
-
+  const {
+    generateDescription: handleGenerateDescription,
+    applyCandidate,
+    toggleCandidateTag,
+    reviewVerifiedClaim,
+  } = useExifDescriptionOperations({
+    apiBaseUrl,
+    items,
+    itemsRef,
+    selectedItem,
+    sharedForm,
+    setSharedForm,
+    setGenerating,
+    setGeneratingIds: setDescriptionGeneratingItemIds,
+    setProgress: setDescriptionProgress,
+    setResearchSummary: setLiveResearchSummary,
+    setProviders: setLiveProviders,
+    setNotice: setSubmitNotice,
+    updateSelectedForm,
+    recordItemsChange,
+    recordSharedDescription,
+  })
+  const submitOne = createExifSubmitOne({
+    apiBaseUrl,
+    directoryHandle,
+    itemsRef,
+    updateItem,
+    setNotice: setSubmitNotice,
+    clearHistory: () => clearOperationHistory(EXIF_HISTORY_SCOPE),
+    fetchJson,
+    responseErrorMessage,
+  })
+  const { submitAll: handleSubmitAll } = useExifBatchSubmission({
+    apiBaseUrl,
+    items,
+    directoryHandle,
+    setItems,
+    setSelectedId,
+    setSubmittingAll,
+    setNotice: setSubmitNotice,
+    clearHistory: () => clearOperationHistory(EXIF_HISTORY_SCOPE),
+    submitOne,
+  })
   function addTags(rawValue: string) {
     if (!selectedItem) {
       return
@@ -3109,231 +669,51 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
             ) : null}
             <div className="exif-sidebar-scroll">
               <div className="exif-sidebar-tools">
-              <details className="metadata-sync-panel">
-                <summary>
-                  <span className="exif-tool-summary-copy">
-                    <strong>从照片同步信息</strong>
-                  </span>
-                  <span className="exif-tool-summary-meta">
-                    <span className="exif-tool-summary-count">{items.length > 1 ? `${items.length - 1} 张可同步` : "需 2 张"}</span>
-                    <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                  </span>
-                </summary>
-                <div className="metadata-sync-controls">
-                  <div className="metadata-sync-source">
-                    <div className="metadata-sync-source-head">
-                      <span>来源照片</span>
-                      <Button
-                        htmlType="button"
-                        type="link"
-                        size="small"
-                        onClick={() => selectedItem && setMetadataSyncSourceId(selectedItem.id)}
-                        disabled={!selectedItem || selectedItem.id === metadataSyncSourceId}
-                      >
-                        使用当前
-                      </Button>
-                    </div>
-                    <Select
-                      aria-label="来源照片"
-                      value={metadataSyncSourceId || undefined}
-                      placeholder="选择来源照片"
-                      options={items.map((item, index) => ({
-                        value: item.id,
-                        label: indexedFileName(item.fileName, index),
-                        title: item.fileName,
-                      }))}
-                      onChange={setMetadataSyncSourceId}
-                      disabled={items.length === 0}
-                      popupMatchSelectWidth={360}
-                      showSearch
-                      optionFilterProp="label"
-                    />
-                  </div>
-                </div>
-                <div className="metadata-sync-target-row">
-                  <Segmented<MetadataSyncTargetMode>
-                    aria-label="同步目标"
-                    size="small"
-                    value={metadataSyncTargetMode}
-                    options={[
-                      { label: "当前图片", value: "current" },
-                      { label: "指定照片", value: "selected" },
-                      { label: "其他图片", value: "others" },
-                    ]}
-                    onChange={setMetadataSyncTargetMode}
-                  />
-                </div>
-                <MetadataSyncFieldControls
-                  context="sidebar"
-                  selection={metadataSyncSelection}
-                  onChange={(field, checked) => setMetadataSyncSelection((current) => ({
-                    ...current,
-                    [field]: checked,
-                  }))}
-                />
-                <div className="metadata-sync-status">
-                  <span title={metadataSyncSource?.fileName}>
-                    {metadataSyncSource
-                      ? `来源：${indexedFileName(metadataSyncSource.fileName, items.findIndex((item) => item.id === metadataSyncSource.id))}`
-                      : "尚未选择来源"}
-                  </span>
-                  <strong>{metadataSyncSelectedCount}/{METADATA_SYNC_FIELD_COUNT} 字段 · {metadataSyncChangedCount} 项差异</strong>
-                </div>
-                <div className="exif-tool-actions">
-                  <Button
-                    htmlType="button"
-                    type="primary"
-                    block
-                    onClick={openMetadataSyncPreview}
-                    disabled={items.length < 2 || !metadataSyncSource}
-                  >
-                    {metadataSyncTargetMode === "selected" ? "选择目标并预览" : "预览并同步"}
-                  </Button>
-                </div>
-              </details>
-              <details
-                className="batch-location-panel"
+              <MetadataSyncSidebar
+                items={items}
+                selectedItem={selectedItem}
+                source={metadataSyncSource}
+                sourceId={metadataSyncSourceId}
+                targetMode={metadataSyncTargetMode}
+                selection={metadataSyncSelection}
+                selectedFieldCount={metadataSyncSelectedCount}
+                changedCount={metadataSyncChangedCount}
+                indexedFileName={indexedFileName}
+                onSourceChange={setMetadataSyncSourceId}
+                onTargetModeChange={setMetadataSyncTargetMode}
+                onSelectionChange={setMetadataSyncSelection}
+                onPreview={openMetadataSyncPreview}
+              />
+              <BatchLocationPanel
                 open={batchLocationOpen}
-                onToggle={(event) => setBatchLocationOpen(event.currentTarget.open)}
-              >
-                <summary>
-                  <span className="exif-tool-summary-copy">
-                    <strong>手动统一展出地点</strong>
-                    <small>地图选点后统一展览与 GPS</small>
-                  </span>
-                  <span className="exif-tool-summary-meta">
-                    <span className="exif-tool-summary-count">{selectedItem ? "可套用当前图片" : "等待选择"}</span>
-                    <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                  </span>
-                </summary>
-                {batchLocationOpen ? (
-                  <>
-                    <div className="batch-location-actions">
-                      <Button htmlType="button" onClick={useSelectedLocationForBatch} disabled={!selectedItem}>
-                        采用当前图片地点
-                      </Button>
-                    </div>
-                    <div className="batch-location-fields exif-tool-grid">
-                      <label className="exif-tool-field">
-                        <span>展出地点</span>
-                        <Input value={batchLocationName} placeholder="例如：历代青铜馆" onChange={(event) => setBatchLocationName(event.target.value)} />
-                      </label>
-                      <label className="exif-tool-field">
-                        <span>对应展览</span>
-                        <Input
-                          value={batchExhibitionName}
-                          placeholder="例如：常设展"
-                          onChange={(event) => {
-                            setBatchExhibitionName(event.target.value)
-                            setBatchCatalogExhibitionId(null)
-                            setBatchCatalogExhibitionSourceId("")
-                          }}
-                        />
-                      </label>
-                      <label className="exif-tool-field">
-                        <span>纬度</span>
-                        <Input value={batchLatitude} placeholder="39.9087" onChange={(event) => setBatchLatitude(event.target.value)} />
-                      </label>
-                      <label className="exif-tool-field">
-                        <span>经度</span>
-                        <Input value={batchLongitude} placeholder="116.3975" onChange={(event) => setBatchLongitude(event.target.value)} />
-                      </label>
-                    </div>
-                    <div className="exif-sidebar-map">
-                      <GpsMapPicker
-                        latitude={batchLatitude}
-                        longitude={batchLongitude}
-                        onPick={(latitude, longitude, locationName) => {
-                          setBatchLatitude(latitude)
-                          setBatchLongitude(longitude)
-                          if (locationName) setBatchLocationName(locationName)
-                        }}
-                      />
-                    </div>
-                    <div className="exif-tool-actions">
-                      <Button htmlType="button" type="primary" block onClick={applyBatchLocation} disabled={items.length === 0}>应用到全部图片</Button>
-                    </div>
-                  </>
-                ) : null}
-              </details>
-              </div>
-              <div className="exif-queue-list">
-              {items.length > 0 ? items.map((item) => (
-                <div
-                  key={item.id}
-                  className={`exif-queue-item-shell${item.submitState === "error" ? " is-error" : ""}`}
-                >
-                  <button
-                    type="button"
-                    data-ui="interactive-surface"
-                    className={`exif-queue-item ${selectedId === item.id ? "is-selected" : ""}`}
-                    aria-pressed={selectedId === item.id}
-                    onClick={() => {
-                      setSelectedId(item.id)
-                      setTagInput("")
-                    }}
-                  >
-                    <img
-                      src={item.previewUrl}
-                      alt={item.fileName}
-                      className="exif-queue-thumb"
-                      loading="lazy"
-                      decoding="async"
-                    />
-                    <div className="exif-queue-copy">
-                      <strong title={item.fileName}>{item.fileName}</strong>
-                      {changedParts(item).length > 0 ? (
-                        <span className="queue-change-summary" aria-label={`待提交的变更：${changedParts(item).join("、")}`}>
-                          已修改：{changedParts(item).join("、")}
-                        </span>
-                      ) : null}
-                      {item.submitState === "submitting" ? (
-                        <span className="queue-upload" aria-label={`${item.uploadStage ?? "提交中"} ${item.uploadProgress}%`}>
-                          <i style={{ width: `${item.uploadProgress}%` }} />
-                          <small>{item.uploadStage ?? "提交中"} · {item.uploadProgress}%</small>
-                        </span>
-                      ) : null}
-                    </div>
-                  </button>
-                  <Space className="exif-queue-item-actions" size={6}>
-                    <span className="queue-state-tags">
-                      {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && descriptionGeneratingItemIds.includes(item.id) ? (
-                        <Tag color="processing" icon={<Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />}>描述中</Tag>
-                      ) : SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY && ensureCandidates(item.candidates).some((candidate) => candidate.status === "success") ? (
-                        <Tag color="success" icon={<Check size={11} strokeWidth={2.2} aria-hidden="true" />}>描述完成</Tag>
-                      ) : null}
-                      <Tag
-                        color={item.submitState === "submitted" ? "success" : item.submitState === "error" ? "error" : item.submitState === "submitting" ? "processing" : changedParts(item).length > 0 ? "warning" : undefined}
-                        className={`queue-submit-state is-${item.submitState}`}
-                        icon={item.submitState === "submitted" ? <Check size={14} strokeWidth={2.2} aria-hidden="true" /> : item.submitState === "submitting" ? <Loader2 size={14} strokeWidth={2.2} className="queue-state-icon is-active" aria-hidden="true" /> : item.submitState === "error" ? <X size={14} strokeWidth={2.2} aria-hidden="true" /> : changedParts(item).length > 0 ? <FileCheck2 size={14} strokeWidth={2} className="queue-state-icon is-pending" aria-hidden="true" /> : undefined}
-                      >
-                        {item.submitState === "submitted" ? "已提交" : item.submitState === "submitting" ? "提交中" : item.submitState === "error" ? "提交失败" : changedParts(item).length > 0 ? `待提交 · ${changedParts(item).length} 项` : "待处理"}
-                      </Tag>
-                    </span>
-                    {item.submitState === "error" ? (
-                      <Tooltip title={(!item.fileHandle || /授权|权限|未绑定原文件/.test(item.submitMessage ?? "")) ? "重新授权原文件夹" : "重试入库"}>
-                        <Button
-                          htmlType="button"
-                          size="small"
-                          className="exif-queue-retry"
-                          icon={<RefreshCw size={14} strokeWidth={1.8} aria-hidden="true" />}
-                          aria-label={(!item.fileHandle || /授权|权限|未绑定原文件/.test(item.submitMessage ?? "")) ? "重新授权原文件夹" : "重试入库"}
-                          onClick={() => retryQueueItem(item)}
-                        />
-                      </Tooltip>
-                    ) : null}
-                    <Button
-                      htmlType="button"
-                      size="small"
-                      danger
-                      className="exif-queue-remove"
-                      icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />}
-                      aria-label={`移除 ${item.fileName}`}
-                      onClick={() => void removeItem(item.id)}
-                    />
-                  </Space>
-                </div>
-              )) : <p className="muted">还没有图片，先上传一批图片开始处理。</p>}
+                selectedItem={selectedItem}
+                itemCount={items.length}
+                locationName={batchLocationName}
+                exhibitionName={batchExhibitionName}
+                latitude={batchLatitude}
+                longitude={batchLongitude}
+                onOpenChange={setBatchLocationOpen}
+                onUseSelected={useSelectedLocationForBatch}
+                onLocationNameChange={setBatchLocationName}
+                onExhibitionNameChange={setBatchExhibitionName}
+                onLatitudeChange={setBatchLatitude}
+                onLongitudeChange={setBatchLongitude}
+                onApply={applyBatchLocation}
+              />
+              <ExifQueueList
+                items={items}
+                selectedId={selectedId}
+                descriptionGeneratingItemIds={descriptionGeneratingItemIds}
+                showDescriptionTools={SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY}
+                changedParts={changedParts}
+                hasGeneratedDescription={(item) => ensureCandidates(item.candidates).some((candidate) => candidate.status === "success")}
+                onSelect={(id) => {
+                  setSelectedId(id)
+                  setTagInput("")
+                }}
+                onRetry={retryQueueItem}
+                onRemove={(id) => void removeItem(id)}
+              />
               </div>
             </div>
           </div>
@@ -3354,699 +734,105 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               </div>
 
               <div className="exif-editor-scroll">
-                <details className="exif-shared-section">
-                  <summary>
-                    <div>
-                      <strong>批量套用同一件文物的信息</strong>
-                      <p>多张图片属于同一件文物时，再展开统一填写。</p>
-                    </div>
-                    <span>可选</span>
-                  </summary>
-                  <div className="form-section-body">
-                    <p className="muted">这些图片指向同一件文物时，在这里统一填写基础信息和展出地点，再一键应用到全部图片。</p>
-                    <div className="field-row">
-                      <label className="field">
-                        <span>馆藏单位</span>
-                        <Input
-                          value={sharedForm.museumName}
-                          placeholder="例如：山东省博物馆"
-                          onChange={(event) => updateSharedForm({ museumName: event.target.value })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>文物名称</span>
-                        <Input
-                          value={sharedForm.name}
-                          placeholder="例如：夫妇宴享行乐图"
-                          onChange={(event) => updateSharedForm({ name: event.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <div className="field-row">
-                      <label className="field">
-                        <span>时代</span>
-                        <Input
-                          value={sharedForm.era}
-                          placeholder="例如：隋代"
-                          onChange={(event) => updateSharedForm({ era: event.target.value })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>出土地</span>
-                        <Input
-                          value={sharedForm.placeOfExcavation}
-                          placeholder="例如：1976年嘉祥英山一号隋墓出土"
-                          onChange={(event) => updateSharedForm({ placeOfExcavation: event.target.value })}
-                        />
-                      </label>
-                    </div>
-                    <div className="field-row">
-                      <label className="field">
-                        <span>展出地点名称</span>
-                        <Input
-                          value={sharedForm.displayLocationName}
-                          placeholder="例如：山东省博物馆"
-                          onChange={(event) => updateSharedForm({ displayLocationName: event.target.value })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>对应展览</span>
-                        <Input
-                          value={sharedForm.exhibitionName}
-                          placeholder="例如：常设展 / 汉唐文明展"
-                          onChange={(event) => updateSharedForm({
-                            exhibitionName: event.target.value,
-                            catalogExhibitionId: null,
-                            catalogExhibitionSourceId: "",
-                          })}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>纬度 / 经度</span>
-                        <div className="field-row">
-                          <Input
-                            value={sharedForm.latitude}
-                            placeholder="纬度"
-                            onChange={(event) => updateSharedForm({ latitude: event.target.value })}
-                          />
-                          <Input
-                            value={sharedForm.longitude}
-                            placeholder="经度"
-                            onChange={(event) => updateSharedForm({ longitude: event.target.value })}
-                          />
-                        </div>
-                      </label>
-                    </div>
-                    {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <label className="field">
-                      {/* 40.841694 111.76568 */}
-                      <span>共享描述</span>
-                      <Textarea
-                        rows={4}
-                        value={sharedForm.description}
-                        placeholder="这里的描述会作为同一文物的默认描述应用到全部图片"
-                        onChange={(event) => updateSharedForm({ description: event.target.value })}
-                      />
-                    </label> : null}
-                    <div className="upload-actions exif-shared-actions">
-                      <Button htmlType="button" type="default" onClick={fillSharedFromSelected}>
-                        从当前图片带入
-                      </Button>
-                      <Button htmlType="button" type="default" onClick={applySharedToAll} disabled={items.length === 0}>
-                        应用到全部图片
-                      </Button>
-                      {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription("shared")} disabled={generating}>
-                        并行生成共享描述
-                      </Button> : null}
-                    </div>
-                    <p className="field-help">当前会同步到 {items.length || 0} 张图片；AI 描述是可选项，也可直接入库后再到图库补充。</p>
-                  </div>
-                </details>
+                <SharedArtifactForm
+                  form={sharedForm}
+                  itemCount={items.length}
+                  showDescriptionTools={SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY}
+                  generating={generating}
+                  onChange={updateSharedForm}
+                  onFillFromSelected={fillSharedFromSelected}
+                  onApplyToAll={applySharedToAll}
+                  onGenerateDescription={() => void handleGenerateDescription("shared")}
+                />
 
                 <Card className="exif-preview-card">
-                  <div className="exif-selected-head">
-                    <img
-                      src={selectedItem.previewUrl}
-                      alt={selectedItem.fileName}
-                      className="exif-selected-preview"
-                      decoding="async"
-                    />
-                    <div className="exif-file-block">
-                      <div className="result-head">
-                        <h3>文件名</h3>
-                      </div>
-                      <p className="result-desc exif-file-name">{selectedItem.fileName}</p>
-                      <label className="exif-file-rename">
-                        <span>目标文件名</span>
-                        <Textarea
-                          autoSize={{ minRows: 1, maxRows: 4 }}
-                          value={fileBaseName(selectedItem.fileName)}
-                          onChange={(event) => renameSelected(event.target.value)}
-                        />
-                        <em>{fileExtension(selectedItem.fileName)}</em>
-                      </label>
-                      <details className="batch-rename-panel exif-inline-batch-rename">
-                        <summary>
-                          <span className="exif-tool-summary-copy">
-                            <strong>批量修改目标文件名</strong>
-                            <small>在当前目标文件名旁统一清理文本或添加前后缀</small>
-                          </span>
-                          <span className="exif-tool-summary-meta">
-                            <span className="exif-tool-summary-count">影响 {batchRenameCount}/{items.length}</span>
-                            <ChevronDown size={14} strokeWidth={1.8} aria-hidden="true" />
-                          </span>
-                        </summary>
-                        <div className="exif-tool-grid">
-                          <label className="exif-tool-field">
-                            <span>删除文本</span>
-                            <Input value={batchRemove} placeholder="例如：IMG_" onChange={(event) => setBatchRemove(event.target.value)} />
-                          </label>
-                          <label className="exif-tool-field">
-                            <span>添加前缀</span>
-                            <Input value={batchPrefix} placeholder="例如：南博-" onChange={(event) => setBatchPrefix(event.target.value)} />
-                          </label>
-                          <label className="exif-tool-field">
-                            <span>添加后缀</span>
-                            <Input value={batchSuffix} placeholder="例如：-展厅A" onChange={(event) => setBatchSuffix(event.target.value)} />
-                          </label>
-                        </div>
-                        <div className="exif-tool-actions">
-                          <Button
-                            htmlType="button"
-                            onClick={applyBatchRename}
-                            disabled={items.length === 0 || batchRenameCount === 0}
-                          >
-                            应用到 {batchRenameCount} 张
-                          </Button>
-                        </div>
-                      </details>
-                      {parsingFileName ? (
-                        <p className="muted exif-file-parse-status">正在从文件名更新字段…</p>
-                      ) : null}
-                      {selectedItem.parsedName ? (
-                        <div className="result-meta">
-                          {selectedItem.parsedName.era ? <Tag>时代：{selectedItem.parsedName.era}</Tag> : null}
-                          {selectedItem.parsedName.museum_name ? <Tag>馆藏：{selectedItem.parsedName.museum_name}</Tag> : null}
-                          {selectedItem.parsedName.Place_of_Excavation ? <Tag>出土地：{selectedItem.parsedName.Place_of_Excavation}</Tag> : null}
-                        </div>
-                      ) : <p className="muted">当前文件名暂无解析结果，可手动填写。</p>}
-                    </div>
-                  </div>
+                  <ExifFilePreview
+                    item={selectedItem}
+                    fileBaseName={fileBaseName(selectedItem.fileName)}
+                    fileExtension={fileExtension(selectedItem.fileName)}
+                    parsingFileName={parsingFileName}
+                    batchRemove={batchRemove}
+                    batchPrefix={batchPrefix}
+                    batchSuffix={batchSuffix}
+                    batchRenameCount={batchRenameCount}
+                    itemCount={items.length}
+                    onRename={renameSelected}
+                    onBatchRemoveChange={setBatchRemove}
+                    onBatchPrefixChange={setBatchPrefix}
+                    onBatchSuffixChange={setBatchSuffix}
+                    onApplyBatchRename={applyBatchRename}
+                  />
                 </Card>
 
                 <div className="form-fields exif-form-card-grid">
-                  <Card
-                    size="small"
-                    className="form-section exif-form-card"
-                    title={<FormSectionHeader icon={Landmark} title="基础信息" description="优先确认文物名称、馆藏单位和时代。" />}
-                  >
-                    <div className="form-section-body">
-                      <div className="field-row">
-                        <label className="field">
-                          <span>馆藏单位 <FieldReviewBadge warning={warningForField("museum_name")} /></span>
-                          <AutoComplete
-                            value={selectedItem.form.museumName}
-                            options={museumSuggestions.map((museum) => ({
-                              key: museum.id,
-                              value: museum.name,
-                              label: museum.name,
-                            }))}
-                            filterOption={false}
-                            open={showMuseumSuggestions && museumSuggestions.length > 0}
-                            placeholder="例如：山东省博物馆"
-                            onFocus={() => setShowMuseumSuggestions(true)}
-                            onOpenChange={setShowMuseumSuggestions}
-                            onChange={(value) => {
-                              updateSelectedForm({ museumName: value })
-                              setShowMuseumSuggestions(true)
-                            }}
-                            onSelect={(value) => {
-                              updateSelectedForm({ museumName: value })
-                              setShowMuseumSuggestions(false)
-                            }}
-                          />
-                        </label>
+                  <BasicArtifactInfoCard
+                    form={selectedItem.form}
+                    museumSuggestions={museumSuggestions}
+                    artifactSearchResults={artifactSearchResults}
+                    showMuseumSuggestions={showMuseumSuggestions}
+                    showArtifactSearch={showArtifactSearch}
+                    warningForField={warningForField}
+                    onChange={updateSelectedForm}
+                    onMuseumSuggestionsOpenChange={setShowMuseumSuggestions}
+                    onArtifactSearchOpenChange={setShowArtifactSearch}
+                    onSelectExistingArtifact={selectArtifactFromNameSearch}
+                  />
 
-                        <label className="field">
-                          <span>
-                            文物名称 <FieldReviewBadge warning={warningForField("artifact_name")} />
-                            <small className="field-search-hint"><Search size={12} /> 搜索并选择已有文物后才复用</small>
-                          </span>
-                          <AutoComplete
-                            value={selectedItem.form.name}
-                            options={artifactSearchResults.map((artifact) => ({
-                              value: `artifact:${artifact.id}`,
-                              label: (
-                                <div className="artifact-name-search-option">
-                                  <strong>{artifact.name}</strong>
-                                  <span>{artifact.era || "时代待补充"} · {artifact.museum_name}</span>
-                                </div>
-                              ),
-                            }))}
-                            filterOption={false}
-                            open={showArtifactSearch && artifactSearchResults.length > 0}
-                            placeholder="例如：夫妇宴享行乐图"
-                            onFocus={() => setShowArtifactSearch(true)}
-                            onOpenChange={setShowArtifactSearch}
-                            onChange={(value) => {
-                              if (value.startsWith("artifact:")) return
-                              updateSelectedForm({ name: value })
-                              setShowArtifactSearch(true)
-                            }}
-                            onSelect={(value) => {
-                              const artifactId = Number(value.replace("artifact:", ""))
-                              if (Number.isInteger(artifactId)) selectArtifactFromNameSearch(artifactId)
-                            }}
-                          />
-                        </label>
-                      </div>
+                  <ExifCaptureCard
+                    form={selectedItem.form}
+                    onChange={updateSelectedForm}
+                    formatCapturedAt={formatCapturedAt}
+                  />
 
-                      <div className="field-row">
-                        <label className="field">
-                          <span>时代 <FieldReviewBadge warning={warningForField("era")} /></span>
-                          <Input
-                            value={selectedItem.form.era}
-                            placeholder="例如：隋代"
-                            onChange={(event) => updateSelectedForm({ era: event.target.value })}
-                          />
-                        </label>
+                  <ExifLocationCard
+                    apiBaseUrl={apiBaseUrl}
+                    form={selectedItem.form}
+                    locationSuggestions={locationSuggestions}
+                    showLocationSuggestions={showLocationSuggestions}
+                    onChange={updateSelectedForm}
+                    onLocationSuggestionsOpenChange={setShowLocationSuggestions}
+                    onLocate={(value, museum) => void locateDisplayLocation(value, museum)}
+                  />
 
-                        <label className="field">
-                          <span>出土地 <FieldReviewBadge warning={warningForField("place_of_excavation")} /></span>
-                          <Input
-                            value={selectedItem.form.placeOfExcavation}
-                            placeholder="例如：1976年嘉祥英山一号隋墓出土"
-                            onChange={(event) => updateSelectedForm({ placeOfExcavation: event.target.value })}
-                          />
-                        </label>
-                      </div>
-                    </div>
-                  </Card>
+                  {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <ExifDescriptionCandidates
+                    item={selectedItem}
+                    generating={generating}
+                    progress={descriptionProgress}
+                    researchSummary={liveResearchSummary}
+                    liveProviders={liveProviders}
+                    onGenerate={() => void handleGenerateDescription()}
+                    onReviewClaim={reviewVerifiedClaim}
+                    onToggleTag={toggleCandidateTag}
+                    onApplyCandidate={applyCandidate}
+                    toResearchUrl={(url) => researchSourceUrl(apiBaseUrl, url)}
+                  /> : null}
 
-                  <Card
-                    size="small"
-                    className="form-section exif-form-card exif-capture-card"
-                    title={<FormSectionHeader icon={Camera} title="拍摄信息" description="自动读取图片 EXIF，可在入库前校正。" />}
-                  >
-                    <div className="form-section-body">
-                      <div className="field-row">
-                        <label className="field">
-                          <span>相机型号</span>
-                          <Input value={selectedItem.form.cameraModel} placeholder="未读取" onChange={(event) => updateSelectedForm({ cameraModel: event.target.value })} />
-                        </label>
-                        <label className="field">
-                          <span>镜头型号</span>
-                          <Input value={selectedItem.form.lensModel} placeholder="未读取" onChange={(event) => updateSelectedForm({ lensModel: event.target.value })} />
-                        </label>
-                      </div>
-                      <div className="exif-capture-grid">
-                        <label className="field exif-captured-at-field">
-                          <span>拍摄时间</span>
-                          <Input
-                            value={selectedItem.form.capturedAt}
-                            placeholder="yyyy-MM-dd HH:mm:ss"
-                            onChange={(event) => updateSelectedForm({ capturedAt: event.target.value })}
-                            onBlur={(event) => updateSelectedForm({ capturedAt: formatCapturedAt(event.target.value) })}
-                          />
-                        </label>
-                        <label className="field">
-                          <span>快门</span>
-                          <Input value={selectedItem.form.shutterSpeed} placeholder="例如：1/80s" onChange={(event) => updateSelectedForm({ shutterSpeed: event.target.value })} />
-                        </label>
-                        <label className="field">
-                          <span>光圈</span>
-                          <Input value={selectedItem.form.aperture} placeholder="例如：f/8" onChange={(event) => updateSelectedForm({ aperture: event.target.value })} />
-                        </label>
-                        <label className="field">
-                          <span>ISO</span>
-                          <Input inputMode="numeric" value={selectedItem.form.iso} placeholder="例如：400" onChange={(event) => updateSelectedForm({ iso: event.target.value.replace(/\D/g, "") })} />
-                        </label>
-                      </div>
-                    </div>
-                  </Card>
-
-                  <Card
-                    size="small"
-                    className="form-section exif-form-card"
-                    title={<FormSectionHeader icon={MapPin} title="展出地点" description="填写展出地点、展览名称和定位坐标。" />}
-                  >
-                    <div className="form-section-body">
-                      <label className="field">
-                        <span>展出地点名称</span>
-                        <AutoComplete
-                          value={selectedItem.form.displayLocationName}
-                          options={locationSuggestions.map((museum) => ({
-                            key: museum.id,
-                            value: museum.name,
-                            label: (
-                              <span className="autocomplete-option">
-                                <span>{museum.name}</span>
-                                {(museum.latitude !== null && museum.longitude !== null) ? (
-                                  <span className="autocomplete-option-meta">{museum.latitude}, {museum.longitude}</span>
-                                ) : null}
-                              </span>
-                            ),
-                          }))}
-                          filterOption={false}
-                          open={showLocationSuggestions && locationSuggestions.length > 0}
-                          placeholder="例如：山东省博物馆"
-                          onFocus={() => setShowLocationSuggestions(true)}
-                          onOpenChange={setShowLocationSuggestions}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter" || event.nativeEvent.isComposing) return
-                            event.preventDefault()
-                            event.stopPropagation()
-                            void locateDisplayLocation(selectedItem.form.displayLocationName)
-                          }}
-                          onChange={(value) => {
-                            updateSelectedForm({ displayLocationName: value })
-                            setShowLocationSuggestions(true)
-                          }}
-                          onSelect={(value) => {
-                            const museum = locationSuggestions.find((option) => option.name === value)
-                            setShowLocationSuggestions(false)
-                            if (!museum) {
-                              void locateDisplayLocation(value)
-                              return
-                            }
-                            void locateDisplayLocation(value, museum)
-                          }}
-                        />
-                      </label>
-
-                      <label className="field">
-                        <span>对应展览</span>
-                        <ExhibitionRecommendationPicker
-                          apiBaseUrl={apiBaseUrl}
-                          capturedAt={selectedItem.form.capturedAt}
-                          latitude={selectedItem.form.latitude}
-                          longitude={selectedItem.form.longitude}
-                          location={selectedItem.form.displayLocationName}
-                          selectedSourceId={selectedItem.form.catalogExhibitionSourceId}
-                          selectedName={selectedItem.form.exhibitionName}
-                          onSelect={(item) => updateSelectedForm(item ? {
-                            exhibitionName: item.title,
-                            catalogExhibitionId: item.id,
-                            catalogExhibitionSourceId: item.source_id,
-                          } : {
-                            exhibitionName: "常设",
-                            catalogExhibitionId: null,
-                            catalogExhibitionSourceId: "",
-                          })}
-                          onManualChange={(value) => updateSelectedForm({
-                            exhibitionName: value,
-                            catalogExhibitionId: null,
-                            catalogExhibitionSourceId: "",
-                          })}
-                        />
-                      </label>
-
-                      <div className="field-row">
-                        <label className="field">
-                          <span>纬度</span>
-                          <Input
-                            value={selectedItem.form.latitude}
-                            placeholder="例如：35.117"
-                            onChange={(event) => updateSelectedForm({ latitude: event.target.value })}
-                          />
-                        </label>
-                        <label className="field">
-                          <span>经度</span>
-                          <Input
-                            value={selectedItem.form.longitude}
-                            placeholder="例如：117.188"
-                            onChange={(event) => updateSelectedForm({ longitude: event.target.value })}
-                          />
-                        </label>
-                      </div>
-                      <GpsMapPicker
-                        latitude={selectedItem.form.latitude}
-                        longitude={selectedItem.form.longitude}
-                        onPick={(latitude, longitude, displayLocationName) => updateSelectedForm({
-                          latitude,
-                          longitude,
-                          ...(displayLocationName ? { displayLocationName } : {}),
-                        })}
-                      />
-                    </div>
-                  </Card>
-
-                  {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <Card
-                    size="small"
-                    className="form-section exif-form-card"
-                    title={<FormSectionHeader icon={Sparkles} title="AI 补充描述（可选）" description="可以跳过直接入库，也可以生成候选描述后选一版写回当前图片。" />}
-                  >
-                    <div className="form-section-body">
-                      <div className="upload-actions exif-model-actions">
-                        <Button htmlType="button" type="primary" onClick={() => void handleGenerateDescription()} disabled={generating}>
-                          生成描述
-                        </Button>
-                        {selectedItem.descriptionMeta ? <p className="muted">{selectedItem.descriptionMeta}</p> : null}
-                      </div>
-                      {generating ? (
-                        <div className="research-live-panel" aria-live="polite">
-                          <div className="research-live-head">
-                            <span className="research-orbit" aria-hidden="true"><Sparkles size={16} /></span>
-                            <div>
-                              <strong>正在核验与生成</strong>
-                              <span>检索 Agent 和两个模型的进度会实时更新</span>
-                            </div>
-                            <Loader2 className="research-live-spinner" size={18} aria-hidden="true" />
-                          </div>
-                          <div className="research-trace">
-                            {descriptionProgress.map((step, index) => (
-                              <span key={step} className={index === descriptionProgress.length - 1 ? "is-active" : "is-done"}>
-                                {index < descriptionProgress.length - 1 ? <Check size={12} /> : <Loader2 size={12} />}
-                                {step}
-                              </span>
-                            ))}
-                          </div>
-                          {liveResearchSummary ? (
-                            <details className="live-reasoning" open>
-                              <summary>Agent 实时核验摘要</summary>
-                              <p>{liveResearchSummary}</p>
-                            </details>
-                          ) : null}
-                          {Object.keys(liveProviders).length > 0 ? (
-                            <div className="live-provider-grid">
-                              {Object.entries(liveProviders).map(([provider, state]) => (
-                                <article key={provider} className={`live-provider is-${state.status}`}>
-                                  <header>
-                                    <strong>{provider}</strong>
-                                    <span>{state.model}</span>
-                                  </header>
-                                  <p>{state.message}</p>
-                                  {state.reasoning ? <pre>{state.reasoning}</pre> : (
-                                    <div className="reasoning-skeleton" aria-hidden="true">
-                                      <i /><i /><i />
-                                    </div>
-                                  )}
-                                  {state.status === "complete" ? (
-                                    <small>{state.descriptionLength} 字描述 · {state.tagCount} 个标签</small>
-                                  ) : null}
-                                </article>
-                              ))}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
-                      <div className="exif-model-grid">
-                        {selectedItem.candidates.length > 0 ? selectedItem.candidates.map((candidate) => (
-                          <article key={`${candidate.provider}-${candidate.model}`} className={`exif-model-card ${candidate.status !== "success" ? "is-error" : ""}`}>
-                            <div className="result-head">
-                              <h3>{candidate.provider}</h3>
-                              <span>{candidate.model}</span>
-                            </div>
-                            <details className="exif-model-details">
-                              <summary>查看模型依据</summary>
-                              <pre className="exif-model-reasoning">{candidate.reasoning || candidate.error || "暂无依据返回"}</pre>
-                            </details>
-                            {candidate.research_summary ? (
-                              <details className="exif-model-details">
-                                <summary>查看联网核验报告</summary>
-                                <pre className="exif-model-reasoning">{candidate.research_summary}</pre>
-                              </details>
-                            ) : null}
-                            {candidate.status === "success" ? (
-                              <>
-                                <AnnotatedDescription
-                                  description={candidate.description || "暂无描述"}
-                                  warnings={candidate.field_warnings ?? []}
-                                />
-                                {(candidate.verified_claims?.length ?? 0) > 0 ? (
-                                  <div className="verified-claim-list">
-                                    {candidate.verified_claims
-                                      ?.filter((claim) => selectedItem.verificationDecisions?.[claim.text] !== "rejected")
-                                      .map((claim) => {
-                                        const accepted = selectedItem.verificationDecisions?.[claim.text] === "accepted"
-                                        return (
-                                          <article key={claim.text} className={accepted ? "is-accepted" : ""}>
-                                            <div className="verified-claim-copy">
-                                              <div className="verified-claim-tags">
-                                                <Tag color="blue">联网核验</Tag>
-                                                {claim.source_refs
-                                                  .filter((source) => source !== "联网核验")
-                                                  .map((source) => <Tag key={source}>{source}</Tag>)}
-                                              </div>
-                                              <p>{claim.text}</p>
-                                            </div>
-                                            <div className="verified-claim-actions">
-                                              <Tooltip title="内容正确，加入最终正文">
-                                                <Button
-                                                  htmlType="button"
-                                                  type={accepted ? "primary" : "default"}
-                                                  shape="circle"
-                                                  size="small"
-                                                  aria-label="确认联网核验内容并加入正文"
-                                                  icon={<Check size={14} />}
-                                                  onClick={() => reviewVerifiedClaim(claim, "accepted")}
-                                                />
-                                              </Tooltip>
-                                              <Tooltip title="内容错误，从最终正文删除">
-                                                <Button
-                                                  htmlType="button"
-                                                  danger
-                                                  shape="circle"
-                                                  size="small"
-                                                  aria-label="否认联网核验内容并删除"
-                                                  icon={<X size={14} />}
-                                                  onClick={() => reviewVerifiedClaim(claim, "rejected")}
-                                                />
-                                              </Tooltip>
-                                            </div>
-                                          </article>
-                                        )
-                                      })}
-                                  </div>
-                                ) : null}
-                                {(candidate.search_hits?.length ?? 0) > 0 ? (
-                                  <details className="exif-model-details exif-research-sources">
-                                    <summary>查看检索来源（{candidate.search_hits?.length}）</summary>
-                                    <div className="exif-source-list">
-                                      {candidate.search_hits?.map((hit, index) => (
-                                        <article key={hit.url}>
-                                          <a href={researchSourceUrl(apiBaseUrl, hit.url)} target="_blank" rel="noreferrer">
-                                            [{index + 1}] {hit.title}
-                                          </a>
-                                          {hit.source ? <span>{hit.source}</span> : null}
-                                          {hit.snippet ? <p>{hit.snippet}</p> : null}
-                                        </article>
-                                      ))}
-                                    </div>
-                                  </details>
-                                ) : null}
-                                <div className="result-meta selectable-model-tags">
-                                  {candidate.tags.length > 0 ? candidate.tags.map((tag) => (
-                                    <Tag.CheckableTag
-                                      key={tag}
-                                      checked={selectedItem.form.tags.includes(tag)}
-                                      onChange={() => toggleCandidateTag(tag)}
-                                    >
-                                      {selectedItem.form.tags.includes(tag) ? <Check size={12} /> : <span>＋</span>}
-                                      {tag}
-                                    </Tag.CheckableTag>
-                                  )) : <span>暂无标签</span>}
-                                </div>
-                                {candidate.tags.length > 0 ? <p className="model-tag-help">点击任意模型标签，可加入或移出最终标签。</p> : null}
-                                <Button htmlType="button" type="primary" icon={<Check size={14} aria-hidden="true" />} onClick={() => applyCandidate(candidate)}>
-                                  采用此描述
-                                </Button>
-                              </>
-                            ) : <p className="error-text">{candidate.error || "模型调用失败"}</p>}
-                          </article>
-                        )) : null}
-                      </div>
-                      {selectedItem.unavailableProviders.length > 0 ? (
-                        <p className="muted">未配置模型：{selectedItem.unavailableProviders.join(" / ")}</p>
-                      ) : null}
-                    </div>
-                  </Card> : null}
-
-                  {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <Card
-                    size="small"
-                    className="form-section exif-form-card"
-                    title={<FormSectionHeader icon={FileCheck2} title="最终写入内容" description="这里的描述与标签会写入 EXIF 和云端数据库。" />}
-                  >
-                    <div className="form-section-body">
-                      <label className="field">
-                        <span>描述</span>
-                        <Textarea
-                          rows={5}
-                          value={selectedItem.form.description}
-                          placeholder="文物描述会写入 EXIF 与云端数据库中"
-                          onChange={(event) => updateSelectedForm({ description: event.target.value })}
-                        />
-                      </label>
-
-                      <label className="field">
-                        <span>标签</span>
-                        <div className="tag-editor">
-                          <div className="tag-editor-chips">
-                            {selectedItem.form.tags.length > 0 ? selectedItem.form.tags.map((tag) => (
-                              <Tag
-                                key={tag}
-                                closable
-                                onClose={() => updateSelectedForm({
-                                  tags: selectedItem.form.tags.filter((entry) => entry !== tag),
-                                })}
-                              >
-                                {tag}
-                              </Tag>
-                            )) : <span className="tag-editor-placeholder">暂无标签</span>}
-                          </div>
-                          <Input
-                            value={tagInput}
-                            placeholder="输入后回车或逗号添加"
-                            onChange={(event) => setTagInput(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === ",") {
-                                event.preventDefault()
-                                addTags(tagInput)
-                              }
-                            }}
-                            onBlur={() => addTags(tagInput)}
-                          />
-                        </div>
-                      </label>
-                    </div>
-                  </Card> : null}
+                  {SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY ? <ExifMetadataEditor
+                    form={selectedItem.form}
+                    tagInput={tagInput}
+                    onChange={updateSelectedForm}
+                    onTagInputChange={setTagInput}
+                    onAddTags={addTags}
+                  /> : null}
                 </div>
               </div>
 
-              <div className="form-footer exif-form-footer">
-                <div className="exif-form-footer-copy">
-                  {selectedItem.submitMessage ? (
-                    <p className={selectedItem.submitState === "error" ? "error-text" : "success-text"}>{selectedItem.submitMessage}</p>
-                  ) : submitNotice ? (
-                    <p className={submitNotice.type === "error" ? "error-text" : "success-text"}>{submitNotice.text}</p>
-                  ) : <p className="muted">基础信息、拍摄信息和展出地点确认后即可入库；AI 描述可现在生成，也可稍后在图库补充。</p>}
-                </div>
-                <Button
-                  htmlType="button"
-                  onClick={syncSelectedMetadataToOthers}
-                  disabled={items.length < 2 || selectedItem.submitState === "submitting"}
-                >
-                  同步到其他照片
-                </Button>
-                <Button
-                  htmlType="button"
-                  type="primary"
-                  onClick={() => void submitOne(selectedItem.id)}
-                  disabled={selectedItem.submitState === "submitting" || (selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0)}
-                >
-                  {selectedItem.submitState === "submitting" ? "正在入库…" : selectedItem.submitState === "submitted" && changedParts(selectedItem).length === 0 ? "已入库" : selectedItem.submitState === "error" ? "授权并重试" : "保存并入库"}
-                </Button>
-              </div>
+              <ExifWorkbenchFooter
+                item={selectedItem}
+                itemCount={items.length}
+                submitNotice={submitNotice}
+                changedPartCount={changedParts(selectedItem).length}
+                onSync={syncSelectedMetadataToOthers}
+                onSubmit={() => void submitOne(selectedItem.id)}
+              />
             </form>
           ) : (
-            <div className="panel empty-state exif-main-empty">
-              <span className="exif-empty-symbol" aria-hidden="true">
-                <ImagePlus size={22} strokeWidth={1.6} />
-              </span>
-              <h2>从一张文物照片开始</h2>
-              <div className="upload-actions exif-empty-actions">
-                <Button
-                  htmlType="button"
-                  type="primary"
-                  icon={uploadActivity === "files"
-                    ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                    : <ImagePlus size={14} strokeWidth={1.8} aria-hidden="true" />}
-                  onClick={handleSelectImages}
-                  disabled={uploading}
-                >
-                  {uploadActivity === "files" ? "正在读取…" : "添加图片"}
-                </Button>
-                <Button
-                  htmlType="button"
-                  icon={uploadActivity === "directory"
-                    ? <Loader2 size={14} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
-                    : <FolderOpen size={14} strokeWidth={1.8} aria-hidden="true" />}
-                  onClick={() => void handleSelectDirectory()}
-                  disabled={uploading}
-                >
-                  {uploadActivity === "directory" ? "正在载入…" : "载入文件夹"}
-                </Button>
-              </div>
-            </div>
+            <ExifEmptyState
+              uploading={uploading}
+              activity={uploadActivity}
+              onSelectImages={handleSelectImages}
+              onSelectDirectory={() => void handleSelectDirectory()}
+            />
           )}
         </section>
       </div>

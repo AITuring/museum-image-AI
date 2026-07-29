@@ -271,6 +271,8 @@ const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
   { view: "eras", label: "时代", cloudVisible: true },
 ]
 
+const HISTORY_VIEWS = new Set<View>(["exif", "single", "batch"])
+
 function isViewAvailable(view: View) {
   return !cloudOnly || view === "gallery" || view === "museums" || view === "exhibitions" || view === "eras"
 }
@@ -283,6 +285,9 @@ function normalizeViewFromPath(pathname: string): View {
   const normalizedPath = pathname.replace(/\/+$/, "") || "/"
   if (/^\/gallery\/\d+$/.test(normalizedPath)) {
     return "gallery"
+  }
+  if (/^\/museums\/\d+$/.test(normalizedPath)) {
+    return "museums"
   }
   if (
     /^\/exhibitions\/\d+$/.test(normalizedPath)
@@ -860,7 +865,8 @@ function App() {
         || /^\/exhibitions\/history\/[^/]+\/?$/.test(window.location.pathname)
       )
     const isGalleryDetailPath = normalizedView === "gallery" && /^\/gallery\/\d+\/?$/.test(window.location.pathname)
-    if (window.location.pathname !== targetPath && !isExhibitionDetailPath && !isGalleryDetailPath) {
+    const isMuseumDetailPath = normalizedView === "museums" && /^\/museums\/\d+\/?$/.test(window.location.pathname)
+    if (window.location.pathname !== targetPath && !isExhibitionDetailPath && !isGalleryDetailPath && !isMuseumDetailPath) {
       window.history.replaceState({}, "", targetPath)
     }
 
@@ -1268,10 +1274,12 @@ function App() {
               onChange={(value) => handleViewChange(value as View)}
             />
           </nav>
-          <OperationHistoryControls
-            scope={view}
-            scopeLabel={NAV_ITEMS.find((item) => item.view === view)?.label ?? "当前 Tab"}
-          />
+          {HISTORY_VIEWS.has(view) ? (
+            <OperationHistoryControls
+              scope={view}
+              scopeLabel={NAV_ITEMS.find((item) => item.view === view)?.label ?? "当前 Tab"}
+            />
+          ) : null}
           {import.meta.env.DEV ? (
             <label className={`backend-target-select-wrap ${health ? "online" : "offline"}`}>
               <span className="sr-only">后端环境</span>

@@ -195,6 +195,34 @@
   gap: 14px;
 }
 
+.museum-detail-page {
+  display: grid;
+  gap: 18px;
+}
+
+.museum-detail-page-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--ui-line-subtle);
+}
+
+.museum-detail-page-head h2 {
+  margin: 3px 0 0;
+  font-family: "Songti SC", "STSong", "Noto Serif SC", serif;
+  font-size: clamp(26px, 2.4vw, 34px);
+  color: var(--ui-text-primary);
+}
+
+.museum-detail-page .museum-stage {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
 .museum-stage-copy {
   display: grid;
   gap: 4px;
@@ -459,6 +487,11 @@
     width: 100%;
   }
 
+  .museum-detail-page-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .museum-summary-card-head,
   .museum-summary-card-foot,
   .museum-folder-column-head,
@@ -467,4 +500,3 @@
     align-items: flex-start;
   }
 }
-

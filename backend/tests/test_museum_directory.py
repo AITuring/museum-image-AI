@@ -1,5 +1,6 @@
 import unittest
 from datetime import date, timedelta
+from unittest.mock import patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -8,8 +9,8 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.exhibition_db import ExhibitionCatalogBase
 from app.exhibition_models import CatalogExhibition
-from app.main import list_exhibition_catalog, list_museum_directory
-from app.models import Museum
+from app.main import is_allowed_remote_image_url, list_exhibition_catalog, list_museum_directory
+from app.models import Artifact, ArtifactImage, Museum
 
 
 def catalog_exhibition(
@@ -43,6 +44,11 @@ def catalog_exhibition(
 
 class MuseumDirectoryTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.cloud_proxy = patch(
+            "app.main.should_proxy_artifact_queries_to_cloud",
+            return_value=False,
+        )
+        self.cloud_proxy.start()
         self.main_engine = create_engine(
             "sqlite+pysqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -63,10 +69,18 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.catalog_db.close()
         self.main_engine.dispose()
         self.catalog_engine.dispose()
+        self.cloud_proxy.stop()
+
+    def add_uploaded_museum(self, name: str, *, location: str | None = None) -> Museum:
+        museum = Museum(name=name, location=location)
+        artifact = Artifact(name=f"{name}藏品", museum=museum)
+        artifact.images.append(ArtifactImage(url=f"/files/uploads/{name}.jpg"))
+        self.main_db.add(museum)
+        self.main_db.commit()
+        return museum
 
     def test_directory_merges_known_museum_and_adds_catalog_venues(self) -> None:
-        self.main_db.add(Museum(name="山东博物馆", location="济南"))
-        self.main_db.commit()
+        self.add_uploaded_museum("山东博物馆", location="济南")
         self.catalog_db.add_all(
             [
                 catalog_exhibition(
@@ -101,7 +115,7 @@ class MuseumDirectoryTests(unittest.TestCase):
             catalog_db=self.catalog_db,
         )
 
-        self.assertEqual(len(directory), 2)
+        self.assertEqual(len(directory), 1)
         shandong = next(item for item in directory if item.name == "山东博物馆")
         self.assertGreater(shandong.id, 0)
         self.assertEqual(shandong.catalog_exhibition_count, 2)
@@ -109,10 +123,7 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.assertEqual(shandong.last_year, 2026)
         self.assertFalse(shandong.derived_from_catalog)
 
-        confucius = next(item for item in directory if item.name == "孔子博物馆")
-        self.assertLess(confucius.id, 0)
-        self.assertEqual(confucius.exhibition_count, 1)
-        self.assertTrue(confucius.derived_from_catalog)
+        self.assertNotIn("孔子博物馆", [item.name for item in directory])
 
     def test_catalog_can_filter_an_exact_museum_venue(self) -> None:
         self.catalog_db.add_all(
@@ -153,10 +164,56 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.assertEqual(result.total, 1)
         self.assertEqual(result.items[0].title, "山东展览")
 
+    def test_directory_only_contains_museums_with_uploaded_images(self) -> None:
+        self.add_uploaded_museum("上海博物馆")
+        self.catalog_db.add_all(
+            [
+                catalog_exhibition(
+                    "museum",
+                    venue="第一展览厅",
+                    museum_name="上海博物馆",
+                    city="上海",
+                    title="馆藏书画展",
+                    start_date=date(2026, 1, 1),
+                ),
+                catalog_exhibition(
+                    "room",
+                    venue="1、2号展厅",
+                    city="天津",
+                    title="展厅活动",
+                    start_date=date(2026, 1, 1),
+                ),
+                catalog_exhibition(
+                    "complex",
+                    venue="1933老场坊1号楼3楼",
+                    city="上海",
+                    title="空间活动",
+                    start_date=date(2026, 1, 1),
+                ),
+            ]
+        )
+        self.catalog_db.commit()
+
+        directory = list_museum_directory(
+            q=None,
+            limit=100,
+            db=self.main_db,
+            catalog_db=self.catalog_db,
+        )
+
+        self.assertEqual([item.name for item in directory], ["上海博物馆"])
+
+    def test_image_variant_allows_imuseum_cdn_covers(self) -> None:
+        self.assertTrue(
+            is_allowed_remote_image_url(
+                "https://icity-static.icitycdn.com/images/uploads/cover.jpg"
+            )
+        )
+        self.assertFalse(is_allowed_remote_image_url("https://example.com/cover.jpg"))
+
     def test_directory_uses_dominant_address_while_parent_museum_is_backfilled(self) -> None:
         address = "上海市黄浦区人民大道201号"
-        self.main_db.add(Museum(name="上海博物馆"))
-        self.main_db.commit()
+        self.add_uploaded_museum("上海博物馆")
         first = catalog_exhibition(
             "sh-title",
             venue="第一展览厅",

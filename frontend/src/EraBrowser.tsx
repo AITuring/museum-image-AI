@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Image as ImageIcon, Landmark, Search } from "lucide-react"
+import { ChevronRight, Image as ImageIcon, Landmark, Search } from "lucide-react"
 import { Input, Spin } from "antd"
 import "./styles/eras.css"
 
@@ -27,6 +27,30 @@ type EraTimelinePayload = {
   artifacts: Artifact[]
 }
 
+const ERA_IMAGE_NAMES = new Set([
+  "新石器时代", "夏", "商", "西周", "春秋", "战国", "秦", "西汉", "东汉", "三国",
+  "西晋", "东晋", "北朝", "南朝", "北魏", "北齐", "北燕", "隋", "唐", "五代十国",
+  "北宋", "南宋", "元", "明", "清",
+])
+
+const ERA_IMAGE_FALLBACKS: Record<string, string> = {
+  "南北朝": "南朝",
+  "刘宋": "南朝",
+  "南齐": "南朝",
+  "梁": "南朝",
+  "陈": "南朝",
+  "东魏": "北魏",
+  "西魏": "北魏",
+  "北齐": "北魏",
+  "北周": "北魏",
+  "北燕": "北魏",
+}
+
+function eraImageUrl(name: string) {
+  const assetName = ERA_IMAGE_FALLBACKS[name] ?? (name === "五代十国" ? "五代" : name)
+  return ERA_IMAGE_NAMES.has(assetName) ? `/era/${encodeURIComponent(assetName)}.png` : null
+}
+
 function navigateTo(path: string) {
   if (window.location.pathname === path) return
   window.history.pushState({}, "", path)
@@ -43,6 +67,7 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(() => new Set())
 
   const load = useCallback(async (era: string | null) => {
     setLoading(true)
@@ -68,6 +93,14 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     return () => window.removeEventListener("popstate", syncRoute)
   }, [])
 
+  useEffect(() => {
+    const selected = payload?.eras.find((item) => item.name === selectedEra)
+    if (!selected?.parent) return
+    setExpandedParents((current) => current.has(selected.parent)
+      ? current
+      : new Set([...current, selected.parent]))
+  }, [payload?.eras, selectedEra])
+
   const visibleArtifacts = useMemo(() => {
     const needle = query.trim().toLowerCase()
     if (!needle) return payload?.artifacts ?? []
@@ -86,6 +119,26 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   const selectedItem = payload?.eras.find((item) => item.name === selectedEra)
+  const childParentNames = useMemo(
+    () => new Set((payload?.eras ?? []).flatMap((item) => item.parent ? [item.parent] : [])),
+    [payload?.eras],
+  )
+  const visibleEras = useMemo(
+    () => (payload?.eras ?? []).filter((item) => !item.parent || expandedParents.has(item.parent)),
+    [expandedParents, payload?.eras],
+  )
+
+  function handleEraSelection(item: EraItem) {
+    if (childParentNames.has(item.name)) {
+      setExpandedParents((current) => {
+        const next = new Set(current)
+        if (next.has(item.name)) next.delete(item.name)
+        else next.add(item.name)
+        return next
+      })
+    }
+    chooseEra(item.name)
+  }
 
   return (
     <section className="era-browser" aria-labelledby="era-browser-title">
@@ -105,9 +158,13 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
         <aside className="era-rail" aria-label="时代筛选">
           <div className="era-rail-heading"><span>朝代</span><button className={!selectedEra ? "active" : ""} onClick={() => chooseEra(null)}>全部</button></div>
           <div className="era-rail-list">
-            {(payload?.eras ?? []).map((item) => (
-              <button key={item.name} className={`${item.parent ? "era-rail-child" : ""} ${selectedEra === item.name ? "active" : ""}`} onClick={() => chooseEra(item.name)}>
-                <strong>{item.name}</strong><span>{item.count}</span>
+            {visibleEras.map((item) => (
+              <button key={item.name} className={`${item.parent ? "era-rail-child" : ""} ${selectedEra === item.name ? "active" : ""}`} onClick={() => handleEraSelection(item)}>
+                <span className="era-rail-title">
+                  {eraImageUrl(item.name) ? <img src={eraImageUrl(item.name) ?? undefined} alt="" aria-hidden="true" /> : null}
+                  <strong>{childParentNames.has(item.name) ? <><ChevronRight className={expandedParents.has(item.name) ? "expanded" : ""} size={14} aria-hidden="true" />{item.name}</> : item.name}</strong>
+                </span>
+                <span className="era-rail-count">{item.count}</span>
               </button>
             ))}
           </div>
@@ -125,7 +182,10 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
             <div className="era-artifact-grid">
               {visibleArtifacts.map((artifact) => {
                 const image = artifact.images[0]
-                return <a className="era-artifact-card" href={`/gallery/${artifact.id}`} key={artifact.id} onClick={(event) => { event.preventDefault(); navigateTo(`/gallery/${artifact.id}`) }}>
+                const returnParams = new URLSearchParams({ from: "eras" })
+                if (selectedEra) returnParams.set("era", selectedEra)
+                const detailPath = `/gallery/${artifact.id}?${returnParams.toString()}`
+                return <a className="era-artifact-card" href={detailPath} key={artifact.id} onClick={(event) => { event.preventDefault(); navigateTo(detailPath) }}>
                   <div className="era-artifact-cover">{image ? <img src={image.url} alt="" /> : <ImageIcon size={22} aria-hidden="true" />}</div>
                   <div className="era-artifact-copy"><span>{artifact.era || selectedEra}</span><strong>{artifact.name}</strong><p><Landmark size={12} aria-hidden="true" />{artifact.museum_name}</p></div>
                 </a>
