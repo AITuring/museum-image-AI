@@ -9,6 +9,8 @@ on:
       - "docker-compose.cloud.yml"
       - ".github/workflows/deploy-cloud.yml"
       - "scripts/deploy_cloud.sh"
+      - "scripts/docker_cleanup.sh"
+      - "scripts/install_docker_cleanup_timer.sh"
       - "scripts/rollback_cloud.sh"
       - ".env.example"
   workflow_dispatch:
@@ -129,6 +131,8 @@ jobs:
           HEALTHCHECK_RETRIES: "30"
           HEALTHCHECK_INTERVAL: "5"
           DEPLOY_EXHIBITION_SYNC_WORKER: "false"
+          INSTALL_DOCKER_CLEANUP_TIMER: "true"
+          DOCKER_CLEANUP_RETENTION_DAYS: "7"
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
@@ -136,7 +140,7 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           command_timeout: 40m
           script_stop: true
-          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,DEPLOY_EXHIBITION_SYNC_WORKER
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,DEPLOY_EXHIBITION_SYNC_WORKER,INSTALL_DOCKER_CLEANUP_TIMER,DOCKER_CLEANUP_RETENTION_DAYS
           script: |
             set -euo pipefail
             mkdir -p "$(dirname "$DEPLOY_PATH")"

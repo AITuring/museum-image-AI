@@ -14,6 +14,8 @@ GHCR_USERNAME="${GHCR_USERNAME:-}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 REPO_SSH_PRIVATE_KEY_B64="${REPO_SSH_PRIVATE_KEY_B64:-}"
 DEPLOY_EXHIBITION_SYNC_WORKER="${DEPLOY_EXHIBITION_SYNC_WORKER:-false}"
+INSTALL_DOCKER_CLEANUP_TIMER="${INSTALL_DOCKER_CLEANUP_TIMER:-true}"
+DOCKER_CLEANUP_RETENTION_DAYS="${DOCKER_CLEANUP_RETENTION_DAYS:-7}"
 
 DEPLOY_STATE_DIR="$DEPLOY_PATH/.deploy"
 CURRENT_RELEASE_FILE="$DEPLOY_STATE_DIR/current_release.env"
@@ -181,6 +183,14 @@ deploy_release() {
   write_release_state "$release_commit" "$image"
 }
 
+install_docker_cleanup_timer() {
+  log "Installing Docker image/cache cleanup timer"
+  DEPLOY_PATH="$DEPLOY_PATH" \
+    INSTALL_DOCKER_CLEANUP_TIMER="$INSTALL_DOCKER_CLEANUP_TIMER" \
+    DOCKER_CLEANUP_RETENTION_DAYS="$DOCKER_CLEANUP_RETENTION_DAYS" \
+    bash "$DEPLOY_PATH/scripts/install_docker_cleanup_timer.sh"
+}
+
 main() {
   require_command git
   require_command docker
@@ -206,6 +216,7 @@ main() {
   target_commit="$(git rev-parse --verify HEAD)"
 
   if deploy_release "$target_commit" "$BACKEND_IMAGE"; then
+    install_docker_cleanup_timer
     log "Deployment succeeded for $target_commit"
     return 0
   fi

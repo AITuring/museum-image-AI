@@ -418,6 +418,15 @@ docker compose -f docker-compose.cloud.yml up -d --build
 
 后端监听 `${BACKEND_PORT:-8000}`。以后更新：`git pull && docker compose -f docker-compose.cloud.yml up -d --build`。
 
+云端部署脚本会自动安装 `museum-image-docker-cleanup.timer`：每天凌晨检查一次，只清理 **7 天前且未被容器使用** 的镜像和构建缓存；不会清理 PostgreSQL 数据卷或上传数据。检查状态：
+
+```bash
+systemctl list-timers museum-image-docker-cleanup.timer
+systemctl status museum-image-docker-cleanup.timer
+```
+
+默认保留天数可在部署环境中通过 `DOCKER_CLEANUP_RETENTION_DAYS` 调整；若需要关闭自动安装，设为 `INSTALL_DOCKER_CLEANUP_TIMER=false`。
+
 #### 2）Vercel（前端）
 
 在 Vercel 新建项目，指向本仓库：
