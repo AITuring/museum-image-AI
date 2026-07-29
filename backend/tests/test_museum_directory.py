@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -9,8 +9,14 @@ from sqlalchemy.pool import StaticPool
 from app.db import Base
 from app.exhibition_db import ExhibitionCatalogBase
 from app.exhibition_models import CatalogExhibition
-from app.main import is_allowed_remote_image_url, list_exhibition_catalog, list_museum_directory
+from app.main import (
+    build_uploaded_museum_directory,
+    is_allowed_remote_image_url,
+    list_exhibition_catalog,
+    list_museum_directory,
+)
 from app.models import Artifact, ArtifactImage, Museum
+from app.schemas import ArtifactImageRead, ArtifactRead
 
 
 def catalog_exhibition(
@@ -202,6 +208,40 @@ class MuseumDirectoryTests(unittest.TestCase):
         )
 
         self.assertEqual([item.name for item in directory], ["上海博物馆"])
+
+    def test_uploaded_directory_merges_trailing_cang_museum_names(self) -> None:
+        now = datetime.now()
+
+        def artifact(artifact_id: int, museum_id: int, museum_name: str) -> ArtifactRead:
+            return ArtifactRead(
+                id=artifact_id,
+                museum_id=museum_id,
+                name=f"{museum_name}文物",
+                created_at=now,
+                museum_name=museum_name,
+                images=[
+                    ArtifactImageRead(
+                        id=artifact_id,
+                        artifact_id=artifact_id,
+                        artifact_name=f"{museum_name}文物",
+                        museum_name=museum_name,
+                        url=f"/files/uploads/{artifact_id}.jpg",
+                        created_at=now,
+                        uploaded_at=now,
+                    )
+                ],
+            )
+
+        directory = build_uploaded_museum_directory(
+            [artifact(1, 8, "河北博物院"), artifact(2, 23, "河北博物院藏")],
+            q=None,
+            limit=100,
+        )
+
+        self.assertEqual(len(directory), 1)
+        self.assertEqual(directory[0].name, "河北博物院")
+        self.assertEqual(directory[0].museum_id, 8)
+        self.assertEqual(directory[0].artifact_count, 2)
 
     def test_image_variant_allows_imuseum_cdn_covers(self) -> None:
         self.assertTrue(

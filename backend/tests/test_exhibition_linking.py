@@ -86,6 +86,13 @@ class ExhibitionLinkingTests(unittest.TestCase):
         self.assertEqual(linked.catalog_source_id, "shanghai-civilization")
         self.assertEqual(linked.catalog_exhibition_id, 42)
 
+    def test_quick_entry_museum_write_strips_trailing_cang(self) -> None:
+        canonical = ensure_museum(self.artifact_db, "河北博物院")
+        from_artifact_provenance = ensure_museum(self.artifact_db, "河北博物院藏")
+
+        self.assertEqual(from_artifact_provenance.id, canonical.id)
+        self.assertEqual(from_artifact_provenance.name, "河北博物院")
+
     def test_gallery_read_merges_old_venue_and_museum_duplicates(self) -> None:
         with self.catalog_session_factory() as catalog_db:
             catalog_db.add(

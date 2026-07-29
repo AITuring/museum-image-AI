@@ -21,6 +21,7 @@ data/image_variants/
 
 # Sensitive: web-bridge login sessions and Chrome profiles (contain auth cookies)
 data/*_web_state.json
+data/museum-directory-cloud-cache.json
 data/web_chrome_profile/
 data/login_chrome_profile/
 data/chrome_profile*/

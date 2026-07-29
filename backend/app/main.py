@@ -817,7 +817,13 @@ def render_image_variant(source_bytes: bytes, target_path: Path, size: int) -> N
 
 
 def ensure_museum(db: Session, museum_name: str) -> Museum:
-    name = museum_name.strip()
+    # ``故宫博物院藏`` means an artifact is held by the Palace Museum; “藏”
+    # is not part of the institution name. Normalize at the write boundary so
+    # quick entry cannot create a second Museum row that the directory later
+    # has to merge back together.
+    name = normalize_museum_segment(museum_name)
+    if not name:
+        raise HTTPException(status_code=400, detail="馆藏单位不能为空。")
     museum = db.scalar(select(Museum).where(Museum.name == name))
     if museum is not None:
         return museum
@@ -2247,15 +2253,19 @@ def build_uploaded_museum_directory(
     database may only hold a staging record, so deriving the directory from
     local ``Museum`` rows makes nearly every uploaded photo disappear.
     """
-    groups: dict[tuple[int, str], dict[str, object]] = {}
+    groups: dict[str, dict[str, object]] = {}
     for raw_artifact in artifacts:
         artifact = ArtifactRead.model_validate(raw_artifact)
         if not artifact.images:
             continue
-        museum_name = artifact.museum_name.strip()
+        # ``馆藏`` / ``藏`` describes the artifact provenance, not another
+        # museum. Cloud imports may have created a separate Museum row before
+        # filename parsing was fixed, so group by the canonical display name
+        # instead of the database row id.
+        museum_name = normalize_museum_segment(artifact.museum_name)
         if not museum_name:
             continue
-        key = (artifact.museum_id, normalize_museum_directory_key(museum_name))
+        key = normalize_museum_directory_key(museum_name)
         group = groups.setdefault(
             key,
             {
@@ -2269,6 +2279,9 @@ def build_uploaded_museum_directory(
                 "exhibitions": {},
             },
         )
+        # The card needs one stable route id, while the grouped artifacts can
+        # originate from duplicate historical Museum records.
+        group["id"] = min(int(group["id"]), artifact.museum_id)
         cast_artifact_ids = group["artifact_ids"]
         assert isinstance(cast_artifact_ids, set)
         cast_artifact_ids.add(artifact.id)
@@ -3498,7 +3511,7 @@ def ingest_artifact(
         existing_match = find_existing_artifact_match(
             db,
             name=name,
-            museum_name=museum_name,
+            museum_name=museum.name,
             era=era,
         )
         artifact = existing_match.artifact if existing_match is not None else None

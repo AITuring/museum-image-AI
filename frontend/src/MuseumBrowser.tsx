@@ -469,14 +469,14 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   const loadMuseumArtifacts = useCallback(
     async (museum: MuseumRecord) => {
-      if (museum.museum_id == null) {
-        setArtifactStore((current) => ({ ...current, [museum.id]: [] }))
-        return
-      }
       setArtifactLoadingId(museum.id)
       setArtifactErrors((current) => ({ ...current, [museum.id]: null }))
       try {
-        const response = await fetch(`${apiBaseUrl}/api/artifacts?museum_id=${museum.museum_id}`)
+        // Museum rows created before ``馆藏``/``藏`` normalization can have
+        // different ids. Query by the canonical card name so its detail view
+        // contains every uploaded artifact that was merged into that card.
+        const params = new URLSearchParams({ q: museum.name })
+        const response = await fetch(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
         if (!response.ok) throw new Error(`HTTP ${response.status}`)
         const payload = ((await response.json()) as RawMuseumArtifact[]).map((item) => normalizeArtifact(item))
         setArtifactStore((current) => ({ ...current, [museum.id]: payload }))
