@@ -57,6 +57,134 @@
   font-variant-numeric: tabular-nums;
 }
 
+.museum-history-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+}
+
+.museum-history-toggle {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ui-text-secondary);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.museum-history-toggle:hover {
+  border-color: rgba(138, 110, 72, 0.45);
+  background: #fffdf9;
+}
+
+.museum-history-toggle:active {
+  transform: scale(0.97);
+}
+
+.museum-history-toggle:focus-visible,
+.museum-current-year-timeline-bar:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-ring);
+}
+
+.museum-current-year-timeline {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(138, 110, 72, 0.16);
+  border-radius: 10px;
+  background: linear-gradient(110deg, #fffdf9, #f5f1e9);
+}
+
+.museum-current-year-timeline-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #765b39;
+  font-size: 0.76rem;
+}
+
+.museum-current-year-timeline-head > span {
+  color: var(--ui-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.museum-current-year-timeline-scroll {
+  overflow-x: auto;
+  padding: 2px 0 5px;
+  scrollbar-width: thin;
+}
+
+.museum-current-year-timeline-grid {
+  display: grid;
+  min-width: 720px;
+  grid-template-columns: repeat(12, minmax(58px, 1fr));
+  gap: 6px 0;
+  padding-bottom: 2px;
+}
+
+.museum-current-year-month {
+  display: grid;
+  place-items: center;
+  border-right: 1px solid rgba(138, 110, 72, 0.13);
+  border-bottom: 1px solid rgba(138, 110, 72, 0.2);
+  color: #836b4d;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.museum-current-year-timeline-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  margin: 0 3px;
+  padding: 0 9px;
+  border-radius: 5px;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
+  transition: transform 200ms ease, box-shadow 200ms ease, filter 200ms ease;
+}
+
+.museum-current-year-timeline-bar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.museum-current-year-timeline-bar:hover {
+  transform: translateY(-1px);
+  filter: saturate(1.1) brightness(1.03);
+  box-shadow: 0 5px 12px rgba(31, 38, 40, 0.16);
+}
+
+.museum-current-year-timeline-bar.tone-0 { background: #9b6d52; }
+.museum-current-year-timeline-bar.tone-1 { background: #5f8b7a; }
+.museum-current-year-timeline-bar.tone-2 { background: #7885a4; }
+.museum-current-year-timeline-bar.tone-3 { background: #b17d5f; }
+.museum-current-year-timeline-bar.tone-4 { background: #80705f; }
+.museum-current-year-timeline-bar.tone-5 { background: #8c6e95; }
+
+.museum-current-year-timeline-bar:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -3px;
+  box-shadow: 0 0 0 3px rgba(101, 78, 49, 0.42);
+}
+
+.museum-current-year-empty {
+  color: var(--ui-text-tertiary);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .museum-history-years {
   display: grid;
   max-height: 330px;
@@ -64,6 +192,16 @@
   padding-right: 5px;
   gap: 2px;
   overscroll-behavior: contain;
+}
+
+.museum-history-years-expanded {
+  max-height: 460px;
+  animation: museum-history-expand 220ms ease-out;
+}
+
+@keyframes museum-history-expand {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .museum-history-year {
@@ -175,6 +313,10 @@
   .museum-history-status {
     min-width: 42px;
   }
+
+  .museum-history-actions {
+    gap: 6px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -182,4 +324,3 @@
     transition: none;
   }
 }
-

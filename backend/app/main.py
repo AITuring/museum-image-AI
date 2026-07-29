@@ -1341,9 +1341,12 @@ def resolve_capture_context(
         except Exception:
             logger.warning("resolve catalog exhibition failed", exc_info=True)
 
-    resolved_capture_museum_name = (
+    # The operator's chosen shooting museum is authoritative. Catalog metadata
+    # describes the exhibition and may contain a hall/floor or an older venue
+    # name, so it must never overwrite an explicit museum selection.
+    resolved_capture_museum_name = optional_text(capture_museum_name) or (
         optional_text(catalog_item.museum_name) if catalog_item is not None else None
-    ) or optional_text(capture_museum_name)
+    )
     if resolved_capture_museum_name is None and catalog_item is not None:
         resolved_capture_museum_name = (
             optional_text(catalog_item.venue)
@@ -2270,6 +2273,7 @@ def build_uploaded_museum_directory(
             key,
             {
                 "id": artifact.museum_id,
+                "museum_ids": set(),
                 "name": museum_name,
                 "artifact_ids": set(),
                 "image_count": 0,
@@ -2282,6 +2286,9 @@ def build_uploaded_museum_directory(
         # The card needs one stable route id, while the grouped artifacts can
         # originate from duplicate historical Museum records.
         group["id"] = min(int(group["id"]), artifact.museum_id)
+        cast_museum_ids = group["museum_ids"]
+        assert isinstance(cast_museum_ids, set)
+        cast_museum_ids.add(artifact.museum_id)
         cast_artifact_ids = group["artifact_ids"]
         assert isinstance(cast_artifact_ids, set)
         cast_artifact_ids.add(artifact.id)
@@ -2318,8 +2325,10 @@ def build_uploaded_museum_directory(
     directory: list[MuseumDirectoryRead] = []
     for group in groups.values():
         artifact_ids = group["artifact_ids"]
+        museum_ids = group["museum_ids"]
         exhibitions = group["exhibitions"]
         assert isinstance(artifact_ids, set)
+        assert isinstance(museum_ids, set)
         assert isinstance(exhibitions, dict)
         image_count = int(group["image_count"])
         coordinate_clusters = group["coordinate_clusters"]
@@ -2335,6 +2344,7 @@ def build_uploaded_museum_directory(
             MuseumDirectoryRead(
                 id=int(group["id"]),
                 museum_id=int(group["id"]),
+                museum_ids=sorted(int(museum_id) for museum_id in museum_ids),
                 name=str(group["name"]),
                 location=str(group["location"]) if group["location"] else None,
                 latitude=latitude,
@@ -2358,6 +2368,50 @@ def build_uploaded_museum_directory(
         ]
     directory.sort(key=lambda item: (normalize_museum_directory_key(item.name), item.id))
     return directory[:limit]
+
+
+def attach_catalog_metadata_to_uploaded_museum_directory(
+    directory: list[MuseumDirectoryRead],
+    catalog_db: Session,
+) -> list[MuseumDirectoryRead]:
+    """Connect Gallery-derived museum cards to local exhibition catalog rows."""
+    by_name = {normalize_museum_directory_key(item.name): item for item in directory}
+    if not by_name:
+        return directory
+
+    matches: dict[str, list[CatalogExhibition]] = {}
+    catalog_rows = catalog_db.scalars(
+        select(CatalogExhibition).where(
+            CatalogExhibition.museum_name.is_not(None),
+            func.trim(CatalogExhibition.museum_name) != "",
+        )
+    )
+    for row in catalog_rows:
+        key = normalize_museum_directory_key(row.museum_name)
+        if key in by_name:
+            matches.setdefault(key, []).append(row)
+
+    for key, rows in matches.items():
+        item = by_name[key]
+        years = [
+            year
+            for row in rows
+            for year in (row.start_year, row.end_year or row.start_year)
+            if year is not None
+        ]
+        item.catalog_exhibition_count = len(rows)
+        item.exhibition_count = max(item.exhibition_count, len(rows))
+        item.first_year = min(years) if years else None
+        item.last_year = max(years) if years else None
+        item.cover_url = item.cover_url or next((row.cover_url for row in rows if row.cover_url), None)
+        item.catalog_museum_name = item.name
+        item.catalog_address = None
+        item.catalog_venue = item.name
+        item.catalog_city = next((optional_text(row.city) for row in rows if optional_text(row.city)), None)
+        item.catalog_region = next((optional_text(row.region) for row in rows if optional_text(row.region)), None)
+        if not item.location:
+            item.location = next((optional_text(row.address) for row in rows if optional_text(row.address)), None)
+    return directory
 
 
 def build_artifact_match_read(match: ArtifactMatchCandidate) -> ArtifactMatchRead:
@@ -4792,7 +4846,8 @@ def list_museum_directory(
         except Exception as exc:  # noqa: BLE001 - keep the local directory page available
             logger.error("查询云端图库失败，场馆目录暂时返回空列表：%s", exc)
             return []
-        return build_uploaded_museum_directory(cloud_artifacts, q, limit)
+        directory = build_uploaded_museum_directory(cloud_artifacts, q, limit)
+        return attach_catalog_metadata_to_uploaded_museum_directory(directory, catalog_db)
 
     museums = list(
         db.scalars(

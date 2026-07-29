@@ -95,10 +95,14 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
   useEffect(() => {
     const selected = payload?.eras.find((item) => item.name === selectedEra)
-    if (!selected?.parent) return
-    setExpandedParents((current) => current.has(selected.parent)
-      ? current
-      : new Set([...current, selected.parent]))
+    const parent = selected?.parent
+    if (!parent) return
+    setExpandedParents((current) => {
+      if (!parent || current.has(parent)) return current
+      const next = new Set(current)
+      next.add(parent)
+      return next
+    })
   }, [payload?.eras, selectedEra])
 
   const visibleArtifacts = useMemo(() => {

@@ -10,6 +10,7 @@ from app.db import Base
 from app.exhibition_db import ExhibitionCatalogBase
 from app.exhibition_models import CatalogExhibition
 from app.main import (
+    attach_catalog_metadata_to_uploaded_museum_directory,
     build_uploaded_museum_directory,
     is_allowed_remote_image_url,
     list_exhibition_catalog,
@@ -242,6 +243,51 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.assertEqual(directory[0].name, "河北博物院")
         self.assertEqual(directory[0].museum_id, 8)
         self.assertEqual(directory[0].artifact_count, 2)
+        self.assertEqual(directory[0].museum_ids, [8, 23])
+
+    def test_uploaded_directory_connects_matching_catalog_museum(self) -> None:
+        now = datetime.now()
+        directory = build_uploaded_museum_directory(
+            [
+                ArtifactRead(
+                    id=1,
+                    museum_id=8,
+                    name="测试文物",
+                    created_at=now,
+                    museum_name="上海博物馆",
+                    images=[
+                        ArtifactImageRead(
+                            id=1,
+                            artifact_id=1,
+                            artifact_name="测试文物",
+                            museum_name="上海博物馆",
+                            url="/files/uploads/test.jpg",
+                            created_at=now,
+                            uploaded_at=now,
+                        )
+                    ],
+                )
+            ],
+            q=None,
+            limit=100,
+        )
+        self.catalog_db.add(
+            catalog_exhibition(
+                "shanghai-2026",
+                venue="第一展览厅",
+                museum_name="上海博物馆",
+                city="上海",
+                title="海上书画展",
+                start_date=date(2026, 1, 1),
+            )
+        )
+        self.catalog_db.commit()
+
+        attached = attach_catalog_metadata_to_uploaded_museum_directory(directory, self.catalog_db)
+
+        self.assertEqual(attached[0].catalog_museum_name, "上海博物馆")
+        self.assertEqual(attached[0].catalog_exhibition_count, 1)
+        self.assertEqual(attached[0].exhibition_count, 1)
 
     def test_image_variant_allows_imuseum_cdn_covers(self) -> None:
         self.assertTrue(

@@ -40,7 +40,7 @@ class ExhibitionLinkingTests(unittest.TestCase):
         self.artifact_engine.dispose()
         self.catalog_engine.dispose()
 
-    def test_catalog_link_uses_museum_name_instead_of_venue(self) -> None:
+    def test_explicit_capture_museum_wins_over_catalog_museum(self) -> None:
         with self.catalog_session_factory() as catalog_db:
             catalog_db.add(
                 CatalogExhibition(
@@ -60,7 +60,7 @@ class ExhibitionLinkingTests(unittest.TestCase):
         with patch("app.main.ExhibitionSessionLocal", self.catalog_session_factory):
             museum, exhibition = resolve_capture_context(
                 self.artifact_db,
-                "第一展览厅",
+                "上海博物馆东馆",
                 "文明展",
                 "shanghai-civilization",
                 None,
@@ -68,8 +68,8 @@ class ExhibitionLinkingTests(unittest.TestCase):
 
         self.assertIsNotNone(museum)
         self.assertIsNotNone(exhibition)
-        self.assertEqual(museum.name, "上海博物馆")
-        self.assertEqual(exhibition.museum_name, "上海博物馆")
+        self.assertEqual(museum.name, "上海博物馆东馆")
+        self.assertEqual(exhibition.museum_name, "上海博物馆东馆")
 
     def test_catalog_selection_reuses_normalized_manual_exhibition(self) -> None:
         museum = ensure_museum(self.artifact_db, "上海博物馆")

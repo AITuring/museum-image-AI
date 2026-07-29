@@ -40,6 +40,7 @@ type MuseumExhibition = {
 type MuseumRecord = {
   id: number
   museum_id: number | null
+  museum_ids: number[]
   name: string
   location: string | null
   latitude: number | null
@@ -63,6 +64,7 @@ type MuseumRecord = {
 type RawMuseumRecord = Omit<
   MuseumRecord,
   | "museum_id"
+  | "museum_ids"
   | "catalog_exhibition_count"
   | "first_year"
   | "last_year"
@@ -77,6 +79,7 @@ type RawMuseumRecord = Omit<
   Pick<
     MuseumRecord,
     | "museum_id"
+    | "museum_ids"
     | "catalog_exhibition_count"
     | "first_year"
     | "last_year"
@@ -220,6 +223,41 @@ function formatDateRange(startAt: string | null, endAt: string | null) {
   return `${startAt?.slice(0, 10) ?? "未知"} - ${endAt?.slice(0, 10) ?? "至今"}`
 }
 
+function exhibitionTouchesYear(exhibition: CatalogExhibition, year: number) {
+  if (exhibition.is_permanent || exhibition.status === "permanent") return true
+  const startYear = exhibition.start_year ?? (exhibition.start_date ? Number(exhibition.start_date.slice(0, 4)) : null)
+  const endYear = exhibition.end_year ?? (exhibition.end_date ? Number(exhibition.end_date.slice(0, 4)) : startYear)
+  return startYear != null && startYear <= year && (endYear == null || endYear >= year)
+}
+
+type TimelineExhibition = {
+  exhibition: CatalogExhibition
+  startMonth: number
+  endMonth: number
+  lane: number
+  tone: number
+}
+
+function buildYearTimeline(exhibitions: CatalogExhibition[], year: number): TimelineExhibition[] {
+  const monthSpan = (exhibition: CatalogExhibition) => {
+    const startsThisYear = exhibition.start_date?.startsWith(String(year)) ?? false
+    const endsThisYear = exhibition.end_date?.startsWith(String(year)) ?? false
+    const startMonth = startsThisYear ? Number(exhibition.start_date?.slice(5, 7)) : 1
+    const endMonth = endsThisYear ? Number(exhibition.end_date?.slice(5, 7)) : 12
+    return { startMonth: Math.max(1, startMonth), endMonth: Math.min(12, Math.max(startMonth, endMonth)) }
+  }
+  const laneEnds: number[] = []
+  return exhibitions
+    .map((exhibition) => ({ exhibition, ...monthSpan(exhibition) }))
+    .sort((left, right) => left.startMonth - right.startMonth || right.endMonth - left.endMonth)
+    .map((item, index) => {
+      let lane = laneEnds.findIndex((endMonth) => endMonth < item.startMonth)
+      if (lane === -1) lane = laneEnds.length
+      laneEnds[lane] = item.endMonth
+      return { ...item, lane, tone: index % 6 }
+    })
+}
+
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -355,6 +393,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [historyStore, setHistoryStore] = useState<Record<number, CatalogExhibitionResponse>>({})
   const [historyLoadingId, setHistoryLoadingId] = useState<number | null>(null)
   const [historyErrors, setHistoryErrors] = useState<Record<number, string | null>>({})
+  const [historyExpanded, setHistoryExpanded] = useState(false)
   const [activeFolderKey, setActiveFolderKey] = useState<string | null>(null)
   const [mapLoading, setMapLoading] = useState(false)
   const [mapError, setMapError] = useState<string | null>(null)
@@ -403,6 +442,15 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
     return Array.from(groups.entries())
   }, [activeHistory])
+  const currentHistoryYear = new Date().getFullYear()
+  const currentYearExhibitions = useMemo(
+    () => (activeHistory?.items ?? []).filter((exhibition) => exhibitionTouchesYear(exhibition, currentHistoryYear)),
+    [activeHistory, currentHistoryYear],
+  )
+  const currentYearTimeline = useMemo(
+    () => buildYearTimeline(currentYearExhibitions, currentHistoryYear),
+    [currentHistoryYear, currentYearExhibitions],
+  )
   const folders = useMemo(() => buildMuseumFolders(apiBaseUrl, activeArtifacts), [activeArtifacts, apiBaseUrl])
   const activeFolder = useMemo(() => folders.find((folder) => folder.key === activeFolderKey) ?? folders[0] ?? null, [activeFolderKey, folders])
   const museumsWithCoordinates = useMemo(
@@ -422,6 +470,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       const payload = ((await response.json()) as RawMuseumRecord[]).map((item) => normalizeMuseumCoordinates({
         ...item,
         museum_id: item.museum_id ?? item.id,
+        museum_ids: item.museum_ids?.length ? item.museum_ids : [item.museum_id ?? item.id],
         catalog_exhibition_count: item.catalog_exhibition_count ?? 0,
         first_year: item.first_year ?? null,
         last_year: item.last_year ?? null,
@@ -472,13 +521,27 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       setArtifactLoadingId(museum.id)
       setArtifactErrors((current) => ({ ...current, [museum.id]: null }))
       try {
-        // Museum rows created before ``馆藏``/``藏`` normalization can have
-        // different ids. Query by the canonical card name so its detail view
-        // contains every uploaded artifact that was merged into that card.
-        const params = new URLSearchParams({ q: museum.name })
-        const response = await fetch(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        const payload = ((await response.json()) as RawMuseumArtifact[]).map((item) => normalizeArtifact(item))
+        // A card may merge duplicate historical Museum rows. Fetch every
+        // precise museum id; a keyword query can match an unrelated artifact's
+        // exhibition/location text and put it in the wrong venue.
+        const museumIds = museum.museum_ids.length > 0
+          ? museum.museum_ids
+          : museum.museum_id == null ? [] : [museum.museum_id]
+        const responses = await Promise.all(
+          museumIds.map((museumId) => fetch(`${apiBaseUrl}/api/artifacts?museum_id=${museumId}`)),
+        )
+        const failed = responses.find((response) => !response.ok)
+        if (failed) throw new Error(`HTTP ${failed.status}`)
+        const payload = Array.from(
+          new Map(
+            (await Promise.all(responses.map((response) => response.json())))
+              .flat()
+              .map((item: RawMuseumArtifact) => {
+                const artifact = normalizeArtifact(item)
+                return [artifact.id, artifact] as const
+              }),
+          ).values(),
+        )
         setArtifactStore((current) => ({ ...current, [museum.id]: payload }))
       } catch (err) {
         setArtifactErrors((current) => ({
@@ -570,6 +633,10 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     if (Object.prototype.hasOwnProperty.call(historyStore, activeMuseum.id)) return
     void loadMuseumHistory(activeMuseum)
   }, [activeMuseum, historyStore, loadMuseumHistory])
+
+  useEffect(() => {
+    setHistoryExpanded(false)
+  }, [activeMuseum?.id])
 
   useEffect(() => {
     if (folders.length === 0) {
@@ -907,11 +974,23 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                   : "按公开展览目录持续补全"}
               </p>
             </div>
-            <span>
-              {activeHistory
-                ? `已载入 ${activeHistory.items.length} / ${activeHistory.total}`
-                : `${activeMuseum.catalog_exhibition_count} 场`}
-            </span>
+            <div className="museum-history-actions">
+              <span>
+                {activeHistory
+                  ? `已载入 ${activeHistory.items.length} / ${activeHistory.total}`
+                  : `${activeMuseum.catalog_exhibition_count} 场`}
+              </span>
+              {activeHistory && activeHistory.total > 0 ? (
+                <button
+                  type="button"
+                  className="museum-history-toggle"
+                  aria-expanded={historyExpanded}
+                  onClick={() => setHistoryExpanded((current) => !current)}
+                >
+                  {historyExpanded ? "收起历史" : "展开全部"}
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {historyLoadingId === activeMuseum.id && !activeHistory ? (
@@ -927,8 +1006,39 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
             <div className="museum-history-state">这座馆暂未关联到公开展览目录。</div>
           ) : null}
 
-          {historyGroups.length > 0 ? (
-            <div className="museum-history-years">
+          {activeHistory ? (
+            <section className="museum-current-year-timeline" aria-label={`${currentHistoryYear} 年展览时间轴`}>
+              <div className="museum-current-year-timeline-head">
+                <strong>{currentHistoryYear} 年时间轴</strong>
+                <span>{currentYearExhibitions.length} 场</span>
+              </div>
+              {currentYearExhibitions.length > 0 ? (
+                <div className="museum-current-year-timeline-scroll">
+                  <div className="museum-current-year-timeline-grid" style={{ gridTemplateRows: `42px repeat(${Math.max(1, ...currentYearTimeline.map((item) => item.lane + 1))}, minmax(34px, auto))` }}>
+                    {Array.from({ length: 12 }, (_, index) => (
+                      <span className="museum-current-year-month" key={index} style={{ gridColumn: index + 1, gridRow: 1 }}>{index + 1}月</span>
+                    ))}
+                    {currentYearTimeline.map(({ exhibition, startMonth, endMonth, lane, tone }) => (
+                      <a
+                        href={`/exhibitions/${exhibition.id}`}
+                        className={`museum-current-year-timeline-bar tone-${tone}`}
+                        key={exhibition.id}
+                        style={{ gridColumn: `${startMonth} / ${endMonth + 1}`, gridRow: lane + 2 }}
+                        title={`${exhibition.title}｜${formatDateRange(exhibition.start_date, exhibition.end_date)}`}
+                      >
+                        <span>{exhibition.title}</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="museum-current-year-empty">本年度暂无已归档展览，可展开查看历年记录。</div>
+              )}
+            </section>
+          ) : null}
+
+          {historyExpanded && historyGroups.length > 0 ? (
+            <div className="museum-history-years museum-history-years-expanded">
               {historyGroups.map(([year, exhibitions]) => (
                 <section className="museum-history-year" key={year}>
                   <strong>{year}</strong>

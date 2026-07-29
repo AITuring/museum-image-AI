@@ -32,6 +32,8 @@ const AMAP_SCRIPT_SRC =
 
 type GalleryImage = {
   id: number
+  artifact_id?: number | null
+  exhibition_id?: number | null
   url: string
   camera_model?: string | null
   lens_model?: string | null
@@ -1014,6 +1016,21 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setEditing(true)
   }
 
+  function handleEditExhibition(exhibitionId: number) {
+    if (!active) return
+    const imageIndex = active.images.findIndex((image) => image.exhibition_id === exhibitionId)
+    if (imageIndex < 0) return
+    const image = active.images[imageIndex]
+    setActiveImageIndex(imageIndex)
+    setEditForm(buildEditForm(active, image))
+    setTagInput("")
+    setSaveError(null)
+    setSaveNotice(null)
+    setDescriptionProgress(null)
+    setAdvancedEditingOpen(false)
+    setEditing(true)
+  }
+
   function handleCancelEdit() {
     setEditing(false)
     setEditForm(null)
@@ -1167,7 +1184,14 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         throw new Error("请填写或确认文物名称")
       }
 
-      const response = await fetch(`${apiBaseUrl}/api/artifacts/${active.id}`, {
+      // Merged historical cards can contain images that belong to a different
+      // underlying artifact record. Update the record that owns the selected
+      // image, otherwise the cloud correctly rejects the image_id with 404.
+      const selectedImage = editForm.imageId === null
+        ? null
+        : active.images.find((image) => image.id === editForm.imageId) ?? null
+      const targetArtifactId = selectedImage?.artifact_id ?? active.id
+      const response = await fetch(`${apiBaseUrl}/api/artifacts/${targetArtifactId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1208,17 +1232,36 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       }
 
       const updated = normalizeArtifact((await response.json()) as RawGalleryArtifact)
+      const updatedSelectedImage = editForm.imageId === null
+        ? null
+        : updated.images.find((image) => image.id === editForm.imageId) ?? null
+      // Keep the merged card intact while replacing its edited image with the
+      // canonical response from the record that actually owns it.
+      const updatedForActive = targetArtifactId === active.id
+        ? updated
+        : {
+            ...active,
+            museum_name: updated.museum_name,
+            name: updated.name,
+            era: updated.era,
+            Place_of_Excavation: updated.Place_of_Excavation,
+            description: updated.description,
+            tags: updated.tags,
+            images: updatedSelectedImage
+              ? active.images.map((image) => image.id === updatedSelectedImage.id ? updatedSelectedImage : image)
+              : active.images,
+          }
       const nextIndex =
-        updated.images.findIndex((image) => image.id === editForm.imageId) >= 0
-          ? updated.images.findIndex((image) => image.id === editForm.imageId)
+        updatedForActive.images.findIndex((image) => image.id === editForm.imageId) >= 0
+          ? updatedForActive.images.findIndex((image) => image.id === editForm.imageId)
           : 0
-      let mergedUpdated = updated
+      let mergedUpdated = updatedForActive
       setItems((current) => {
         const mergedItems = mergeGalleryArtifacts([
-          ...current.map((item) => (item.id === updated.id ? updated : item)),
-          ...(current.some((item) => item.id === updated.id) ? [] : [updated]),
+          ...current.map((item) => (item.id === active.id ? updatedForActive : item)),
+          ...(current.some((item) => item.id === active.id) ? [] : [updatedForActive]),
         ])
-        mergedUpdated = mergedItems.find((item) => galleryArtifactMergeKey(item) === galleryArtifactMergeKey(updated)) ?? updated
+        mergedUpdated = mergedItems.find((item) => galleryArtifactMergeKey(item) === galleryArtifactMergeKey(updatedForActive)) ?? updatedForActive
         return mergedItems
       })
       setActive(mergedUpdated)
@@ -1565,7 +1608,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               current ? {
                                                 ...current,
                                                 exhibitionName: choice?.name ?? "常设",
-                                                captureMuseumName: choice?.museumName || current.captureMuseumName,
                                                 catalogExhibitionSourceId: choice?.catalogSourceId ?? "",
                                                 catalogExhibitionId: choice?.catalogExhibitionId ?? null,
                                               } : current,
@@ -1881,14 +1923,16 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                           : `/exhibitions/history/${encodeURIComponent(exhibition.name)}?${new URLSearchParams({
                                               museum: exhibition.museum_name,
                                             }).toString()}`
+                                      const editable = active.images.some((image) => image.exhibition_id === exhibition.id)
                                       return (
-                                        <a
-                                          key={exhibition.id}
-                                          className="gallery-exhibition-link"
-                                          href={detailPath}
-                                        >
-                                          {label}
-                                        </a>
+                                        <span key={exhibition.id} className="gallery-exhibition-link">
+                                          <a href={detailPath}>{label}</a>
+                                          {editable ? (
+                                            <Button type="link" size="small" onClick={() => handleEditExhibition(exhibition.id)}>
+                                              编辑该图展出
+                                            </Button>
+                                          ) : null}
+                                        </span>
                                       )
                                     })}
                                   </div>

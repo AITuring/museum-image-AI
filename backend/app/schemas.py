@@ -49,6 +49,7 @@ class MuseumRead(MuseumCreate):
 class MuseumDirectoryRead(BaseModel):
     id: int
     museum_id: int | None = None
+    museum_ids: list[int] = Field(default_factory=list)
     name: str
     location: str | None = None
     latitude: float | None = None
