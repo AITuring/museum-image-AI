@@ -444,7 +444,9 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [activeHistory])
   const currentHistoryYear = new Date().getFullYear()
   const currentYearExhibitions = useMemo(
-    () => (activeHistory?.items ?? []).filter((exhibition) => exhibitionTouchesYear(exhibition, currentHistoryYear)),
+    () => (activeHistory?.items ?? []).filter(
+      (exhibition) => !exhibition.is_permanent && exhibition.status !== "permanent" && exhibitionTouchesYear(exhibition, currentHistoryYear),
+    ),
     [activeHistory, currentHistoryYear],
   )
   const currentYearTimeline = useMemo(
@@ -1010,11 +1012,11 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
             <section className="museum-current-year-timeline" aria-label={`${currentHistoryYear} 年展览时间轴`}>
               <div className="museum-current-year-timeline-head">
                 <strong>{currentHistoryYear} 年时间轴</strong>
-                <span>{currentYearExhibitions.length} 场</span>
+                <span>{currentYearExhibitions.length} 场临展</span>
               </div>
               {currentYearExhibitions.length > 0 ? (
                 <div className="museum-current-year-timeline-scroll">
-                  <div className="museum-current-year-timeline-grid" style={{ gridTemplateRows: `42px repeat(${Math.max(1, ...currentYearTimeline.map((item) => item.lane + 1))}, minmax(34px, auto))` }}>
+                  <div className="museum-current-year-timeline-grid" style={{ gridTemplateRows: `38px repeat(${Math.max(1, ...currentYearTimeline.map((item) => item.lane + 1))}, 22px)` }}>
                     {Array.from({ length: 12 }, (_, index) => (
                       <span className="museum-current-year-month" key={index} style={{ gridColumn: index + 1, gridRow: 1 }}>{index + 1}月</span>
                     ))}

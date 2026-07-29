@@ -15,6 +15,7 @@ from app.main import (
     is_allowed_remote_image_url,
     list_exhibition_catalog,
     list_museum_directory,
+    museum_name_matches_catalog_museum,
 )
 from app.models import Artifact, ArtifactImage, Museum
 from app.schemas import ArtifactImageRead, ArtifactRead
@@ -288,6 +289,69 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.assertEqual(attached[0].catalog_museum_name, "上海博物馆")
         self.assertEqual(attached[0].catalog_exhibition_count, 1)
         self.assertEqual(attached[0].exhibition_count, 1)
+
+    def test_uploaded_directory_keeps_catalog_branches_separate(self) -> None:
+        self.assertTrue(museum_name_matches_catalog_museum("上海博物馆东馆", "上海博物馆东馆"))
+        self.assertFalse(museum_name_matches_catalog_museum("上海博物馆人民广场馆", "上海博物馆东馆"))
+        self.assertTrue(museum_name_matches_catalog_museum("上海博物馆人民广场馆", "上海博物馆"))
+        self.assertFalse(museum_name_matches_catalog_museum("上海博物馆", "上海历史博物馆"))
+
+    def test_uploaded_directory_uses_image_gps_to_separate_shanghai_museum_venues(self) -> None:
+        now = datetime.now()
+        directory = build_uploaded_museum_directory(
+            [
+                ArtifactRead(
+                    id=1,
+                    museum_id=1,
+                    name="东馆文物",
+                    created_at=now,
+                    museum_name="上海博物馆",
+                    images=[
+                        ArtifactImageRead(
+                            id=1,
+                            artifact_id=1,
+                            artifact_name="东馆文物",
+                            museum_name="上海博物馆",
+                            url="/files/uploads/east.jpg",
+                            latitude=31.219913,
+                            longitude=121.538745,
+                            created_at=now,
+                            uploaded_at=now,
+                        )
+                    ],
+                ),
+                ArtifactRead(
+                    id=2,
+                    museum_id=2,
+                    name="人民广场文物",
+                    created_at=now,
+                    museum_name="上海博物馆",
+                    images=[
+                        ArtifactImageRead(
+                            id=2,
+                            artifact_id=2,
+                            artifact_name="人民广场文物",
+                            museum_name="上海博物馆",
+                            url="/files/uploads/people-square.jpg",
+                            latitude=31.2302,
+                            longitude=121.4752,
+                            created_at=now,
+                            uploaded_at=now,
+                        )
+                    ],
+                ),
+            ],
+            q=None,
+            limit=100,
+        )
+
+        self.assertEqual(
+            [(item.name, item.latitude, item.longitude) for item in directory],
+            [
+                ("上海博物馆东馆", 31.219913, 121.538745),
+                ("上海博物馆人民广场馆", 31.2302, 121.4752),
+            ],
+        )
 
     def test_image_variant_allows_imuseum_cdn_covers(self) -> None:
         self.assertTrue(

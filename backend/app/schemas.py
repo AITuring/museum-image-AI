@@ -114,6 +114,7 @@ class ArtifactImageCreate(BaseModel):
 class ArtifactImageRead(ArtifactImageCreate):
     id: int
     artifact_id: int
+    exhibition_id: int | None = None
     artifact_name: str
     museum_name: str
     era: str | None = None

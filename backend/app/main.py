@@ -1218,6 +1218,83 @@ def normalize_museum_directory_key(value: str | None) -> str:
     return re.sub(r"[\s·•・,，。．()（）\[\]【】<>《》\-—–_/]+", "", normalized)
 
 
+_MUSEUM_BRANCH_GPS_RULES = {
+    normalize_museum_directory_key("上海博物馆"): (
+        # The two Shanghai Museum venues have distinct collections, exhibition
+        # calendars, and coordinates.  A generic historic “上海博物馆” label
+        # is only made specific when the uploaded image GPS proves the venue.
+        ("上海博物馆人民广场馆", 31.2302, 121.4752),
+        ("上海博物馆东馆", 31.219913, 121.538745),
+    ),
+}
+
+
+def has_valid_coordinates(latitude: float | None, longitude: float | None) -> bool:
+    return (
+        latitude is not None
+        and longitude is not None
+        and -90 <= latitude <= 90
+        and -180 <= longitude <= 180
+    )
+
+
+def resolve_museum_branch_from_image_gps(
+    museum_name: str,
+    images: list[ArtifactImageRead],
+) -> str:
+    """Keep venue branches distinct when an upload carries reliable GPS."""
+    canonical_name = normalize_museum_segment(museum_name)
+    rules = _MUSEUM_BRANCH_GPS_RULES.get(normalize_museum_directory_key(canonical_name))
+    if not rules:
+        return canonical_name
+
+    coordinates = [
+        (image.latitude, image.longitude)
+        for image in images
+        if has_valid_coordinates(image.latitude, image.longitude)
+    ]
+    if not coordinates:
+        return canonical_name
+    latitude = sum(point[0] for point in coordinates) / len(coordinates)
+    longitude = sum(point[1] for point in coordinates) / len(coordinates)
+    nearest_name, nearest_latitude, nearest_longitude = min(
+        rules,
+        key=lambda rule: (latitude - rule[1]) ** 2 + (longitude - rule[2]) ** 2,
+    )
+    # A 3 km guard prevents a generic museum name with an unrelated GPS point
+    # from being silently assigned to either Shanghai Museum venue.
+    latitude_km = (latitude - nearest_latitude) * 111.0
+    longitude_km = (longitude - nearest_longitude) * 111.0 * math.cos(math.radians(latitude))
+    if math.hypot(latitude_km, longitude_km) <= 3.0:
+        return nearest_name
+    return canonical_name
+
+
+def catalog_museum_names_for_directory_name(museum_name: str | None) -> set[str]:
+    """Return exact catalog museum labels belonging to one directory card."""
+    normalized_name = normalize_museum_directory_key(museum_name)
+    if normalized_name == normalize_museum_directory_key("上海博物馆人民广场馆"):
+        # The catalog's historic People's Square records are named simply
+        # “上海博物馆”; keep them on this venue instead of mixing in East Hall.
+        return {"上海博物馆人民广场馆", "上海博物馆"}
+    return {museum_name.strip()} if museum_name and museum_name.strip() else set()
+
+
+def catalog_museum_query_name(museum_name: str) -> str:
+    if normalize_museum_directory_key(museum_name) == normalize_museum_directory_key("上海博物馆人民广场馆"):
+        return "上海博物馆"
+    return museum_name
+
+
+def museum_name_matches_catalog_museum(
+    museum_name: str | None,
+    catalog_museum_name: str | None,
+) -> bool:
+    """Match catalog rows only to the same, explicitly named venue."""
+    candidate = (catalog_museum_name or "").strip()
+    return bool(candidate) and candidate in catalog_museum_names_for_directory_name(museum_name)
+
+
 def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
     original_name = raw_name.strip()
     if not original_name:
@@ -2265,7 +2342,10 @@ def build_uploaded_museum_directory(
         # museum. Cloud imports may have created a separate Museum row before
         # filename parsing was fixed, so group by the canonical display name
         # instead of the database row id.
-        museum_name = normalize_museum_segment(artifact.museum_name)
+        museum_name = resolve_museum_branch_from_image_gps(
+            artifact.museum_name,
+            artifact.images,
+        )
         if not museum_name:
             continue
         key = normalize_museum_directory_key(museum_name)
@@ -2375,10 +2455,13 @@ def attach_catalog_metadata_to_uploaded_museum_directory(
     catalog_db: Session,
 ) -> list[MuseumDirectoryRead]:
     """Connect Gallery-derived museum cards to local exhibition catalog rows."""
-    by_name = {normalize_museum_directory_key(item.name): item for item in directory}
-    if not by_name:
+    if not directory:
         return directory
 
+    by_name = {
+        normalize_museum_directory_key(item.name): item
+        for item in directory
+    }
     matches: dict[str, list[CatalogExhibition]] = {}
     catalog_rows = catalog_db.scalars(
         select(CatalogExhibition).where(
@@ -2387,8 +2470,16 @@ def attach_catalog_metadata_to_uploaded_museum_directory(
         )
     )
     for row in catalog_rows:
-        key = normalize_museum_directory_key(row.museum_name)
-        if key in by_name:
+        matched_item = next(
+            (
+                item
+                for item in directory
+                if museum_name_matches_catalog_museum(item.name, row.museum_name)
+            ),
+            None,
+        )
+        if matched_item is not None:
+            key = normalize_museum_directory_key(matched_item.name)
             matches.setdefault(key, []).append(row)
 
     for key, rows in matches.items():
@@ -2404,12 +2495,17 @@ def attach_catalog_metadata_to_uploaded_museum_directory(
         item.first_year = min(years) if years else None
         item.last_year = max(years) if years else None
         item.cover_url = item.cover_url or next((row.cover_url for row in rows if row.cover_url), None)
-        item.catalog_museum_name = item.name
+        item.catalog_museum_name = catalog_museum_query_name(item.name)
         item.catalog_address = None
         item.catalog_venue = item.name
         item.catalog_city = next((optional_text(row.city) for row in rows if optional_text(row.city)), None)
         item.catalog_region = next((optional_text(row.region) for row in rows if optional_text(row.region)), None)
-        if not item.location:
+        has_only_parent_location = (
+            item.name != "上海博物馆"
+            and normalize_museum_directory_key(item.location)
+            == normalize_museum_directory_key("上海博物馆")
+        )
+        if not item.location or has_only_parent_location:
             item.location = next((optional_text(row.address) for row in rows if optional_text(row.address)), None)
     return directory
 

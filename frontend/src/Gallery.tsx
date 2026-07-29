@@ -102,6 +102,26 @@ type GalleryEditFormState = {
   editMethod: string
 }
 
+type HistoricalExhibitionDraft = {
+  imageId: number
+  artifactId: number
+  captureMuseumName: string
+  exhibitionName: string
+}
+
+type HistoricalExhibitionGroup = HistoricalExhibitionDraft & { imageIds: number[] }
+
+function groupHistoricalExhibitions(records: HistoricalExhibitionDraft[]) {
+  const groups = new Map<string, HistoricalExhibitionGroup>()
+  for (const record of records) {
+    const key = `${record.captureMuseumName}\u0000${record.exhibitionName}`
+    const existing = groups.get(key)
+    if (existing) existing.imageIds.push(record.imageId)
+    else groups.set(key, { ...record, imageIds: [record.imageId] })
+  }
+  return Array.from(groups.values())
+}
+
 type GeneratedDescription = {
   provider: string
   model: string
@@ -293,7 +313,17 @@ function getSubjectTags(tags: string[]) {
   return tags.filter((tag) => !/^(机型|镜头)[:：]/.test(tag))
 }
 
+function isFloorLabel(value: string | null | undefined) {
+  return /^\s*[负-]?\d+\s*楼\s*$/.test(value ?? "")
+}
+
 function buildEditForm(artifact: GalleryArtifact, image?: GalleryImage | null): GalleryEditFormState {
+  const storedCaptureMuseum = image?.capture_museum_name ?? ""
+  // A floor is a venue detail, not a museum. Repair legacy catalog-derived
+  // values in the editable form so saving corrects the persisted record.
+  const captureMuseumName = isFloorLabel(storedCaptureMuseum)
+    ? artifact.museum_name
+    : storedCaptureMuseum
   return {
     museumName: artifact.museum_name ?? "",
     name: artifact.name ?? "",
@@ -304,7 +334,7 @@ function buildEditForm(artifact: GalleryArtifact, image?: GalleryImage | null): 
     imageId: image?.id ?? null,
     cameraModel: image?.camera_model ?? "",
     lensModel: image?.lens_model ?? "",
-    captureMuseumName: image?.capture_museum_name ?? "",
+    captureMuseumName,
     exhibitionName: image?.exhibition_name ?? "常设",
     catalogExhibitionSourceId: image?.catalog_exhibition_source_id ?? "",
     catalogExhibitionId: image?.catalog_exhibition_id ?? null,
@@ -815,6 +845,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<GalleryEditFormState | null>(null)
+  const [historicalExhibitions, setHistoricalExhibitions] = useState<HistoricalExhibitionDraft[]>([])
+  const [draggedImageId, setDraggedImageId] = useState<number | null>(null)
   const [advancedEditingOpen, setAdvancedEditingOpen] = useState(false)
   const [tagInput, setTagInput] = useState("")
   const [saving, setSaving] = useState(false)
@@ -1008,21 +1040,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
     const image = active.images[activeImageIndex] ?? active.images[0] ?? null
     setEditForm(buildEditForm(active, image))
-    setTagInput("")
-    setSaveError(null)
-    setSaveNotice(null)
-    setDescriptionProgress(null)
-    setAdvancedEditingOpen(false)
-    setEditing(true)
-  }
-
-  function handleEditExhibition(exhibitionId: number) {
-    if (!active) return
-    const imageIndex = active.images.findIndex((image) => image.exhibition_id === exhibitionId)
-    if (imageIndex < 0) return
-    const image = active.images[imageIndex]
-    setActiveImageIndex(imageIndex)
-    setEditForm(buildEditForm(active, image))
+    setHistoricalExhibitions(active.images.map((item) => ({
+      imageId: item.id,
+      artifactId: item.artifact_id ?? active.id,
+      captureMuseumName: isFloorLabel(item.capture_museum_name) ? active.museum_name : item.capture_museum_name ?? active.museum_name,
+      exhibitionName: item.exhibition_name ?? "常设",
+    })))
     setTagInput("")
     setSaveError(null)
     setSaveNotice(null)
@@ -1229,6 +1252,23 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           // Ignore non-JSON error bodies.
         }
         throw new Error(message)
+      }
+
+      const otherHistoryUpdates = historicalExhibitions.filter((record) => record.imageId !== editForm.imageId)
+      for (const record of otherHistoryUpdates) {
+        const historyResponse = await fetch(`${apiBaseUrl}/api/artifacts/${record.artifactId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            museum_name: editForm.museumName.trim(), name: editForm.name.trim(), era: editForm.era.trim() || null,
+            Place_of_Excavation: editForm.Place_of_Excavation.trim() || null, description: editForm.description.trim() || null,
+            tags: editForm.tags, image_id: record.imageId, camera_model: null, lens_model: null,
+            capture_museum_name: record.captureMuseumName.trim() || null, exhibition_name: record.exhibitionName.trim() || "常设",
+            capture_location: record.captureMuseumName.trim() || null, latitude: null, longitude: null, captured_at: null,
+            shutter_speed: null, aperture: null, iso: null, edit_method: null,
+          }),
+        })
+        if (!historyResponse.ok) throw new Error(`第 ${active.images.findIndex((image) => image.id === record.imageId) + 1} 张图的历史展出保存失败`)
       }
 
       const updated = normalizeArtifact((await response.json()) as RawGalleryArtifact)
@@ -1529,6 +1569,26 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       </label>
                                     </div>
                                     <div className="field-row">
+                                      <div className="field gallery-tags-field">
+                                        <span>历史展出（可直接逐条修改；把图片拖到目标展览）</span>
+                                        {groupHistoricalExhibitions(historicalExhibitions).map((group, index) => {
+                                          return <div key={`${group.captureMuseumName}-${group.exhibitionName}`} className="gallery-badge-row" style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: 10, overflowX: "auto" }} onDragOver={(event) => event.preventDefault()} onDrop={() => {
+                                            if (draggedImageId === null || group.imageIds.includes(draggedImageId)) return
+                                            setHistoricalExhibitions((current) => current.map((item) => item.imageId === draggedImageId ? { ...item, captureMuseumName: group.captureMuseumName, exhibitionName: group.exhibitionName } : item))
+                                            setDraggedImageId(null)
+                                          }}>
+                                            <span style={{ flex: "0 0 auto" }}>{index + 1}</span>
+                                            <Input style={{ flex: "0 0 180px" }} value={group.captureMuseumName} onChange={(event) => setHistoricalExhibitions((current) => current.map((item) => group.imageIds.includes(item.imageId) ? { ...item, captureMuseumName: event.target.value } : item))} />
+                                            <Input style={{ flex: "0 0 220px" }} value={group.exhibitionName} onChange={(event) => setHistoricalExhibitions((current) => current.map((item) => group.imageIds.includes(item.imageId) ? { ...item, exhibitionName: event.target.value } : item))} />
+                                            {group.imageIds.map((imageId) => {
+                                              const image = active.images.find((item) => item.id === imageId)
+                                              return image ? <img key={imageId} draggable onDragStart={() => setDraggedImageId(imageId)} src={toAbsoluteUrl(apiBaseUrl, image.url)} alt={`第 ${active.images.findIndex((item) => item.id === imageId) + 1} 张图`} title={`第 ${active.images.findIndex((item) => item.id === imageId) + 1} 张图`} style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 6, cursor: "grab", flex: "0 0 auto" }} /> : null
+                                            })}
+                                          </div>
+                                        })}
+                                      </div>
+                                    </div>
+                                    <div className="field-row">
                                       <label className="field">
                                         <span>时代</span>
                                         <AutoComplete
@@ -1597,7 +1657,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                         />
                                       </label>
                                       <label className="field">
-                                        <span>展览</span>
+                                        <span>历年展览</span>
                                         <GalleryExhibitionPicker
                                           apiBaseUrl={apiBaseUrl}
                                           museumName={editForm.captureMuseumName}
@@ -1923,16 +1983,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                           : `/exhibitions/history/${encodeURIComponent(exhibition.name)}?${new URLSearchParams({
                                               museum: exhibition.museum_name,
                                             }).toString()}`
-                                      const editable = active.images.some((image) => image.exhibition_id === exhibition.id)
                                       return (
-                                        <span key={exhibition.id} className="gallery-exhibition-link">
-                                          <a href={detailPath}>{label}</a>
-                                          {editable ? (
-                                            <Button type="link" size="small" onClick={() => handleEditExhibition(exhibition.id)}>
-                                              编辑该图展出
-                                            </Button>
-                                          ) : null}
-                                        </span>
+                                        <a key={exhibition.id} className="gallery-exhibition-link" href={detailPath}>{label}</a>
                                       )
                                     })}
                                   </div>

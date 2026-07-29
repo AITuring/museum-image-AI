@@ -125,7 +125,7 @@
   display: grid;
   min-width: 720px;
   grid-template-columns: repeat(12, minmax(58px, 1fr));
-  gap: 6px 0;
+  gap: 4px 0;
   padding-bottom: 2px;
 }
 
@@ -144,10 +144,10 @@
   min-width: 0;
   align-items: center;
   margin: 0 3px;
-  padding: 0 9px;
-  border-radius: 5px;
+  padding: 0 6px;
+  border-radius: 4px;
   color: #fff;
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   font-weight: 700;
   line-height: 1;
   text-decoration: none;
