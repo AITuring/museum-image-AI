@@ -29,7 +29,7 @@ type EraTimelinePayload = {
 
 const ERA_IMAGE_NAMES = new Set([
   "新石器时代", "夏", "商", "西周", "春秋", "战国", "秦", "西汉", "东汉", "三国",
-  "西晋", "东晋", "北朝", "南朝", "北魏", "北齐", "北燕", "隋", "唐", "五代十国",
+  "西晋", "东晋", "北朝", "南朝", "北魏", "北齐", "北燕", "隋", "唐", "五代", "五代十国",
   "北宋", "南宋", "元", "明", "清",
 ])
 
@@ -141,7 +141,7 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   return (
-    <section className="era-browser" aria-labelledby="era-browser-title">
+    <section className={`era-browser${selectedEra ? "" : " is-overview"}`} aria-labelledby="era-browser-title">
       <header className="era-browser-head">
         <div>
           <span className="era-kicker">文物编年</span>

@@ -138,14 +138,13 @@ type RawMuseumArtifact = Omit<MuseumArtifact, "images" | "exhibitions"> & {
 type MuseumMode = "cards" | "map"
 
 type FolderEntry = {
-  imageId: number
   artifactId: number
   artifactName: string
   artifactEra: string | null
   previewUrl: string
-  originalUrl: string
   fallbackUrl: string
   capturedAt: string | null
+  imageCount: number
 }
 
 function museumIdFromPath(pathname: string) {
@@ -221,11 +220,6 @@ function formatDateRange(startAt: string | null, endAt: string | null) {
   return `${startAt?.slice(0, 10) ?? "未知"} - ${endAt?.slice(0, 10) ?? "至今"}`
 }
 
-function formatCapturedAt(value: string | null | undefined) {
-  if (!value) return "拍摄时间未记录"
-  return value.replace("T", " ").slice(0, 16)
-}
-
 function escapeHtml(value: string) {
   return value
     .replaceAll("&", "&amp;")
@@ -278,8 +272,15 @@ function buildMuseumFolders(apiBaseUrl: string, artifacts: MuseumArtifact[]) {
       exhibitionMeta.set(exhibition.name, formatDateRange(exhibition.start_at, exhibition.end_at))
     })
 
+    const imagesByExhibition = new Map<string, GalleryImage[]>()
     artifact.images.forEach((image) => {
       const exhibitionName = image.exhibition_name?.trim() || artifact.exhibitions[0]?.name || "未归档展览"
+      const images = imagesByExhibition.get(exhibitionName) ?? []
+      images.push(image)
+      imagesByExhibition.set(exhibitionName, images)
+    })
+
+    imagesByExhibition.forEach((images, exhibitionName) => {
       const key = exhibitionName.toLowerCase()
       const current =
         folderMap.get(key) ??
@@ -291,16 +292,20 @@ function buildMuseumFolders(apiBaseUrl: string, artifacts: MuseumArtifact[]) {
           artifactIds: new Set<number>(),
         }
 
-      const previewUrl = getDisplayImageUrl(apiBaseUrl, image.url, "preview")
+      const coverImage = images.toSorted((left, right) => {
+        const leftTime = left.captured_at ? Date.parse(left.captured_at) : 0
+        const rightTime = right.captured_at ? Date.parse(right.captured_at) : 0
+        return rightTime - leftTime
+      })[0]
+      const previewUrl = getDisplayImageUrl(apiBaseUrl, coverImage.url, "preview")
       current.entries.push({
-        imageId: image.id,
         artifactId: artifact.id,
         artifactName: artifact.name,
         artifactEra: artifact.era,
         previewUrl,
-        originalUrl: getDisplayImageUrl(apiBaseUrl, image.url, "original"),
-        fallbackUrl: toAbsoluteUrl(apiBaseUrl, image.url),
-        capturedAt: image.captured_at ?? null,
+        fallbackUrl: toAbsoluteUrl(apiBaseUrl, coverImage.url),
+        capturedAt: coverImage.captured_at ?? null,
+        imageCount: images.length,
       })
       current.artifactIds.add(artifact.id)
       if (!current.coverUrl) current.coverUrl = previewUrl
@@ -450,6 +455,14 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     setDetailMuseumId(null)
     if (window.location.pathname !== "/museums") {
       window.history.pushState({}, "", "/museums")
+      window.dispatchEvent(new PopStateEvent("popstate"))
+    }
+  }, [])
+
+  const navigateToArtifact = useCallback((artifactId: number) => {
+    const targetPath = `/gallery/${artifactId}`
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState({}, "", targetPath)
       window.dispatchEvent(new PopStateEvent("popstate"))
     }
   }, [])
@@ -1015,14 +1028,13 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                   </div>
                 </div>
 
-                <div className="museum-image-grid">
+                <div className="museum-artifact-grid">
                   {activeFolder.entries.map((entry) => (
-                    <a
-                      key={`${entry.artifactId}-${entry.imageId}`}
-                      className="museum-image-card"
-                      href={entry.originalUrl}
-                      target="_blank"
-                      rel="noreferrer"
+                    <button data-ui="interactive-surface"
+                      type="button"
+                      key={entry.artifactId}
+                      className="museum-artifact-card"
+                      onClick={() => navigateToArtifact(entry.artifactId)}
                     >
                       <FallbackImage
                         src={entry.previewUrl}
@@ -1031,12 +1043,12 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                         loading="lazy"
                         referrerPolicy="no-referrer"
                       />
-                      <div className="museum-image-card-copy">
+                      <div className="museum-artifact-card-copy">
                         <strong>{entry.artifactName}</strong>
                         <span>{entry.artifactEra || "时代待确认"}</span>
-                        <span>{formatCapturedAt(entry.capturedAt)}</span>
+                        <span>{entry.imageCount} 张图片</span>
                       </div>
-                    </a>
+                    </button>
                   ))}
                 </div>
               </>
@@ -1062,7 +1074,12 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           </div>
           <Button onClick={returnToDirectory}>返回场馆列表</Button>
         </header>
-        {renderMuseumStage()}
+        {loading ? (
+          <div className="museum-state-card spacious">
+            <strong>正在载入场馆详情…</strong>
+            <p className="muted">正在从图库读取文物与图片，请稍候。</p>
+          </div>
+        ) : renderMuseumStage()}
       </section>
     )
   }

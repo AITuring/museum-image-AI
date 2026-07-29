@@ -458,6 +458,21 @@ function App() {
   const [visitedViews, setVisitedViews] = useState<Set<View>>(
     () => new Set([normalizeViewFromPath(window.location.pathname)]),
   )
+
+  // Vite preserves React state across hot updates. Keep the selected section
+  // authoritative to the address bar so a freshly added detail route cannot
+  // leave an old "快速录入" state rendered under `/museums/:id`.
+  useEffect(() => {
+    const routeView = normalizeViewFromPath(window.location.pathname)
+    if (routeView === view) return
+    setViewState(routeView)
+    setVisitedViews((current) => {
+      if (current.has(routeView)) return current
+      const next = new Set(current)
+      next.add(routeView)
+      return next
+    })
+  }, [view])
   const [providerOrder, setProviderOrder] = useState<string[]>([])
   const [providerStreams, setProviderStreams] = useState<Record<string, ProviderStream>>({})
   const [unavailableProviders, setUnavailableProviders] = useState<string[]>([])

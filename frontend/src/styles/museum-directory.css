@@ -256,6 +256,55 @@
   min-width: 0;
 }
 
+.museum-artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.museum-artifact-card {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  overflow: hidden;
+  text-align: left;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 12px;
+  background: var(--ui-surface-default);
+  cursor: pointer;
+}
+
+.museum-artifact-card:hover {
+  border-color: var(--ui-line-accent);
+  box-shadow: var(--ui-shadow-hover);
+}
+
+.museum-artifact-card > img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.museum-artifact-card-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.museum-artifact-card-copy strong {
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-family: "Songti SC", "STSong", "Noto Serif SC", serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.museum-artifact-card-copy span {
+  color: var(--ui-text-secondary);
+  font-size: 0.8rem;
+}
+
 .museum-folder-grid {
   display: grid;
   gap: 8px;

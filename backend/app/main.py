@@ -7,6 +7,7 @@ import math
 import mimetypes
 import re
 import tempfile
+import threading
 import time as time_module
 import unicodedata
 from dataclasses import dataclass
@@ -363,6 +364,26 @@ def run_startup_migrations(connection) -> None:
         artifact_columns.add("Place_of_Excavation")
         artifact_columns_lower.add("place_of_excavation")
 
+    # PostgreSQL folds an unquoted name to lower case.  Older local databases
+    # therefore contain ``place_of_excavation``, while the ORM deliberately
+    # keeps the public field spelling ``Place_of_Excavation``.  Seeing the
+    # column case-insensitively is not enough: the ORM emits a quoted name.
+    legacy_place_column = next(
+        (
+            column_name
+            for column_name in artifact_columns
+            if column_name.lower() == "place_of_excavation" and column_name != "Place_of_Excavation"
+        ),
+        None,
+    )
+    if legacy_place_column is not None:
+        escaped_column = legacy_place_column.replace('"', '""')
+        connection.execute(
+            text(f'ALTER TABLE artifacts RENAME COLUMN "{escaped_column}" TO "Place_of_Excavation"')
+        )
+        artifact_columns.remove(legacy_place_column)
+        artifact_columns.add("Place_of_Excavation")
+
     if "unearthed_at" in artifact_columns_lower:
         connection.execute(
             text(
@@ -478,6 +499,25 @@ def run_startup_migrations(connection) -> None:
             )
             pending_columns.add(column_name)
             pending_columns_lower.add(column_name.lower())
+
+    legacy_pending_place_column = next(
+        (
+            column_name
+            for column_name in pending_columns
+            if column_name.lower() == "place_of_excavation" and column_name != "Place_of_Excavation"
+        ),
+        None,
+    )
+    if legacy_pending_place_column is not None:
+        escaped_column = legacy_pending_place_column.replace('"', '""')
+        connection.execute(
+            text(
+                f'ALTER TABLE pending_artifacts RENAME COLUMN "{escaped_column}" '
+                'TO "Place_of_Excavation"'
+            )
+        )
+        pending_columns.remove(legacy_pending_place_column)
+        pending_columns.add("Place_of_Excavation")
 
     if "unearthed_at" in pending_columns_lower and "place_of_excavation" in pending_columns_lower:
         connection.execute(
@@ -2124,6 +2164,78 @@ def fetch_cloud_artifact_payload(
     return []
 
 
+CLOUD_MUSEUM_DIRECTORY_CACHE_TTL_SECONDS = 45
+CLOUD_MUSEUM_DIRECTORY_CACHE_STALE_SECONDS = 10 * 60
+CLOUD_MUSEUM_DIRECTORY_CACHE_LOCK = threading.Lock()
+CLOUD_MUSEUM_DIRECTORY_CACHE: tuple[float, list[ArtifactRead]] | None = None
+CLOUD_MUSEUM_DIRECTORY_CACHE_PATH = DATA_DIR / "museum-directory-cloud-cache.json"
+
+
+def load_persisted_cloud_museum_directory_artifacts() -> list[ArtifactRead] | None:
+    """Load the last successful Gallery response after a local restart.
+
+    The Museum browser is a read-only view of Gallery uploads.  An upstream
+    outage must not turn that view into a 502 simply because this local
+    container was restarted and its in-memory cache was cleared.
+    """
+    try:
+        payload = json.loads(CLOUD_MUSEUM_DIRECTORY_CACHE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(payload, list):
+            raise ValueError("场馆目录缓存不是列表")
+        return [ArtifactRead.model_validate(item) for item in payload]
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # noqa: BLE001 - a bad cache must not break the directory
+        logger.warning("忽略无法读取的场馆目录磁盘缓存：%s", exc)
+        return None
+
+
+def persist_cloud_museum_directory_artifacts(artifacts: list[ArtifactRead]) -> None:
+    try:
+        CLOUD_MUSEUM_DIRECTORY_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = CLOUD_MUSEUM_DIRECTORY_CACHE_PATH.with_suffix(f".{uuid4().hex}.tmp")
+        temporary_path.write_text(
+            json.dumps([item.model_dump(mode="json") for item in artifacts], ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary_path.replace(CLOUD_MUSEUM_DIRECTORY_CACHE_PATH)
+    except Exception as exc:  # noqa: BLE001 - a memory cache is still usable
+        logger.warning("无法写入场馆目录磁盘缓存：%s", exc)
+
+
+def get_cloud_museum_directory_artifacts() -> list[ArtifactRead]:
+    """Read Gallery once for the directory, with a stale-success fallback.
+
+    The local frontend can request the directory concurrently while it mounts
+    or follows a detail route.  Re-fetching the entire cloud Gallery for each
+    request both overloads the cloud API and turns a transient failure into a
+    blank local museum page.
+    """
+    global CLOUD_MUSEUM_DIRECTORY_CACHE
+    now = time_module.monotonic()
+    with CLOUD_MUSEUM_DIRECTORY_CACHE_LOCK:
+        cached = CLOUD_MUSEUM_DIRECTORY_CACHE
+        if cached is not None and now - cached[0] < CLOUD_MUSEUM_DIRECTORY_CACHE_TTL_SECONDS:
+            return cached[1]
+        try:
+            artifacts = enrich_artifact_catalog_links(
+                merge_duplicate_artifact_reads(fetch_cloud_artifact_payload())
+            )
+        except Exception:
+            if cached is not None and now - cached[0] < CLOUD_MUSEUM_DIRECTORY_CACHE_STALE_SECONDS:
+                logger.warning("云端图库刷新失败，继续使用最近一次成功的场馆目录缓存")
+                return cached[1]
+            persisted = load_persisted_cloud_museum_directory_artifacts()
+            if persisted is not None:
+                logger.warning("云端图库刷新失败，继续使用磁盘中的场馆目录缓存")
+                CLOUD_MUSEUM_DIRECTORY_CACHE = (now, persisted)
+                return persisted
+            raise
+        CLOUD_MUSEUM_DIRECTORY_CACHE = (now, artifacts)
+        persist_cloud_museum_directory_artifacts(artifacts)
+        return artifacts
+
+
 def build_uploaded_museum_directory(
     artifacts: list[ArtifactRead | dict],
     q: str | None,
@@ -2152,8 +2264,7 @@ def build_uploaded_museum_directory(
                 "artifact_ids": set(),
                 "image_count": 0,
                 "location": None,
-                "latitude": None,
-                "longitude": None,
+                "coordinate_clusters": {},
                 "cover_url": None,
                 "exhibitions": {},
             },
@@ -2171,10 +2282,25 @@ def build_uploaded_museum_directory(
                 group["cover_url"] = image.url
             if not group["location"] and image.capture_location:
                 group["location"] = image.capture_location
-            if group["latitude"] is None and image.latitude is not None:
-                group["latitude"] = image.latitude
-            if group["longitude"] is None and image.longitude is not None:
-                group["longitude"] = image.longitude
+            if (
+                image.latitude is not None
+                and image.longitude is not None
+                and -90 <= image.latitude <= 90
+                and -180 <= image.longitude <= 180
+            ):
+                # One artifact can be photographed at several exhibitions.  A
+                # top-level museum pin must follow the most consistently
+                # recorded coordinate cluster, not whichever image happens to
+                # be returned first.
+                coordinate_key = (round(image.latitude, 4), round(image.longitude, 4))
+                coordinate_clusters = group["coordinate_clusters"]
+                assert isinstance(coordinate_clusters, dict)
+                count, latitude_total, longitude_total = coordinate_clusters.get(coordinate_key, (0, 0.0, 0.0))
+                coordinate_clusters[coordinate_key] = (
+                    count + 1,
+                    latitude_total + image.latitude,
+                    longitude_total + image.longitude,
+                )
 
     directory: list[MuseumDirectoryRead] = []
     for group in groups.values():
@@ -2183,14 +2309,23 @@ def build_uploaded_museum_directory(
         assert isinstance(artifact_ids, set)
         assert isinstance(exhibitions, dict)
         image_count = int(group["image_count"])
+        coordinate_clusters = group["coordinate_clusters"]
+        assert isinstance(coordinate_clusters, dict)
+        dominant_coordinate = max(
+            coordinate_clusters.values(),
+            key=lambda cluster: cluster[0],
+            default=None,
+        )
+        latitude = dominant_coordinate[1] / dominant_coordinate[0] if dominant_coordinate else None
+        longitude = dominant_coordinate[2] / dominant_coordinate[0] if dominant_coordinate else None
         directory.append(
             MuseumDirectoryRead(
                 id=int(group["id"]),
                 museum_id=int(group["id"]),
                 name=str(group["name"]),
                 location=str(group["location"]) if group["location"] else None,
-                latitude=group["latitude"] if isinstance(group["latitude"], (int, float)) else None,
-                longitude=group["longitude"] if isinstance(group["longitude"], (int, float)) else None,
+                latitude=latitude,
+                longitude=longitude,
                 description=f"图库已上传 {image_count} 张图片，覆盖 {len(artifact_ids)} 件文物。",
                 artifact_count=len(artifact_ids),
                 exhibition_count=len(exhibitions),
@@ -4640,11 +4775,10 @@ def list_museum_directory(
 ) -> list[MuseumDirectoryRead]:
     if should_proxy_artifact_queries_to_cloud():
         try:
-            cloud_artifacts = enrich_artifact_catalog_links(
-                merge_duplicate_artifact_reads(fetch_cloud_artifact_payload())
-            )
-        except Exception as exc:  # noqa: BLE001 - surface cloud gallery failure to the operator
-            raise HTTPException(status_code=502, detail=f"查询云端图库失败：{exc}") from exc
+            cloud_artifacts = get_cloud_museum_directory_artifacts()
+        except Exception as exc:  # noqa: BLE001 - keep the local directory page available
+            logger.error("查询云端图库失败，场馆目录暂时返回空列表：%s", exc)
+            return []
         return build_uploaded_museum_directory(cloud_artifacts, q, limit)
 
     museums = list(
