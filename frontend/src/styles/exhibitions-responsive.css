@@ -1,0 +1,342 @@
+.exhibition-state {
+  display: flex;
+  min-height: 220px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.exhibition-state.error {
+  color: var(--ui-danger);
+}
+
+.exhibition-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0 0;
+}
+
+.exhibition-detail,
+.exhibition-detail-state {
+  min-height: calc(100vh - 47px);
+  background: var(--ui-canvas);
+}
+
+.exhibition-detail {
+  padding: 22px 34px 72px;
+}
+
+.exhibition-detail-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+}
+
+.exhibition-detail-state.error {
+  color: var(--ui-danger);
+}
+
+.exhibition-detail-back {
+  display: inline-flex;
+  max-width: 1480px;
+  margin: 0 auto 14px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  gap: 6px;
+}
+
+.exhibition-detail-back:hover {
+  color: var(--ui-text-primary);
+}
+
+.exhibition-detail-hero {
+  position: relative;
+  overflow: hidden;
+  max-width: 1480px;
+  height: min(58vh, 610px);
+  min-height: 390px;
+  margin: 0 auto;
+  border-radius: 12px;
+  background: #d8d4cd;
+}
+
+.exhibition-detail-hero > img,
+.exhibition-detail-cover-placeholder {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exhibition-detail-cover-placeholder {
+  display: grid;
+  place-items: center;
+  color: #8d857a;
+  background: linear-gradient(145deg, #e9e5de, #cbc5bb);
+}
+
+.exhibition-detail-hero-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 28%, rgb(9 8 7 / 0.78) 100%);
+}
+
+.exhibition-detail-heading {
+  position: absolute;
+  right: clamp(24px, 5vw, 72px);
+  bottom: clamp(24px, 5vw, 62px);
+  left: clamp(24px, 5vw, 72px);
+  max-width: 920px;
+  color: white;
+}
+
+.exhibition-detail-heading > div {
+  display: flex;
+  align-items: center;
+  margin-bottom: 13px;
+  gap: 10px;
+}
+
+.exhibition-detail-status {
+  padding: 5px 8px;
+  border: 1px solid rgb(255 255 255 / 0.28);
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.15);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.exhibition-detail-status.ongoing {
+  background: rgb(37 112 71 / 0.78);
+}
+
+.exhibition-detail-region {
+  font-size: 11px;
+  opacity: 0.82;
+}
+
+.exhibition-detail-heading h2 {
+  max-width: 980px;
+  margin: 0;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: clamp(32px, 5vw, 66px);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.045em;
+  text-shadow: 0 3px 20px rgb(0 0 0 / 0.2);
+}
+
+.exhibition-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 310px;
+  max-width: 1240px;
+  margin: 44px auto 0;
+  gap: clamp(36px, 7vw, 96px);
+}
+
+.exhibition-detail-main {
+  min-width: 0;
+}
+
+.exhibition-detail-intro h3,
+.exhibition-detail-section-title h3 {
+  margin: 4px 0 22px;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 25px;
+  font-weight: 600;
+}
+
+.exhibition-detail-intro p {
+  margin: 0 0 18px;
+  color: #353431;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 16px;
+  line-height: 1.95;
+}
+
+.exhibition-detail-gallery {
+  margin-top: 48px;
+  padding-top: 35px;
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-detail-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.exhibition-detail-image-grid img {
+  width: 100%;
+  max-height: 680px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #ebe8e2;
+}
+
+.exhibition-detail-image-grid img:nth-child(3n + 1) {
+  grid-column: 1 / -1;
+}
+
+.exhibition-detail-artifacts {
+  margin-top: 48px;
+  padding-top: 35px;
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-detail-section-title p {
+  margin: -14px 0 22px;
+  color: var(--ui-text-tertiary);
+  font-size: 12px;
+}
+
+.exhibition-artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.exhibition-artifact-card {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  min-width: 0;
+  padding: 8px;
+  align-items: center;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.7);
+  color: var(--ui-text-primary);
+  text-decoration: none;
+  gap: 12px;
+  transition: border-color 140ms ease, transform 140ms ease;
+}
+
+.exhibition-artifact-card:hover {
+  border-color: var(--ui-line-strong);
+  color: var(--ui-text-primary);
+  transform: translateY(-1px);
+}
+
+.exhibition-artifact-cover {
+  display: grid;
+  width: 74px;
+  aspect-ratio: 1;
+  overflow: hidden;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--ui-surface-accent);
+  color: var(--ui-text-tertiary);
+}
+
+.exhibition-artifact-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exhibition-artifact-card > div:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.exhibition-artifact-card strong,
+.exhibition-artifact-card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-artifact-card strong {
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 14px;
+}
+
+.exhibition-artifact-card span {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+}
+
+.exhibition-detail-aside {
+  align-self: start;
+  position: sticky;
+  top: 78px;
+  padding: 20px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.84);
+  box-shadow: 0 8px 28px rgb(20 18 14 / 0.04);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+
+.exhibition-detail-aside dl {
+  display: grid;
+  margin: 0;
+  gap: 0;
+}
+
+.exhibition-detail-aside dl > div {
+  padding: 13px 0;
+  border-bottom: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-detail-aside dl > div:first-child {
+  padding-top: 0;
+}
+
+.exhibition-detail-aside dt {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  gap: 6px;
+}
+
+.exhibition-detail-aside dd {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.exhibition-source-button {
+  display: flex;
+  min-height: 36px;
+  margin-top: 17px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--ui-text-primary);
+  color: white;
+  font-size: 11px;
+  text-decoration: none;
+  gap: 7px;
+}
+
+.exhibition-source-button:hover {
+  background: #333;
+  color: white;
+}
+
+.exhibition-detail-sync {
+  display: block;
+  margin-top: 10px;
+  color: var(--ui-text-tertiary);
+  font-size: 9px;
+  text-align: center;
+}
+

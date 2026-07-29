@@ -1,0 +1,594 @@
+:root {
+  --app-bg: var(--ui-canvas);
+  --app-card: var(--ui-surface-default);
+  --app-muted: var(--ui-surface-muted);
+  --app-border: var(--ui-line-subtle);
+  --app-input: var(--ui-line-subtle);
+  --app-fg: var(--ui-text-primary);
+  --app-soft: var(--ui-text-secondary);
+  --app-primary: var(--ui-primary);
+  --app-success: var(--ui-success);
+  --app-danger: var(--ui-danger);
+  --app-radius: var(--ui-radius-md);
+  --app-shadow: 0 1px 2px rgb(0 0 0 / 0.02);
+  --app-panel-shadow: 0 1px 2px rgb(0 0 0 / 0.035), 0 10px 30px rgb(0 0 0 / 0.025);
+  --app-ring: 0 0 0 2px rgb(17 17 17 / 0.05);
+}
+
+.app-shell {
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: var(--app-fg);
+}
+
+.persistent-view {
+  display: contents;
+}
+
+.persistent-view[hidden] {
+  display: none;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--app-border);
+  background: rgb(255 255 255 / 0.92);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.brand,
+.topbar-actions,
+.upload-actions,
+.batch-actions,
+.gallery-actions,
+.gallery-form-actions,
+.exif-queue-actions,
+.museum-console-tools,
+.single-actions,
+.single-submit-bar,
+.backend-match-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand {
+  gap: 7px;
+  min-width: 0;
+}
+
+.brand-mark {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.brand-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.brand h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.brand-lead,
+.muted,
+.field-help,
+.gallery-line,
+.museum-console-summary,
+.small {
+  color: var(--app-soft);
+}
+
+.brand-lead,
+.muted {
+  margin: 0;
+  font-size: 10px;
+}
+
+.topbar-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.view-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 36px;
+  padding: 3px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-muted);
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+}
+
+button:not(.ant-btn):not([data-ui="interactive-surface"]),
+.gallery-toolbar-link {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  background: var(--app-card);
+  color: var(--app-fg);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease;
+}
+
+button:not(.ant-btn):not([data-ui="interactive-surface"]):hover:not(:disabled),
+.gallery-toolbar-link:hover {
+  background: var(--app-muted);
+}
+
+button:not(.ant-btn):not([data-ui="interactive-surface"]):disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+button:not(.ant-btn):not([data-ui="interactive-surface"]):focus-visible,
+input:not(.ant-input):focus-visible,
+textarea:not(.ant-input):focus-visible,
+select:focus-visible,
+.gallery-toolbar-link:focus-visible {
+  outline: none;
+  border-color: var(--ui-line-strong);
+  box-shadow: var(--app-ring);
+}
+
+[data-ui="interactive-surface"]:focus-visible {
+  outline: none;
+  box-shadow: var(--app-ring);
+}
+
+.view-tabs button {
+  min-height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--app-soft);
+}
+
+.view-tabs button.active {
+  background: var(--app-card);
+  color: var(--app-fg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05), inset 0 0 0 1px var(--app-border);
+}
+
+.danger,
+button.danger,
+.error-text {
+  color: var(--app-danger);
+}
+
+.success-text {
+  color: var(--app-success);
+}
+
+.health-pill,
+.single-status,
+.single-count,
+.badge,
+.backend-match-meta span,
+.gallery-media-meta > span,
+.museum-image-panel-count {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-muted);
+  color: var(--app-soft);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.health-pill.online,
+.single-status.ok,
+.single-status.busy,
+.badge.best {
+  border-color: color-mix(in oklch, var(--app-success) 16%, var(--app-border));
+  background: color-mix(in oklch, var(--ui-success-muted) 64%, white);
+  color: var(--app-success);
+}
+
+.health-pill.offline {
+  border-color: color-mix(in oklch, var(--app-danger) 18%, var(--app-border));
+  background: color-mix(in oklch, var(--app-danger) 7%, white);
+  color: var(--app-danger);
+}
+
+.status-dot,
+.pulse,
+.single-status::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--app-soft);
+}
+
+.status-dot,
+.single-status::before {
+  content: "";
+  display: inline-block;
+}
+
+.health-pill.online .status-dot,
+.pulse.done,
+.pulse.submitted {
+  background: var(--app-success);
+}
+
+.health-pill.offline .status-dot {
+  background: var(--app-danger);
+}
+
+.backend-target-select-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 24px 0 14px;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-card);
+}
+
+.backend-target-select-wrap.online {
+  border-color: color-mix(in oklch, var(--app-success) 16%, var(--app-border));
+  background: color-mix(in oklch, var(--ui-success-muted) 64%, white);
+  color: var(--app-success);
+}
+
+.backend-target-select-wrap.offline {
+  border-color: color-mix(in oklch, var(--app-danger) 18%, var(--app-border));
+  background: color-mix(in oklch, var(--app-danger) 7%, white);
+  color: var(--app-danger);
+}
+
+.backend-target-select {
+  min-width: 7.6em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.backend-target-select:focus {
+  outline: none;
+}
+
+.backend-target-caret {
+  position: absolute;
+  right: 10px;
+  color: currentColor;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.health-pill-text {
+  font-size: 10px;
+}
+
+.pulse.failed,
+.pulse.error {
+  background: var(--app-danger);
+}
+
+.panel,
+.single-panel,
+.single-stream-panel,
+.single-archive,
+.exif-queue-panel,
+.exif-editor-form,
+.batch-card,
+.batch-core-card,
+.backend-match-card,
+.gallery-card,
+.gallery-modal-body,
+.gallery-detail-section,
+.gallery-advanced-details,
+.museum-summary-card,
+.museum-stage,
+.museum-map-panel,
+.museum-folder-column,
+.museum-image-panel,
+.museum-state-card,
+.museum-detail-modal-body,
+.form-section,
+.single-details,
+.single-advanced,
+.empty-state {
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-card);
+  box-shadow: none;
+}
+
+.section-heading,
+.single-panel-head,
+.single-workbench-head,
+.exif-editor-heading,
+.gallery-detail-head,
+.museum-console-head,
+.museum-stage-head,
+.museum-map-panel-head,
+.museum-folder-column-head,
+.museum-image-panel-head,
+.form-section-head,
+.batch-head,
+.batch-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-heading h2,
+.single-panel-head h2,
+.single-workbench-head h2,
+.form-section-head h3,
+.gallery-detail-title,
+.museum-stage h3,
+.museum-map-panel-head h3,
+.museum-image-panel h4,
+.batch-section-head strong {
+  margin: 0;
+  color: var(--app-fg);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.single-kicker,
+.form-section-kicker,
+.eyebrow,
+.gallery-detail-kicker,
+.museum-detail-modal-kicker {
+  color: var(--app-soft);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.step-badge,
+.flow-index {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 999px;
+  background: var(--app-muted);
+  color: var(--app-soft);
+  font-size: 12px;
+}
+
+input:not(.ant-input),
+textarea:not(.ant-input),
+select,
+.gallery-search input:not(.ant-input),
+.gallery-location-query input:not(.ant-input),
+.batch-rename-panel input:not(.ant-input),
+.batch-location-fields input:not(.ant-input) {
+  width: 100%;
+  border: 1px solid var(--app-input);
+  border-radius: 6px;
+  background: var(--app-card);
+  color: var(--app-fg);
+  font-size: 13px;
+  font-weight: 400;
+  outline: none;
+}
+
+input:not(.ant-input),
+select {
+  min-height: 32px;
+  padding: 6px 9px;
+}
+
+textarea:not(.ant-input) {
+  min-height: 70px;
+  padding: 7px 9px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+input:not(.ant-input)::placeholder,
+textarea:not(.ant-input)::placeholder {
+  color: color-mix(in oklch, var(--app-soft) 72%, transparent);
+}
+
+label.field,
+.field {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field > span:first-child {
+  color: var(--app-soft);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.field-row,
+.batch-core-grid,
+.form-section-body,
+.form-fields,
+.single-advanced-grid,
+.gallery-advanced-body,
+.gallery-detail-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.field-row,
+.single-archive .field-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-invalid input,
+.field-invalid textarea,
+.field-invalid select {
+  border-color: color-mix(in oklch, var(--app-danger) 55%, var(--app-border));
+  background: color-mix(in oklch, var(--app-danger) 5%, white);
+}
+
+.field-soft-missing input,
+.field-soft-missing textarea,
+.field-soft-missing select {
+  border-color: color-mix(in oklch, var(--ui-warning) 35%, var(--app-border));
+  background: var(--ui-warning-muted);
+}
+
+.field-help {
+  margin: -1px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--app-soft);
+}
+
+.field-help.error {
+  color: var(--app-danger);
+}
+
+.tag-editor {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+}
+
+.tag-editor-chips,
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag-editor-chips .ant-tag {
+  margin-inline-end: 0;
+}
+
+.exif-queue-actions {
+  flex: 0 0 auto;
+}
+
+.autocomplete-option {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 400;
+}
+
+.autocomplete-option-meta {
+  margin-left: auto;
+  color: var(--app-soft);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.error-text,
+.success-text {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  background: var(--app-card);
+}
+
+.success-text {
+  border-color: color-mix(in oklch, var(--app-success) 16%, var(--app-border));
+  background: color-mix(in oklch, var(--ui-success-muted) 60%, white);
+}
+
+.error-text {
+  border-color: color-mix(in oklch, var(--app-danger) 16%, var(--app-border));
+  background: color-mix(in oklch, var(--app-danger) 4%, white);
+}
+
+.result-desc,
+.reasoning-text,
+.evidence-list,
+.gallery-detail-value {
+  color: color-mix(in oklch, var(--app-fg) 78%, var(--app-soft));
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.65;
+}
+
+.app-shell > .panel.form-wide,
+.gallery-workbench,
+.batch-workbench,
+.museum-console {
+  width: auto;
+  max-width: none;
+  height: calc(100vh - 80px);
+  margin: 12px;
+  overflow: auto;
+}
+
+.gallery-workbench,
+.batch-workbench,
+.museum-console {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+}
+
+.exif-console,
+.single-workbench {
+  height: calc(100vh - 52px);
+  padding: 10px;
+  overflow: hidden;
+}
+
+.exif-console {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  background: var(--app-bg);
+}
+

@@ -30,6 +30,9 @@ import {
   type MetadataSyncSelection,
 } from "./components/exif/MetadataSyncFieldControls"
 import { AnnotatedDescription, FieldReviewBadge, type ArtifactFieldWarning } from "./components/exif/ReviewIndicators"
+import { GpsMapPicker, geocodeLocationName, reverseGeocodeCoordinates } from "./components/exif/GpsMapPicker"
+import { formatFileSize } from "./lib/fileFormat"
+import { formatCapturedAt, indexedFileName } from "./lib/exifDisplay"
 
 const EXIF_HISTORY_SCOPE = "exif"
 
@@ -285,26 +288,7 @@ function yieldToMainThread() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 0))
 }
 
-function formatCapturedAt(value: string | null | undefined) {
-  const normalized = (value ?? "").trim().replace("T", " ").replace(/Z$/, "")
-  if (!normalized) return ""
-  const match = normalized.match(/^(\d{4}-\d{2}-\d{2})[ ](\d{2}:\d{2})(?::(\d{2}))?/)
-  return match ? `${match[1]} ${match[2]}:${match[3] ?? "00"}` : normalized.slice(0, 19)
-}
-
-function compactFileName(value: string, maxLength = 38) {
-  const characters = Array.from(value)
-  if (characters.length <= maxLength) return value
-  const tailLength = Math.max(14, Math.floor(maxLength * 0.46))
-  const headLength = Math.max(10, maxLength - tailLength - 1)
-  return `${characters.slice(0, headLength).join("")}…${characters.slice(-tailLength).join("")}`
-}
-
-function indexedFileName(value: string, index: number) {
-  return `${String(Math.max(index, 0) + 1).padStart(2, "0")} · ${compactFileName(value)}`
-}
-
-function isTiffFile(file: File) {
+ function isTiffFile(file: File) {
   return /\.(?:tif|tiff)$/i.test(file.name) || ["image/tif", "image/tiff", "application/tiff", "application/x-tiff"].includes(file.type.toLowerCase())
 }
 
@@ -351,12 +335,6 @@ async function createTiffPreviewUrl(file: File) {
   const previewBlob = await new Promise<Blob | null>((resolve) => previewCanvas.toBlob(resolve, "image/jpeg", 0.82))
   if (!previewBlob) throw new Error("TIFF 预览生成失败")
   return URL.createObjectURL(previewBlob)
-}
-
-function formatFileSize(size: number) {
-  if (size >= 1024 ** 3) return `${(size / 1024 ** 3).toFixed(1)} GB`
-  if (size >= 1024 ** 2) return `${(size / 1024 ** 2).toFixed(1)} MB`
-  return `${Math.max(1, Math.round(size / 1024))} KB`
 }
 
 async function canvasToPreviewUrl(canvas: HTMLCanvasElement) {
@@ -1494,192 +1472,6 @@ function changedParts(item: ExifWorkbenchItem) {
   if (initial.name !== current.name || initial.era !== current.era || initial.museumName !== current.museumName || initial.placeOfExcavation !== current.placeOfExcavation) changed.push("信息")
   if (initial.description !== current.description || initial.tags.join("\u0000") !== current.tags.join("\u0000")) changed.push("内容")
   return changed
-}
-
-type AMapEvent = { lnglat?: { getLng: () => number; getLat: () => number } }
-type AMapGeocodeLocation = {
-  getLng?: () => number
-  getLat?: () => number
-  lng?: number
-  lat?: number
-}
-type AMapInstance = {
-  on: (event: string, handler: (event: AMapEvent) => void) => void
-  clearMap: () => void
-  setZoomAndCenter: (zoom: number, center: [number, number]) => void
-  add: (marker: unknown) => void
-  destroy?: () => void
-}
-type AMapSdk = {
-  Map: new (element: HTMLDivElement, options: Record<string, unknown>) => AMapInstance
-  Marker: new (options: Record<string, unknown>) => { on: (event: string, handler: (event: AMapEvent) => void) => void }
-  Geocoder?: new (options: Record<string, unknown>) => {
-    getAddress: (position: [number, number], callback: (status: string, result: { regeocode?: { formattedAddress?: string } }) => void) => void
-    getLocation: (
-      address: string,
-      callback: (status: string, result: { geocodes?: Array<{ location?: AMapGeocodeLocation }> }) => void,
-    ) => void
-  }
-  plugin?: (plugins: string | string[], callback: () => void) => void
-}
-
-declare global {
-  interface Window {
-    AMap?: AMapSdk
-    _AMapSecurityConfig?: Record<string, string>
-  }
-}
-
-const AMAP_SCRIPT_ID = import.meta.env.VITE_AMAP_SCRIPT_ID as string | undefined
-  ?? "museum-console-amap-script"
-const AMAP_SECURITY_CODE = import.meta.env.VITE_AMAP_SECURITY_CODE as string | undefined
-const AMAP_SCRIPT_SRC = import.meta.env.VITE_AMAP_SCRIPT_SRC as string | undefined
-let amapLoadPromise: Promise<AMapSdk> | null = null
-
-function loadAmap(): Promise<AMapSdk> {
-  if (amapLoadPromise) return amapLoadPromise
-  if (!AMAP_SCRIPT_SRC) return Promise.reject(new Error("未配置高德地图脚本"))
-  if (AMAP_SECURITY_CODE) window._AMapSecurityConfig = { securityJsCode: AMAP_SECURITY_CODE }
-  const ensureGeocoder = (sdk: AMapSdk) => {
-    if (sdk.Geocoder) return Promise.resolve(sdk)
-    if (!sdk.plugin) return Promise.reject(new Error("高德地图地理编码插件不可用"))
-    return new Promise<AMapSdk>((resolve, reject) => {
-      sdk.plugin?.(["AMap.Geocoder", "AMap.PlaceSearch"], () => {
-        if (sdk.Geocoder) resolve(sdk)
-        else reject(new Error("高德地图地理编码插件加载失败"))
-      })
-    })
-  }
-  const loadScript = new Promise<AMapSdk>((resolve, reject) => {
-    if (window.AMap) {
-      resolve(window.AMap)
-      return
-    }
-    const existing = document.getElementById(AMAP_SCRIPT_ID) as HTMLScriptElement | null
-    const finish = () => window.AMap ? resolve(window.AMap) : reject(new Error("高德地图脚本未初始化"))
-    if (existing) {
-      existing.addEventListener("load", finish, { once: true })
-      existing.addEventListener("error", () => reject(new Error("高德地图脚本加载失败")), { once: true })
-      return
-    }
-    const script = document.createElement("script")
-    script.id = AMAP_SCRIPT_ID
-    script.src = AMAP_SCRIPT_SRC
-    script.async = true
-    script.onload = finish
-    script.onerror = () => reject(new Error("高德地图脚本加载失败"))
-    document.head.appendChild(script)
-  })
-  amapLoadPromise = loadScript.then(ensureGeocoder).catch((error) => {
-    amapLoadPromise = null
-    throw error
-  })
-  return amapLoadPromise
-}
-
-async function geocodeLocationName(name: string): Promise<{ latitude: number; longitude: number } | null> {
-  const AMap = await loadAmap()
-  const Geocoder = AMap.Geocoder
-  if (!Geocoder) return null
-  return new Promise((resolve) => {
-    new Geocoder({ city: "全国" }).getLocation(name, (status, result) => {
-      const location = status === "complete" ? result.geocodes?.[0]?.location : undefined
-      const longitude = location?.getLng?.() ?? location?.lng
-      const latitude = location?.getLat?.() ?? location?.lat
-      resolve(
-        Number.isFinite(latitude) && Number.isFinite(longitude)
-          ? { latitude: Number(latitude), longitude: Number(longitude) }
-          : null,
-      )
-    })
-  })
-}
-
-async function reverseGeocodeCoordinates(latitude: number, longitude: number): Promise<string> {
-  const AMap = await loadAmap()
-  const Geocoder = AMap.Geocoder
-  if (!Geocoder) return ""
-  return new Promise((resolve) => {
-    new Geocoder({}).getAddress([longitude, latitude], (status, result) => {
-      resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")
-    })
-  })
-}
-
-function GpsMapPicker({ latitude, longitude, onPick }: {
-  latitude: string
-  longitude: string
-  onPick: (latitude: string, longitude: string, locationName?: string) => void
-}) {
-  const containerRef = useRef<HTMLDivElement | null>(null)
-  const mapRef = useRef<AMapInstance | null>(null)
-  const [state, setState] = useState<"loading" | "ready" | "missing" | "error">("loading")
-
-  async function applyPoint(event: AMapEvent) {
-    if (!event.lnglat) return
-    const nextLatitude = event.lnglat.getLat().toFixed(6)
-    const nextLongitude = event.lnglat.getLng().toFixed(6)
-    let locationName = ""
-    try {
-      locationName = await reverseGeocodeCoordinates(
-        Number(nextLatitude),
-        Number(nextLongitude),
-      )
-    } catch {
-      // Coordinates remain usable even if reverse geocoding is unavailable.
-    }
-    onPick(nextLatitude, nextLongitude, locationName || undefined)
-  }
-
-  useEffect(() => {
-    if (!containerRef.current || !AMAP_SCRIPT_SRC) { setState("missing"); return }
-    let disposed = false
-    const mount = async () => {
-      try {
-      const AMap = await loadAmap()
-      if (disposed || !containerRef.current) return
-      const latitudeValue = Number(latitude) || 39.90923
-      const longitudeValue = Number(longitude) || 116.397428
-      const map = new AMap.Map(containerRef.current, { zoom: 15, center: [longitudeValue, latitudeValue] })
-      map.on("click", (event) => {
-        void applyPoint(event)
-      })
-      if (Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude))) {
-        const marker = new AMap.Marker({ position: [longitudeValue, latitudeValue], draggable: true })
-        marker.on("dragend", (event) => { void applyPoint(event) })
-        map.add(marker)
-      }
-      mapRef.current = map
-      setState("ready")
-      } catch {
-        if (!disposed) setState("error")
-      }
-    }
-    void mount()
-    return () => {
-      disposed = true
-      mapRef.current?.destroy?.()
-      mapRef.current = null
-    }
-  }, [])
-
-  useEffect(() => {
-    const latitudeValue = Number(latitude)
-    const longitudeValue = Number(longitude)
-    const map = mapRef.current
-    if (!map || !window.AMap || !Number.isFinite(latitudeValue) || !Number.isFinite(longitudeValue)) return
-    map.clearMap()
-    map.setZoomAndCenter(15, [longitudeValue, latitudeValue])
-    const marker = new window.AMap.Marker({ position: [longitudeValue, latitudeValue], draggable: true })
-    marker.on("dragend", (event) => {
-      void applyPoint(event)
-    })
-    map.add(marker)
-  }, [latitude, longitude, onPick])
-
-  if (state === "missing") return <p className="muted gps-map-hint">高德地图配置未载入，请检查前端重启后是否读取项目 .env。</p>
-  if (state === "error") return <p className="error-text">地图加载失败，请直接填写坐标。</p>
-  return <div className="gps-map-wrap"><div ref={containerRef} className="gps-map" />{state === "loading" ? <span>正在加载地图…</span> : null}</div>
 }
 
 function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {

@@ -1,0 +1,503 @@
+.exif-queue-item {
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 118px 9px 10px;
+  border: 0;
+  background: var(--ui-surface-wash);
+  color: var(--app-fg);
+  box-shadow: none;
+}
+
+.exif-queue-item:not(:disabled):hover {
+  border-color: transparent;
+  background: var(--ui-surface-accent);
+  color: var(--app-fg);
+}
+
+.exif-queue-item.is-selected,
+.exif-queue-item.is-selected:not(:disabled):hover {
+  border-color: transparent;
+  background: var(--ui-surface-accent-strong);
+  color: var(--app-fg);
+  box-shadow: none;
+}
+
+.exif-queue-item-shell {
+  position: relative;
+  display: block;
+  align-items: center;
+  align-self: start;
+  border-radius: 10px;
+}
+
+.exif-queue-item-actions {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  z-index: 2;
+  flex: 0 0 auto;
+  transform: translateY(-50%);
+}
+
+.exif-queue-item-shell.is-error .exif-queue-item {
+  padding-right: 154px;
+}
+
+.exif-queue-remove.ant-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  opacity: 0.38;
+}
+
+.exif-queue-item-shell:hover .exif-queue-remove.ant-btn,
+.exif-queue-item-shell:focus-within .exif-queue-remove.ant-btn {
+  background: transparent !important;
+  color: var(--ui-danger);
+  opacity: 0.82;
+}
+
+.exif-queue-remove.ant-btn:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ui-danger) 38%, transparent);
+  outline-offset: 1px;
+}
+
+.exif-sidebar-map .gps-map-wrap {
+  min-height: 220px;
+  margin-top: 12px;
+  border-radius: 12px;
+  border-color: var(--app-border);
+  box-shadow: none;
+}
+
+.batch-rename-panel > .muted {
+  margin: 8px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.exif-queue-list > .muted:only-child {
+  display: grid;
+  min-height: 112px;
+  margin: 0;
+  place-items: center;
+  padding: 20px;
+  border-top: 1px solid var(--app-border);
+  text-align: center;
+}
+
+.exif-main-empty {
+  background: color-mix(in oklch, var(--app-card) 88%, var(--app-muted));
+  box-shadow: var(--app-panel-shadow);
+}
+
+.exif-empty-symbol {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-card);
+  color: var(--app-soft);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.04);
+}
+
+.exif-main-empty .ant-btn {
+  margin-top: 4px;
+}
+
+.exif-queue-thumb,
+.batch-thumb,
+.gallery-thumb,
+.museum-summary-photo-stack,
+.museum-image-card img {
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--app-muted);
+}
+
+.exif-queue-thumb,
+.batch-thumb {
+  position: relative;
+}
+
+.exif-queue-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 7px;
+}
+
+.exif-queue-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.exif-queue-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.exif-queue-copy strong {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--app-fg);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exif-queue-copy > span {
+  overflow: hidden;
+  color: var(--app-soft);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-submit-state.ant-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent !important;
+  box-shadow: none;
+  gap: 5px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 24px;
+}
+
+.queue-submit-state.ant-tag.is-submitted { color: #5f806a; }
+.queue-submit-state.ant-tag.is-submitting { color: #4d78a8; }
+.queue-submit-state.ant-tag.is-error { color: #bd665a; }
+.queue-submit-state.ant-tag.is-idle { color: #98713e; }
+
+.queue-state-icon.is-active {
+  animation: queue-state-spin 850ms linear infinite;
+}
+
+.queue-state-icon.is-pending {
+  animation: queue-state-breathe 1.7s ease-in-out infinite;
+}
+
+@keyframes queue-state-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes queue-state-breathe {
+  50% { opacity: 0.48; transform: translateY(-1px); }
+}
+
+.queue-state-tags {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  justify-self: end;
+  gap: 4px;
+}
+
+.queue-state-tags .ant-tag {
+  margin: 0;
+}
+
+.queue-state-tags > .ant-tag:not(.queue-submit-state) {
+  min-height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent !important;
+  box-shadow: none;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.queue-change-summary {
+  grid-column: 1 / -1;
+  overflow: hidden !important;
+  color: color-mix(in oklch, var(--app-primary) 78%, var(--app-fg)) !important;
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap !important;
+}
+
+.result-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.result-meta .ant-tag {
+  margin: 0;
+}
+
+.queue-upload small {
+  font-size: 10px;
+}
+
+.exif-queue-retry.ant-btn {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent !important;
+  color: var(--ui-danger);
+  box-shadow: none;
+}
+
+.exif-queue-retry.ant-btn:hover {
+  background: transparent !important;
+  color: var(--ui-danger);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-state-icon.is-active { animation: none; }
+}
+
+.exif-queue-copy .queue-upload {
+  grid-column: 1 / -1;
+}
+
+.exif-selected-head {
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+}
+
+.exif-form-card-grid {
+  display: grid;
+  gap: 0;
+}
+
+.exif-form-card .ant-card-body {
+  min-width: 0;
+}
+
+.exif-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-fg);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: help;
+}
+
+.exif-section-title svg {
+  flex: 0 0 auto;
+  color: var(--app-primary);
+}
+
+.exif-section-title:focus-visible {
+  border-radius: 5px;
+  outline: none;
+  box-shadow: var(--app-ring);
+}
+
+.exif-form-card .form-section-body {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.exif-form-card .form-section-body .field-row {
+  gap: 14px;
+}
+
+.exif-form-card .field {
+  gap: 7px;
+}
+
+.exif-form-card .field > span:first-child {
+  color: color-mix(in oklch, var(--app-fg) 76%, var(--app-soft));
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.field-search-hint {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  font-weight: 400;
+  gap: 3px;
+}
+
+.artifact-name-search-option {
+  display: grid;
+  padding: 2px 0;
+  gap: 2px;
+  line-height: 1.35;
+}
+
+.artifact-name-search-option strong {
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.artifact-name-search-option span {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+}
+
+.exhibition-picker {
+  display: grid;
+  gap: 7px;
+}
+
+.exhibition-picker > .ant-select {
+  width: 100%;
+}
+
+.exhibition-option {
+  display: grid;
+  gap: 2px;
+  padding: 3px 0;
+  line-height: 1.35;
+}
+
+.exhibition-option strong {
+  overflow: hidden;
+  color: var(--app-fg);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-option span,
+.exhibition-option small {
+  overflow: hidden;
+  color: var(--app-soft);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-option small {
+  color: color-mix(in oklch, var(--ui-success) 72%, var(--app-soft));
+}
+
+.exif-selected-preview {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--app-muted);
+  object-fit: contain;
+}
+
+.exif-file-block {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+
+.exif-file-name {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.exif-file-rename {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.exif-file-rename > span {
+  grid-column: 1 / -1;
+  color: var(--app-soft);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.exif-file-rename em {
+  color: var(--app-soft);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.exif-file-rename .ant-input {
+  resize: none;
+  line-height: 1.45;
+}
+
+.exif-inline-batch-rename {
+  margin-top: 2px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ui-surface-muted);
+}
+
+.exif-inline-batch-rename summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.exif-inline-batch-rename summary::-webkit-details-marker {
+  display: none;
+}
+
+.exif-inline-batch-rename summary:focus {
+  outline: none;
+}
+
+.exif-inline-batch-rename summary:focus-visible {
+  border-radius: 6px;
+  box-shadow: var(--app-ring);
+}
+
+.exif-inline-batch-rename > .exif-tool-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.exif-inline-batch-rename > .exif-tool-actions {
+  display: flex;
+  grid-template-columns: none;
+  justify-content: flex-start;
+}
+
+.exif-editor-scroll {
+  display: grid;
+  gap: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 0 18px 22px;
+  background: var(--app-card);
+}
+
+.exif-editor-scroll > * {
+  width: min(100%, 1240px);
+  margin-inline: auto;
+}
+

@@ -1,0 +1,389 @@
+/* Compact hierarchy shared with quick entry: tone carries structure, not outlines. */
+.gallery-page-head,
+.gallery-page-head .gallery-search .ant-input-affix-wrapper,
+.gallery-card,
+.gallery-detail-section,
+.gallery-advanced-details {
+  border-color: transparent;
+}
+
+.gallery-modal {
+  padding: 10px;
+  overscroll-behavior: contain;
+}
+
+.gallery-modal-body {
+  width: min(1420px, calc(100vw - 20px));
+  height: min(900px, calc(100dvh - 20px));
+  border: 0;
+  border-radius: 12px;
+  background: var(--ui-surface-default);
+  box-shadow: 0 24px 72px rgb(31 23 18 / 0.22);
+}
+
+.gallery-modal-info {
+  gap: 0;
+  padding: 0;
+  border-left: 0;
+  background: #fbfaf7;
+}
+
+.gallery-modal-info .gallery-detail-head {
+  min-height: 56px;
+  padding: 10px 14px;
+  border-bottom: 0;
+  background: #fbfaf7;
+}
+
+.gallery-modal-info .gallery-detail-title {
+  overflow: hidden;
+  font-family: inherit;
+  font-size: 1.15rem;
+  font-weight: 650;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-modal-info .gallery-actions {
+  gap: 4px;
+}
+
+.gallery-modal-info .gallery-actions .ant-btn {
+  min-height: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 7px;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.gallery-modal-info .gallery-actions .ant-btn-default,
+.gallery-modal-info .gallery-actions .ant-btn-text {
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-secondary);
+}
+
+.gallery-modal-info .gallery-actions .ant-btn-default:hover:not(:disabled),
+.gallery-modal-info .gallery-actions .ant-btn-text:hover:not(:disabled) {
+  background: var(--ui-surface-accent);
+  color: var(--ui-text-primary);
+}
+
+.gallery-modal-info .gallery-actions .ant-btn-text {
+  width: 32px;
+  padding: 0;
+  background: transparent;
+}
+
+.gallery-modal-info.is-reading .gallery-detail-lines {
+  padding: 4px 14px 14px;
+}
+
+.gallery-modal-info.is-reading .gallery-info-section {
+  padding: 7px 0;
+  border: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-info-section + .gallery-info-section {
+  margin-top: 6px;
+  border-top: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-info-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 0;
+}
+
+.gallery-modal-info.is-reading .gallery-info-item {
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 7px;
+  min-height: 38px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--ui-surface-muted);
+}
+
+.gallery-modal-info.is-reading .gallery-info-item-wide {
+  grid-column: 1 / -1;
+}
+
+.gallery-modal-info.is-reading .gallery-info-label {
+  gap: 5px;
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+}
+
+.gallery-modal-info.is-reading .gallery-info-value {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.gallery-modal-info.is-reading .gallery-info-section-head {
+  margin: 0 0 6px;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-item-lens {
+  grid-column: span 2;
+}
+
+.gallery-modal-info.is-reading .gallery-camera-item {
+  min-height: 48px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: var(--ui-surface-accent);
+}
+
+.gallery-modal-info.is-reading .gallery-description-card {
+  margin-top: 6px;
+  padding: 10px 11px 12px;
+  border-radius: 8px;
+  background: var(--ui-surface-muted);
+}
+
+.gallery-modal-info.is-reading .gallery-description-copy {
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.gallery-modal-info.is-editing {
+  background: #fbfaf7;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-scroll {
+  padding: 8px 14px 14px;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .form-fields {
+  gap: 8px;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .form-section {
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ui-surface-muted);
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .form-section + .form-section {
+  background: var(--ui-surface-accent);
+}
+
+.gallery-modal-info.is-editing .gallery-edit-section-head {
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  padding: 0 13px;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .form-section-head h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .form-section-body {
+  gap: 10px;
+  padding: 0 13px 14px;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .field {
+  gap: 5px;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .field > span:first-child {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .field > input:not(.ant-input),
+.gallery-modal-info.is-editing .gallery-edit-form .field > textarea:not(.ant-input),
+.gallery-modal-info.is-editing .gallery-edit-form .field > select,
+.gallery-modal-info.is-editing .gallery-edit-form .field > .tag-editor,
+.gallery-modal-info.is-editing .gallery-edit-form .ant-input,
+.gallery-modal-info.is-editing .gallery-edit-form .ant-select-selector {
+  border-color: transparent;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.82);
+  box-shadow: none;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .ant-input,
+.gallery-modal-info.is-editing .gallery-edit-form .ant-select-selector,
+.gallery-modal-info.is-editing .gallery-edit-form .field > input:not(.ant-input) {
+  min-height: 36px;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .field > input:not(.ant-input):focus,
+.gallery-modal-info.is-editing .gallery-edit-form .field > textarea:not(.ant-input):focus,
+.gallery-modal-info.is-editing .gallery-edit-form .field > select:focus,
+.gallery-modal-info.is-editing .gallery-edit-form .field > .tag-editor:focus-within,
+.gallery-modal-info.is-editing .gallery-edit-form .ant-input:focus,
+.gallery-modal-info.is-editing .gallery-edit-form .ant-input-affix-wrapper-focused,
+.gallery-modal-info.is-editing .gallery-edit-form .ant-select-focused .ant-select-selector {
+  border-color: transparent;
+  background: #fff;
+  box-shadow: var(--ui-ring);
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .field > textarea:not(.ant-input) {
+  min-height: 108px;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-description-field {
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid rgb(120 99 78 / 0.07);
+}
+
+.gallery-modal-info.is-editing .gallery-description-editor-head .ant-btn {
+  min-height: 26px;
+  height: 26px;
+  padding-inline: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.72);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+}
+
+.gallery-modal-info.is-editing .gallery-tags-field .tag-editor {
+  display: grid;
+  gap: 6px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .gallery-tags-field > .tag-editor {
+  background: transparent;
+}
+
+.gallery-modal-info.is-editing .gallery-edit-form .gallery-tags-field .tag-editor-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.gallery-modal-info.is-editing .gallery-tags-field .ant-tag {
+  margin: 0;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ui-surface-accent);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 24px;
+  padding-inline: 8px;
+}
+
+.gallery-modal-info.is-editing .gallery-tags-field .tag-editor-input {
+  min-height: 34px;
+  padding-inline: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.82);
+  box-shadow: none;
+}
+
+.gallery-modal-info.is-editing .gallery-tags-field .tag-editor-input:focus {
+  background: #fff;
+  box-shadow: var(--ui-ring);
+}
+
+.gallery-modal-info.is-editing .gallery-location-query {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.gallery-modal-info.is-editing .gallery-location-query .ant-input {
+  min-height: 36px;
+  padding-inline: 10px;
+  border: 0;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.82);
+  box-shadow: none;
+}
+
+.gallery-modal-info.is-editing .gallery-location-query .ant-input:focus {
+  background: #fff;
+  box-shadow: var(--ui-ring);
+}
+
+.gallery-modal-info.is-editing .gallery-location-map-shell {
+  border: 0;
+  border-radius: 7px;
+}
+
+.gallery-advanced-details {
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.48);
+}
+
+.gallery-advanced-summary {
+  min-height: 38px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.gallery-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.gallery-advanced-summary::after {
+  color: var(--ui-text-tertiary);
+  content: "⌄";
+  font-size: 13px;
+  transition: transform 160ms var(--ui-ease-out);
+}
+
+.gallery-advanced-details[open] .gallery-advanced-summary::after {
+  transform: rotate(180deg);
+}
+
+.gallery-advanced-summary span:first-child {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gallery-advanced-hint {
+  margin-left: auto;
+  padding-right: 6px;
+  font-size: 10px;
+}
+
+.gallery-advanced-body {
+  gap: 10px;
+  padding: 0 10px 10px;
+}
+
+.gallery-form-footer {
+  padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  border-top: 0;
+  background: rgb(251 250 247 / 0.94);
+}
+

@@ -1,0 +1,235 @@
+/* Museum keeps its purpose-built collection, map, and folder presentation. */
+
+
+.museum-list-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(139, 94, 60, 0.1);
+}
+
+.museum-console {
+  display: grid;
+  gap: 12px;
+}
+
+.museum-console-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 12px;
+  align-items: end;
+}
+
+.museum-search {
+  align-self: end;
+}
+
+.museum-console-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.museum-list,
+.museum-exhibition-list {
+  display: grid;
+  gap: 8px;
+}
+
+.museum-list {
+  max-height: min(72vh, 880px);
+  overflow: auto;
+  padding: 4px;
+}
+
+.museum-list-item,
+.museum-exhibition-item {
+  border: 1px solid var(--ui-line-subtle);
+  background: rgba(255, 250, 244, 0.78);
+}
+
+.museum-list-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 12px;
+  text-align: left;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.museum-list-item:hover,
+.museum-list-item.active {
+  border-color: var(--ui-primary);
+  background: rgba(139, 94, 60, 0.08);
+  transform: translateY(-1px);
+}
+
+.museum-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.museum-list-row strong,
+.museum-exhibition-item strong {
+  font-family: "Songti SC", "STSong", "Noto Serif SC", serif;
+  color: var(--ui-text-primary);
+}
+
+.museum-list-line,
+.museum-exhibition-item span {
+  color: var(--ui-text-secondary);
+  font-size: 0.84rem;
+}
+
+.museum-detail {
+  min-height: 320px;
+  padding: 16px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 252, 248, 0.72), rgba(243, 236, 227, 0.9));
+  border: 1px solid rgba(136, 104, 76, 0.1);
+}
+
+.museum-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.museum-map-shell {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.museum-map-toolbar,
+.museum-map-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.museum-map-status,
+.museum-map-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.museum-map-status strong {
+  font-family: "Songti SC", "STSong", "Noto Serif SC", serif;
+  color: var(--ui-text-primary);
+}
+
+.museum-map-canvas {
+  position: relative;
+  min-height: 320px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(136, 104, 76, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 248, 0.92), rgba(246, 239, 229, 0.88)),
+    rgba(246, 239, 229, 0.9);
+}
+
+.museum-map-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 20px;
+  text-align: center;
+  background: rgba(248, 241, 233, 0.84);
+  color: var(--ui-text-secondary);
+}
+
+.museum-map-overlay.error {
+  color: var(--ui-danger);
+}
+
+.museum-map-foot {
+  color: var(--ui-text-secondary);
+  font-size: 0.82rem;
+}
+
+.museum-map-marker {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 250, 244, 0.98);
+  background: rgba(139, 94, 60, 0.88);
+  box-shadow: 0 4px 14px rgba(75, 51, 31, 0.18);
+}
+
+.museum-map-marker.default {
+  transform: scale(0.9);
+  background: rgba(139, 94, 60, 0.76);
+}
+
+.museum-map-marker.active {
+  width: 22px;
+  height: 22px;
+  background: rgba(94, 63, 39, 0.94);
+}
+
+.museum-map-marker.edit {
+  width: 24px;
+  height: 24px;
+  border-width: 3px;
+  background: rgba(104, 121, 91, 0.94);
+  box-shadow: 0 6px 18px rgba(104, 121, 91, 0.28);
+}
+
+.museum-detail-lines {
+  gap: 12px;
+}
+
+.museum-exhibition-line {
+  align-items: flex-start;
+}
+
+.museum-exhibition-item {
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.museum-edit-form {
+  gap: 10px;
+}
+
+.museum-detail-empty {
+  min-height: 260px;
+}
+
+@media (max-width: 920px) {
+
+  .museum-console-head,
+  .museum-console-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .museum-list {
+    max-height: none;
+    padding-right: 0;
+  }
+
+  .museum-map-toolbar,
+  .museum-map-foot {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.museum-console {
+  display: grid;
+  gap: 14px;
+}
+

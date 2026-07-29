@@ -1,0 +1,58 @@
+/* Keep the directory as an open browsing canvas, not a framed dashboard. */
+
+.museum-console {
+  width: min(1680px, calc(100% - 40px));
+  max-width: 1680px;
+  height: auto;
+  min-height: calc(100dvh - 104px);
+  margin: 20px auto 44px;
+  padding: 0 clamp(4px, 1.3vw, 18px) 24px;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+@media (max-width: 960px) {
+  .museum-console {
+    width: calc(100% - 24px);
+    margin: 12px auto 32px;
+    padding-inline: 2px;
+  }
+}
+
+@media (max-width: 680px) {
+  .museum-console {
+    width: 100%;
+    margin: 0;
+    padding: 0 12px 28px;
+  }
+}
+
+/* Surface hierarchy: modules are separated by tone instead of outlines. */
+.museum-console-head {
+  border-bottom: 0;
+}
+
+.museum-summary-card,
+.museum-stage,
+.museum-map-panel,
+.museum-folder-column,
+.museum-image-panel,
+.museum-state-card {
+  border-color: transparent;
+}
+
+.museum-summary-card {
+  background: var(--ui-surface-default);
+}
+
+.museum-folder-column {
+  background: var(--ui-surface-wash);
+}
+
+.museum-image-panel,
+.museum-map-panel {
+  background: var(--ui-surface-default);
+}

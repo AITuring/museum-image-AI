@@ -1,0 +1,143 @@
+@media (max-width: 920px) {
+
+  .gallery-modal-body {
+    border-radius: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .gallery-detail-line {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-detail-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-card {
+    grid-template-rows: auto auto;
+  }
+}
+
+.gallery-grid {
+  align-content: start;
+}
+
+.gallery .panel {
+  border-radius: 7px;
+}
+
+.gallery-info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 24px;
+}
+
+.gallery-info-item {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  min-width: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--ui-line-subtle);
+}
+
+.gallery-info-item-wide {
+  grid-column: 1 / -1;
+}
+
+.gallery-info-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.gallery-info-value {
+  min-width: 0;
+  color: var(--ui-text-primary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.gallery-badge-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gallery-exhibition-link {
+  min-height: 22px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--ui-surface-muted);
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+  line-height: 20px;
+  text-decoration: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.gallery-exhibition-link:hover {
+  background: var(--ui-surface-accent-strong);
+  color: var(--ui-text-primary);
+}
+
+.gallery-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.gallery-camera-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.gallery-camera-item {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gallery-description-copy {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.gallery-description-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 680px) {
+  .gallery-info-grid,
+  .gallery-camera-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-info-item-wide {
+    grid-column: auto;
+  }
+}
+

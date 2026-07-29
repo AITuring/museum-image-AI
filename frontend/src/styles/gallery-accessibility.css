@@ -1,0 +1,47 @@
+/* The detail view is a route, not an overlay. It intentionally keeps the
+   former dialog's two-pane composition while participating in normal page flow. */
+.gallery-detail-page.gallery-modal-body {
+  width: 100%;
+  height: calc(100dvh - 104px);
+  min-height: 640px;
+  margin: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 680px) {
+  .gallery-detail-page.gallery-modal-body {
+    height: calc(100dvh - 72px);
+    min-height: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .gallery-modal {
+    padding: 0;
+  }
+
+  .gallery-modal-body {
+    width: 100%;
+    height: 100dvh;
+    border-radius: 0;
+  }
+
+  .gallery-modal-info.is-reading .gallery-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-modal-info.is-reading .gallery-info-item-wide {
+    grid-column: auto;
+  }
+
+  .gallery-modal-info.is-reading .gallery-camera-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-card,
+  .gallery-advanced-summary::after {
+    transition-duration: 0.01ms;
+  }
+}

@@ -13,6 +13,7 @@ import {
   Ticket,
 } from "lucide-react"
 import "./styles/exhibitions.css"
+import { formatDateRange, formatDuration, formatSyncTime, getTimelinePlacement } from "./components/exhibitions/timeline"
 
 type Facet = {
   value: string
@@ -24,7 +25,7 @@ type YearFacet = {
   count: number
 }
 
-type ExhibitionItem = {
+export type ExhibitionItem = {
   id: number
   source_id: string
   source_url: string
@@ -144,87 +145,7 @@ const SYNC_STATUS_LABELS: Record<ExhibitionSyncRun["status"], string> = {
   failed: "同步失败",
 }
 
-function formatDate(value: string | null) {
-  if (!value) return null
-  return value.replaceAll("-", ".")
-}
-
-function formatDateRange(item: ExhibitionItem) {
-  if (item.is_permanent) return "常设展"
-  const start = formatDate(item.start_date)
-  const end = formatDate(item.end_date)
-  if (start && end) return `${start} — ${end}`
-  if (start) return `${start} 起`
-  if (end) return `至 ${end}`
-  return item.source_time_text || "日期待补充"
-}
-
-function formatSyncTime(value: string | null) {
-  if (!value) return "等待首次同步"
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return "同步时间未知"
-  return `更新于 ${date.toLocaleString("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`
-}
-
-function formatDuration(seconds: number | null) {
-  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "计算中"
-  if (seconds < 60) return "不足 1 分钟"
-  const minutes = Math.ceil(seconds / 60)
-  if (minutes < 60) return `约 ${minutes} 分钟`
-  const hours = Math.floor(minutes / 60)
-  const remainingMinutes = minutes % 60
-  if (hours < 24) {
-    return remainingMinutes ? `约 ${hours} 小时 ${remainingMinutes} 分` : `约 ${hours} 小时`
-  }
-  const days = Math.floor(hours / 24)
-  const remainingHours = hours % 24
-  return remainingHours ? `约 ${days} 天 ${remainingHours} 小时` : `约 ${days} 天`
-}
-
-const DAY_IN_MS = 24 * 60 * 60 * 1000
-
-function parseDateValue(value: string | null) {
-  if (!value) return null
-  const [year, month, day] = value.slice(0, 10).split("-").map(Number)
-  if (!year || !month || !day) return null
-  return Date.UTC(year, month - 1, day)
-}
-
-function getTimelinePlacement(item: ExhibitionItem, year: number) {
-  const yearStart = Date.UTC(year, 0, 1)
-  const yearEnd = Date.UTC(year + 1, 0, 1)
-  const startValue = parseDateValue(item.start_date)
-  const endValue = parseDateValue(item.end_date)
-
-  if (startValue == null && endValue == null && !item.is_permanent) return null
-
-  const sourceStart = item.is_permanent ? yearStart : (startValue ?? endValue ?? yearStart)
-  const sourceEnd = item.is_permanent
-    ? yearEnd
-    : (endValue != null ? endValue + DAY_IN_MS : (startValue ?? yearStart) + DAY_IN_MS)
-
-  if (sourceEnd <= yearStart || sourceStart >= yearEnd) return null
-
-  const start = Math.max(sourceStart, yearStart)
-  const end = Math.min(Math.max(sourceEnd, start + DAY_IN_MS), yearEnd)
-  const total = yearEnd - yearStart
-  const leftPercent = (start - yearStart) / total * 100
-  const rawWidthPercent = (end - start) / total * 100
-
-  return {
-    start,
-    end,
-    leftPercent,
-    widthPercent: Math.min(Math.max(rawWidthPercent, 1.2), 100 - leftPercent),
-  }
-}
-
-function resolveBackendAssetUrl(apiBaseUrl: string, value: string) {
+ function resolveBackendAssetUrl(apiBaseUrl: string, value: string) {
   if (!value.startsWith("/")) return value
   return `${apiBaseUrl}${value}`
 }

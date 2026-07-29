@@ -1,0 +1,402 @@
+.operation-history-entry > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.operation-history-entry strong,
+.operation-history-entry p,
+.operation-history-entry small {
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-history-entry strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--ui-type-label);
+}
+
+.operation-history-entry p {
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-caption);
+}
+
+.operation-history-entry small {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+}
+
+.operation-history-empty {
+  padding: 28px 24px;
+  color: var(--ui-text-tertiary);
+  font-size: var(--ui-type-label);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.operation-history-shortcuts {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px 10px;
+  background: var(--ui-surface-wash);
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+}
+
+.operation-history-restore-detail {
+  display: grid;
+  gap: 16px;
+}
+
+.operation-history-restore-detail > p {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.operation-history-restore-detail dl {
+  display: grid;
+  margin: 0;
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.operation-history-restore-detail dl > div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  padding: 9px 0;
+  border-bottom: 1px solid var(--ui-line-subtle);
+  gap: 10px;
+}
+
+.operation-history-restore-detail dt {
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+}
+
+.operation-history-restore-detail dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.operation-history-restore-detail dd.is-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-history-restore-detail dd.is-affected {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.operation-history-restore-detail dd.is-affected span {
+  max-width: 180px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--ui-surface-accent);
+  color: var(--ui-text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .operation-history-entry.is-action {
+    transition: none;
+  }
+}
+
+.topbar-nav {
+  min-width: 0;
+}
+
+.app-tabs .ant-tabs-nav::before {
+  border: 0;
+}
+
+.app-tabs .ant-tabs-tab {
+  min-height: 38px;
+  margin: 0 4px 0 0 !important;
+  padding: 8px 10px !important;
+  border-radius: 9px 9px 3px 3px;
+  font-size: 13px;
+  font-weight: 560;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.app-tabs .ant-tabs-tab:hover {
+  background: var(--ui-surface-accent);
+}
+
+.app-tabs .ant-tabs-tab:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ui-primary) 55%, transparent);
+  outline-offset: -2px;
+}
+
+.app-tabs .ant-tabs-ink-bar {
+  height: 2px !important;
+  border-radius: 999px;
+}
+
+.backend-target-select-wrap {
+  min-height: 38px;
+  padding-inline: 13px 30px;
+  border-color: var(--ui-line-subtle);
+  background: var(--ui-surface-default);
+  box-shadow: var(--ui-shadow-soft);
+}
+
+.backend-target-select {
+  min-width: 8.4em;
+  font-size: 12px;
+}
+
+.backend-target-select-wrap.online {
+  border-color: color-mix(in oklch, var(--ui-success) 28%, var(--ui-line-subtle));
+  background: color-mix(in oklch, var(--ui-success-muted) 80%, white);
+}
+
+.backend-target-select-wrap.offline {
+  border-color: color-mix(in oklch, var(--ui-danger) 28%, var(--ui-line-subtle));
+  background: color-mix(in oklch, var(--ui-danger) 6%, white);
+}
+
+button:not(.ant-btn):not([data-ui="interactive-surface"]),
+.gallery-toolbar-link {
+  min-height: 36px;
+  padding-inline: 13px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+button:not(.ant-btn):not([data-ui="interactive-surface"]):focus-visible,
+input:not(.ant-input):focus-visible,
+textarea:not(.ant-input):focus-visible,
+select:focus-visible,
+.gallery-toolbar-link:focus-visible,
+[data-ui="interactive-surface"]:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ui-primary) 48%, transparent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+.panel,
+.single-panel,
+.single-stream-panel,
+.single-archive,
+.exif-queue-panel,
+.exif-editor-form,
+.batch-card,
+.batch-core-card,
+.backend-match-card,
+.gallery-card,
+.gallery-modal-body,
+.gallery-detail-section,
+.gallery-advanced-details,
+.museum-summary-card,
+.museum-stage,
+.museum-map-panel,
+.museum-folder-column,
+.museum-image-panel,
+.museum-state-card,
+.museum-detail-modal-body,
+.form-section,
+.single-details,
+.single-advanced,
+.empty-state {
+  border-color: transparent;
+  border-radius: var(--ui-radius-lg);
+  background: var(--ui-surface-default);
+}
+
+.section-heading,
+.single-panel-head,
+.single-workbench-head,
+.exif-editor-heading,
+.gallery-detail-head,
+.museum-console-head,
+.museum-stage-head,
+.museum-map-panel-head,
+.museum-folder-column-head,
+.museum-image-panel-head,
+.form-section-head,
+.batch-head,
+.batch-section-head {
+  border-bottom-color: transparent;
+}
+
+.single-panel-head,
+.single-workbench-head,
+.exif-queue-panel .section-heading,
+.exif-editor-heading,
+.batch-workbench > .section-heading {
+  background: var(--ui-surface-wash);
+}
+
+.form-section,
+.single-details,
+.single-advanced,
+.gallery-detail-section,
+.gallery-advanced-details,
+.museum-state-card {
+  background: var(--ui-surface-wash);
+}
+
+.exif-queue-panel,
+.exif-editor-form,
+.single-panel,
+.single-stream-panel,
+.single-archive,
+.batch-card,
+.batch-core-card {
+  box-shadow: var(--ui-shadow-card);
+}
+
+.section-heading h2,
+.single-panel-head h2,
+.single-workbench-head h2,
+.gallery-detail-title,
+.museum-stage h3,
+.museum-map-panel-head h3,
+.museum-image-panel h4 {
+  font-size: var(--ui-type-section);
+  font-weight: 680;
+  line-height: var(--ui-leading-tight);
+  letter-spacing: -0.015em;
+}
+
+.form-section-head h3,
+.batch-section-head strong {
+  font-size: var(--ui-type-body);
+  font-weight: 650;
+  line-height: var(--ui-leading-tight);
+}
+
+.page-kicker {
+  color: var(--ui-primary);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.15em;
+}
+
+input:not(.ant-input),
+select {
+  min-height: 36px;
+  padding: 7px 11px;
+}
+
+input:not(.ant-input),
+textarea:not(.ant-input),
+select,
+.gallery-search input:not(.ant-input),
+.gallery-location-query input:not(.ant-input),
+.batch-rename-panel input:not(.ant-input),
+.batch-location-fields input:not(.ant-input) {
+  border-color: var(--ui-line-subtle);
+  border-radius: 10px;
+  background: var(--ui-surface-default);
+  font-size: 14px;
+}
+
+textarea:not(.ant-input) {
+  min-height: 86px;
+  padding: 9px 11px;
+  line-height: 1.6;
+}
+
+.field > span:first-child {
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-label);
+  font-weight: 600;
+}
+
+.field-help {
+  font-size: var(--ui-type-caption);
+}
+
+.app-shell > .panel.form-wide,
+.gallery-workbench,
+.batch-workbench,
+.museum-console {
+  height: calc(100dvh - 88px);
+  margin: 16px;
+}
+
+.gallery-workbench,
+.batch-workbench,
+.museum-console {
+  gap: 16px;
+  padding: 16px;
+}
+
+.exif-console,
+.single-workbench {
+  height: calc(100dvh - 64px);
+  padding: 10px;
+}
+
+.single-workbench {
+  grid-template-columns: 320px minmax(500px, 1fr) minmax(380px, 430px);
+  gap: 16px;
+}
+
+.exif-layout,
+.exif-layout-wide {
+  grid-template-columns: minmax(310px, 350px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.exif-queue-panel,
+.exif-editor-form {
+  border: 0;
+  border-radius: 14px;
+  box-shadow: 0 8px 26px rgb(48 38 29 / 0.055);
+}
+
+.exif-editor-form {
+  box-shadow: none;
+}
+
+.exif-preview-card,
+.exif-form-card,
+.exif-form-card .form-section {
+  border: 0;
+}
+
+.exif-preview-card,
+.exif-form-card {
+  border-radius: 0;
+  background: var(--ui-surface-wash);
+  box-shadow: none;
+}
+
+.exif-preview-card .ant-card-body {
+  padding: 16px;
+}
+
+.exif-form-card + .exif-form-card {
+  margin-top: 6px;
+  border-top: 0;
+}
+
+.exif-form-card .ant-card-head {
+  min-height: 44px;
+  padding-inline: 14px;
+  border-bottom: 0;
+}
+
+.exif-form-card .ant-card-body {
+  padding: 4px 14px 16px;
+}
+

@@ -1,0 +1,491 @@
+.exif-field-warnings {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklch, var(--ui-warning) 35%, var(--app-border));
+  border-radius: 10px;
+  background: var(--ui-warning-muted);
+  color: color-mix(in oklch, var(--app-fg) 82%, var(--ui-warning));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.exif-field-warnings p {
+  margin: 0;
+}
+
+.exif-source-list {
+  display: grid;
+  gap: 10px;
+  padding: 0 10px 10px;
+}
+
+.exif-source-list article {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.exif-source-list a {
+  overflow-wrap: anywhere;
+  color: var(--app-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.exif-source-list span,
+.exif-source-list p {
+  margin: 0;
+  color: var(--app-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.exif-model-card > .ant-btn {
+  justify-self: start;
+}
+
+.exif-capture-grid {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.6fr) repeat(3, minmax(100px, 0.7fr));
+  gap: 12px;
+}
+
+.exif-model-actions {
+  align-items: center;
+  gap: 12px;
+}
+
+.exif-model-actions .muted {
+  margin: 0;
+  padding-top: 0;
+}
+
+.exif-editor-form .form-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  min-height: 60px;
+  padding: 10px 18px;
+  background: var(--app-card);
+  box-shadow: none;
+  border-top: 1px solid var(--app-border);
+}
+
+.exif-form-footer {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.exif-form-footer-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.exif-form-footer-copy > p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.exif-sidebar-map .gps-map-wrap,
+.exif-form-card .gps-map-wrap {
+  border-width: 1px;
+  border-style: solid;
+  border-color: color-mix(in oklch, var(--app-border) 75%, white);
+  background: #fafaf9;
+}
+
+.exif-form-card .gps-map-wrap {
+  min-height: 220px;
+  margin-top: 2px;
+  border-radius: 10px;
+}
+
+.gallery-workbench .gallery-search,
+.museum-console-head,
+.batch-workbench > .section-heading {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: -12px -12px 0;
+  background: color-mix(in oklch, var(--app-card) 94%, transparent);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.gallery-workbench .gallery-search,
+.museum-console-head {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  align-items: center;
+}
+
+.gallery-workbench .gallery-search::before {
+  content: "图库";
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.gallery-grid {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.gallery-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-self: start;
+  gap: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+.gallery-thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+}
+
+.gallery-meta {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-height: 88px;
+  padding: 12px 13px 13px;
+  border: 0;
+  border-top: 1px solid var(--app-border);
+  border-radius: 0;
+  background: var(--app-card);
+}
+
+.gallery-card-meta-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.gallery-card-context {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--app-soft);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-card-image-count {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--app-soft);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.gallery-modal,
+.museum-detail-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgb(0 0 0 / 0.38);
+}
+
+.gallery-modal-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(380px, 0.9fr);
+  width: min(1180px, 96vw);
+  max-height: 92vh;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.bridge-login-modal {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(560px, 92vw);
+  background: var(--app-card);
+}
+
+.gallery-modal-media,
+.gallery-modal-info {
+  min-height: 0;
+  overflow: auto;
+}
+
+.gallery-modal-media {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  padding: 12px;
+  background: var(--app-muted);
+}
+
+.gallery-modal-main-stage {
+  min-height: 360px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: #111;
+}
+
+.gallery-modal-info,
+.gallery-edit-form,
+.gallery-detail-lines {
+  display: grid;
+  min-height: 0;
+}
+
+.gallery-detail-head {
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--app-border);
+  background: rgb(255 255 255 / 0.94);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.gallery-edit-scroll,
+.gallery-detail-lines {
+  overflow: auto;
+  padding: 12px;
+}
+
+.gallery-edit-form {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.bridge-login-content {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.bridge-login-content > .result-desc,
+.bridge-login-content > .muted.small {
+  margin: 0;
+}
+
+.bridge-login-command {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: #fafaf9;
+  color: var(--app-fg);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.bridge-login-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.gallery-detail-line {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.gallery-detail-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--app-soft);
+  font-size: 12px;
+}
+
+.gallery-modal-thumbs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.existing-artifact-gallery {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.gallery-modal-thumb {
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0;
+}
+
+.existing-artifact-thumb {
+  width: 52px;
+  height: 52px;
+  overflow: hidden;
+  border: 1px solid var(--app-border);
+  border-radius: 8px;
+  padding: 0;
+}
+
+.google-photo-chip.ant-btn {
+  max-width: 100%;
+  justify-content: flex-start;
+}
+
+.batch-workbench {
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
+}
+
+.batch-workbench > .scan-row,
+.batch-workbench > .field,
+.batch-workbench > .upload-actions {
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.scan-row,
+.batch-workbench > .field {
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-card);
+}
+
+.batch-list {
+  gap: 10px;
+  padding-bottom: 4px;
+}
+
+.batch-card {
+  display: grid;
+  grid-template-columns: 144px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+}
+
+.batch-thumb {
+  height: 168px;
+  border-radius: 9px;
+}
+
+.batch-fields {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-core-card {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.batch-core-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.batch-head {
+  min-height: 28px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.batch-head .small {
+  font-size: 10px;
+}
+
+.batch-section-head {
+  align-items: baseline;
+  padding-top: 2px;
+}
+
+.batch-section-head strong {
+  font-size: 14px;
+}
+
+.batch-section-head span {
+  color: var(--app-soft);
+  font-size: 10px;
+}
+
+.batch-actions {
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--app-border);
+}
+
+.batch-workbench > .upload-actions {
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 10px;
+  background: var(--app-card);
+}
+
+.batch-workbench > .upload-actions .muted {
+  font-size: 10px;
+}
+
+.museum-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.museum-summary-card {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 160px;
+  padding: 10px;
+  text-align: left;
+}
+
+.museum-summary-photo-stack {
+  position: relative;
+  min-height: 138px;
+}
+
+.museum-summary-card-copy,
+.museum-summary-card-head,
+.museum-summary-card-foot,
+.museum-folder-text,
+.museum-image-card-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.museum-summary-card-head,
+.museum-summary-card-foot {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.museum-summary-card p,
+.museum-map-info-window p {
+  margin: 0;
+  color: var(--app-soft);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.museum-map-layout,
+.museum-stage-body {
+  display: grid;
+  gap: 12px;
+}
+

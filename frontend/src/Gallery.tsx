@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ImgHTMLAttributes } from "react"
 import { AutoComplete, Button, Input, Select, Tag } from "antd"
 import "./styles/gallery.css"
+import { compactArtifactNameForMatch, getBackendImageVariantUrl, normalizeIdentityText, toAbsoluteUrl } from "./lib/galleryArtifactIdentity"
 import {
   Aperture,
   ArrowLeft,
@@ -49,7 +50,7 @@ type GalleryImage = {
   edit_method?: string | null
 }
 
-type GalleryArtifact = {
+export type GalleryArtifact = {
   id: number
   name: string
   era: string | null
@@ -151,28 +152,7 @@ type EraOption = {
   sort_order: number
 }
 
-function toAbsoluteUrl(apiBaseUrl: string, url: string) {
-  return url.startsWith("http://") || url.startsWith("https://") ? url : `${apiBaseUrl}${url}`
-}
-
-function getBackendImageVariantUrl(apiBaseUrl: string, url: string, size: number) {
-  const params = new URLSearchParams({ url, size: String(size) })
-  return `${apiBaseUrl}/api/image-variant?${params.toString()}`
-}
-
-function normalizeIdentityText(value: string | null | undefined) {
-  const text = (value ?? "").trim().toLocaleLowerCase()
-  return text || null
-}
-
-function compactArtifactNameForMatch(value: string | null | undefined) {
-  const text = normalizeIdentityText(value)
-  if (!text) return null
-  const compact = text.replace(/[\s\-_·•,，.。:：;；/\\|()（）[\]【】<>《》"'“”‘’]+/g, "")
-  return compact || null
-}
-
-function galleryArtifactMergeKey(artifact: GalleryArtifact) {
+ function galleryArtifactMergeKey(artifact: GalleryArtifact) {
   const museumKey = normalizeIdentityText(artifact.museum_name)
   const eraKey = normalizeIdentityText(artifact.era)
   const nameKey = compactArtifactNameForMatch(artifact.name)

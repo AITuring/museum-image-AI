@@ -1,0 +1,418 @@
+.exhibition-catalog {
+  min-height: calc(100dvh - 64px);
+  padding: 12px clamp(12px, 2vw, 28px) 48px;
+  background: var(--ui-canvas);
+}
+
+.exhibition-hero h2 {
+  color: var(--ui-text-primary);
+  text-wrap: balance;
+}
+
+.exhibition-sync-card {
+  border: 1px solid var(--ui-line-subtle);
+  background: rgb(255 253 249 / 0.86);
+  box-shadow: var(--ui-shadow-card);
+}
+
+.exhibition-hero {
+  display: flex;
+  max-width: 1480px;
+  margin: 0 auto 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.exhibition-kicker {
+  display: none;
+  color: #8a6e48;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.exhibition-hero h2 {
+  margin: 0;
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: clamp(18px, 1.6vw, 22px);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+}
+
+.exhibition-hero p {
+  margin: 4px 0 0;
+  color: var(--ui-text-secondary);
+  font-size: 13px;
+}
+
+.exhibition-sync-card {
+  width: min(440px, 48vw);
+  padding: 8px 10px;
+  /* border: 1px solid rgb(123 101 69 / 0.16); */
+  border-radius: 11px;
+  background: rgb(255 255 255 / 0.78);
+  box-shadow: 0 10px 34px rgb(58 46 30 / 0.055);
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+.exhibition-sync-card-toggle {
+  display: grid;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  gap: 9px;
+}
+
+.exhibition-sync-card-head,
+.exhibition-sync-progress-head,
+.exhibition-sync-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.exhibition-sync-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ui-text-secondary);
+  font-weight: 650;
+}
+
+.exhibition-sync-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #8c9a80;
+  box-shadow: 0 0 0 3px rgb(140 154 128 / 0.13);
+}
+
+.exhibition-sync-card.running .exhibition-sync-state i {
+  background: #b4823f;
+  box-shadow: 0 0 0 3px rgb(180 130 63 / 0.14);
+  animation: exhibition-sync-pulse 1.4s ease-in-out infinite;
+}
+
+.exhibition-sync-card-summary {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.exhibition-sync-card-summary-main {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.exhibition-sync-card-summary-main strong {
+  color: var(--ui-text-primary);
+  font-family: "Songti SC", "Noto Serif SC", serif;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.04em;
+}
+
+.exhibition-sync-card-summary-main span {
+  color: var(--ui-text-secondary);
+  font-size: 11px;
+}
+
+.exhibition-sync-card-summary-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.exhibition-sync-card-summary-side svg {
+  transition: transform 220ms ease;
+}
+
+.exhibition-sync-card.expanded .exhibition-sync-card-summary-side svg {
+  transform: rotate(180deg);
+}
+
+.exhibition-sync-progress-overall {
+  height: 6px;
+}
+
+.exhibition-sync-progress-overall span {
+  background: linear-gradient(90deg, #84623a, #bd8e52 72%, #d2ac76);
+}
+
+.exhibition-sync-card-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 260ms ease;
+}
+
+.exhibition-sync-card-panel.expanded {
+  grid-template-rows: 1fr;
+}
+
+.exhibition-sync-card-panel-inner {
+  overflow: hidden;
+  padding-top: 0;
+}
+
+.exhibition-sync-card.expanded .exhibition-sync-card-panel-inner {
+  padding-top: 12px;
+}
+
+.exhibition-sync-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 -5px 11px;
+}
+
+.exhibition-sync-metrics > div {
+  min-width: 0;
+  padding: 3px 8px 4px;
+  border-right: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-sync-metrics > div:last-child {
+  border-right: 0;
+}
+
+.exhibition-sync-metrics strong,
+.exhibition-sync-metrics span {
+  display: block;
+}
+
+.exhibition-sync-metrics strong {
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exhibition-sync-metrics span {
+  margin-top: 2px;
+  color: var(--ui-text-tertiary);
+  font-size: 9px;
+}
+
+.exhibition-sync-metrics .online strong {
+  color: #68785d;
+}
+
+.exhibition-sync-metrics .offline strong {
+  color: #a85a4f;
+}
+
+.exhibition-sync-batch {
+  padding: 9px 10px 8px;
+  border-radius: 8px;
+  background: rgb(123 101 69 / 0.055);
+}
+
+.exhibition-sync-progress-head {
+  margin-bottom: 5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.exhibition-sync-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: rgb(114 97 73 / 0.12);
+}
+
+.exhibition-sync-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #9b7544, #c29a62);
+  transition: width 320ms ease;
+}
+
+.exhibition-sync-counts {
+  display: flex;
+  flex-wrap: wrap;
+  margin-top: 7px;
+  gap: 5px 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.exhibition-sync-history {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 9px;
+  gap: 12px;
+}
+
+.exhibition-sync-history > div {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+}
+
+.exhibition-sync-history i {
+  min-width: 38px;
+  padding: 3px 6px;
+  border-radius: 99px;
+  background: rgb(113 129 99 / 0.1);
+  color: #68785d;
+  font-size: 9px;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.exhibition-sync-history i.failed {
+  background: rgb(168 90 79 / 0.1);
+  color: #a85a4f;
+}
+
+.exhibition-sync-counts .failed {
+  color: #a85a4f;
+}
+
+.exhibition-sync-card-foot {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ui-line-subtle);
+}
+
+.exhibition-sync-card a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ui-text-secondary);
+  text-decoration: none;
+}
+
+@keyframes exhibition-sync-pulse {
+  50% {
+    opacity: 0.48;
+    transform: scale(0.78);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exhibition-sync-card.running .exhibition-sync-state i {
+    animation: none;
+  }
+
+  .exhibition-sync-progress span,
+  .exhibition-sync-card-summary-side svg,
+  .exhibition-sync-card-panel {
+    transition: none;
+  }
+}
+
+.exhibition-toolbar {
+  position: sticky;
+  top: 47px;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) repeat(3, minmax(130px, 180px));
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 8px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--ui-surface-default);
+  box-shadow: 0 8px 26px rgb(48 38 29 / 0.055);
+  gap: 8px;
+}
+
+.exhibition-search {
+  min-width: 0;
+}
+
+.exhibition-layout {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  max-width: 1480px;
+  margin: 16px auto 0;
+  gap: 16px;
+}
+
+.exhibition-year-rail {
+  align-self: start;
+  position: sticky;
+  top: 112px;
+}
+
+.exhibition-year-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--ui-text-tertiary);
+  font-size: 11px;
+}
+
+.exhibition-year-heading button,
+.exhibition-year-list button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.exhibition-year-heading button {
+  padding: 2px 0;
+  font-size: 11px;
+}
+
+.exhibition-year-heading button.active {
+  color: var(--ui-text-primary);
+}
+
+.exhibition-year-list {
+  display: grid;
+  overflow: auto;
+  max-height: calc(100vh - 165px);
+  padding-right: 5px;
+  gap: 2px;
+}
+
+.exhibition-year-list button {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.exhibition-year-list button:hover {
+  background: rgb(255 255 255 / 0.65);
+}
+
+.exhibition-year-list button.active {
+  background: var(--ui-text-primary);
+  color: white;
+}
+
+.exhibition-year-list strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.exhibition-year-list span {
+  opacity: 0.6;
+  font-size: 10px;
+}
+

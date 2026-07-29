@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import { AutoComplete, Button, Input, Select, Tag } from "antd"
+import { isMissingValue, needsSelection, normalizeTags, statusClass } from "./lib/batchHelpers"
 
 const Textarea = Input.TextArea
 
@@ -66,12 +67,7 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "失败",
 }
 
-function statusClass(status: string) {
-  if (status === "submitted") return "ok"
-  if (status === "failed") return "failed"
-  if (status === "identifying" || status === "submitting") return "busy"
-  return ""
-}
+
 
 type MuseumOption = {
   id: number
@@ -192,21 +188,7 @@ function normalizePersistedPendingItem(apiBaseUrl: string, item: RawPendingArtif
   }
 }
 
-function normalizeTags(values: string[]) {
-  const seen = new Set<string>()
-  const tags: string[] = []
-  for (const value of values) {
-    const tag = value.trim()
-    if (!tag) continue
-    const key = tag.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    tags.push(tag)
-  }
-  return tags
-}
-
-function deriveTagsFromAnalysis(
+ function deriveTagsFromAnalysis(
   analysis: string | null | undefined,
   options?: { artifactName?: string | null; era?: string | null; museumName?: string | null },
 ) {
@@ -288,15 +270,7 @@ function enrichPendingItemTags(item: PendingArtifact): PendingArtifact {
   return { ...item, tags: derivedTags }
 }
 
-function isMissingValue(value: string | null | undefined) {
-  return !value || !value.trim()
-}
-
-function needsSelection(value: string | null | undefined) {
-  return (value ?? "").trim().startsWith("@")
-}
-
-export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
+ export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [items, setItems] = useState<PendingArtifact[]>([])
   const [googlePhotosStatus, setGooglePhotosStatus] = useState<GooglePhotosStatus | null>(null)
   const [showGooglePhotosConfigModal, setShowGooglePhotosConfigModal] = useState(false)

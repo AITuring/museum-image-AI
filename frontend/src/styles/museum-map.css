@@ -1,0 +1,212 @@
+@media (max-width: 920px) {
+
+  .museum-console {
+    padding: 16px;
+  }
+
+  .museum-card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  }
+
+  .museum-detail-modal {
+    padding: 12px;
+  }
+
+  .museum-detail-modal-body {
+    max-height: calc(100vh - 24px);
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .museum-stage-title-row,
+  .museum-detail-modal-content .museum-stage-body {
+    grid-template-columns: 1fr;
+  }
+
+  .museum-stage-stats,
+  .museum-image-panel-meta {
+    justify-content: flex-start;
+  }
+
+  .museum-folder-column {
+    padding: 14px;
+  }
+
+  .museum-image-panel {
+    padding: 14px;
+  }
+
+  .museum-folder-list {
+    max-height: 220px;
+  }
+
+  .museum-image-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+}
+
+.museum-stage,
+.museum-map-panel,
+.museum-detail,
+.museum-summary-card,
+.museum-folder-card,
+.museum-state-card,
+.museum-image-card {
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 7px;
+  background: var(--ui-surface-default);
+  box-shadow: none;
+}
+
+.museum-console {
+  gap: 10px;
+}
+
+.museum-image-panel-count {
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 999px;
+  background: #f3f3f1;
+  color: var(--ui-text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.museum-folder-card,
+.museum-image-card,
+.museum-summary-card {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.museum-image-card:hover,
+.museum-summary-card:hover,
+.museum-folder-card:hover {
+  border-color: var(--ui-line-subtle);
+  background: #f7f7f5;
+  box-shadow: none;
+  transform: none;
+}
+
+.museum-detail-modal-close {
+  min-height: 34px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 7px;
+  background: #ffffff;
+  color: var(--ui-text-primary) !important;
+  -webkit-text-fill-color: var(--ui-text-primary);
+  box-shadow: none;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.museum-detail-modal-close:hover {
+  border-color: var(--ui-line-strong);
+  background: #f7f7f5;
+  color: var(--ui-text-primary) !important;
+  -webkit-text-fill-color: var(--ui-text-primary);
+  box-shadow: none;
+  transform: none;
+}
+
+.museum-list-item:focus-visible {
+  outline: none;
+  box-shadow: var(--ui-ring);
+}
+
+.museum-map-frame,
+.museum-map-canvas {
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 7px;
+  background: #f1f1ef;
+  box-shadow: none;
+}
+
+.museum-console {
+  margin: 12px;
+  padding: 12px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.museum-console-head,
+.museum-stage-title-row,
+.museum-detail-modal-bar {
+  gap: 12px;
+}
+
+.museum-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.museum-summary-card {
+  min-height: 232px;
+  padding: 10px;
+  border-color: var(--ui-line-subtle);
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.museum-summary-card:hover,
+.museum-summary-card.active {
+  border-color: var(--ui-line-strong);
+  background: #f8f8f6;
+  box-shadow: none;
+  transform: none;
+}
+
+.museum-summary-photo-stack {
+  height: 132px;
+}
+
+.museum-summary-photo {
+  width: 112px;
+  height: 84px;
+  border: 2px solid #ffffff;
+  border-radius: 7px;
+  box-shadow: 0 8px 18px rgba(16, 16, 16, 0.10);
+}
+
+.museum-stage,
+.museum-map-panel,
+.museum-folder-column,
+.museum-image-panel,
+.museum-detail-modal-body {
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.museum-folder-column,
+.museum-image-panel {
+  border: 1px solid var(--ui-line-subtle);
+  background: #f8f8f6;
+}
+
+.museum-folder-card,
+.museum-image-card {
+  border-color: var(--ui-line-subtle);
+  border-radius: 7px;
+}
+
+.museum-map-marker,
+.museum-map-marker.default,
+.museum-map-marker.active,
+.museum-map-marker.edit {
+  background: var(--ui-primary);
+  box-shadow: 0 4px 12px rgba(17, 17, 17, 0.18);
+}
+
+.museum-folder-icon,
+.museum-folder-icon::before {
+  background: #8a8177;
+}
+
+.museum-map-frame {
+  background: #f1f1ef;
+}
+
