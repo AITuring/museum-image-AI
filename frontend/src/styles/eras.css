@@ -22,7 +22,7 @@
 .era-browser-total { display: grid; min-width: 132px; padding: 6px 0 7px 18px; border-left: 1px solid var(--ui-line-subtle); color: var(--ui-text-tertiary); font-size: 10px; text-align: right; }
 .era-browser-total strong { color: var(--ui-text-primary); font-family: "Songti SC", serif; font-size: 30px; font-weight: 600; letter-spacing: -0.04em; line-height: 1; }
 
-.era-layout { display: grid; grid-template-columns: 336px minmax(0, 1fr); max-width: 1480px; margin: auto; gap: clamp(24px, 3.2vw, 52px); }
+.era-layout { display: grid; grid-template-columns: 232px minmax(0, 1fr); max-width: 1480px; margin: auto; gap: clamp(20px, 2.4vw, 34px); }
 .era-rail { position: sticky; top: 82px; align-self: start; padding-right: 12px; border-right: 1px solid var(--ui-line-subtle); }
 .era-rail-heading, .era-rail-list button { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .era-rail-heading { padding: 0 4px 11px; color: var(--ui-text-tertiary); font-size: 10px; font-weight: 650; letter-spacing: 0.12em; }
@@ -41,7 +41,7 @@
 .era-state { display: flex; min-height: 280px; align-items: center; justify-content: center; color: var(--ui-text-tertiary); font-size: 13px; gap: 8px; }.era-state.error { color: #a44b3c; }
 .era-artifact-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 22px; gap: 16px; }.era-artifact-card { overflow: hidden; border: 1px solid var(--ui-line-subtle); border-radius: 12px; background: rgb(255 255 255 / 0.74); box-shadow: 0 10px 28px rgb(50 39 25 / 0.045); color: inherit; text-decoration: none; transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease; }.era-artifact-card:hover { border-color: rgb(124 92 50 / 0.2); transform: translateY(-3px); box-shadow: 0 18px 34px rgb(50 39 25 / 0.1); }.era-artifact-cover { display: grid; aspect-ratio: 1.2; place-items: center; overflow: hidden; background: linear-gradient(135deg, var(--ui-surface-wash), rgb(228 219 205 / 0.5)); color: var(--ui-text-tertiary); }.era-artifact-cover img { width: 100%; height: 100%; object-fit: cover; transition: transform 280ms ease; }.era-artifact-card:hover .era-artifact-cover img { transform: scale(1.035); }.era-artifact-copy { display: grid; padding: 12px; gap: 5px; }.era-artifact-copy > span { color: #8a6e48; font-size: 10px; }.era-artifact-copy strong { overflow: hidden; font-family: "Songti SC", serif; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }.era-artifact-copy p { display: flex; overflow: hidden; margin: 0; align-items: center; color: var(--ui-text-tertiary); font-size: 10px; gap: 4px; text-overflow: ellipsis; white-space: nowrap; }
 
-@media (max-width: 1100px) { .era-layout { grid-template-columns: 288px minmax(0, 1fr); gap: 22px; }.era-artifact-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .era-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 20px; }.era-artifact-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 680px) {
   .era-browser { padding: 12px 12px 36px; }
   .era-browser-head { align-items: end; flex-direction: row; margin-bottom: 12px; gap: 10px; }
