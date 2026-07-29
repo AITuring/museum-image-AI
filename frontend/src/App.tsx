@@ -10,6 +10,7 @@ const ExifConsole = lazy(() => import("./ExifConsole"))
 const Gallery = lazy(() => import("./Gallery"))
 const MuseumBrowser = lazy(() => import("./MuseumBrowser"))
 const ExhibitionCatalog = lazy(() => import("./ExhibitionCatalog"))
+const EraBrowser = lazy(() => import("./EraBrowser"))
 
 type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>
 
@@ -248,7 +249,7 @@ const backendOptions: BackendOption[] = [
 // On the cloud deployment only the gallery/search view makes sense (no qwen bridge).
 const cloudOnly = (import.meta.env.VITE_CLOUD_ONLY ?? "false") === "true"
 
-type View = "single" | "batch" | "exif" | "gallery" | "museums" | "exhibitions"
+type View = "single" | "batch" | "exif" | "gallery" | "museums" | "exhibitions" | "eras"
 
 const VIEW_PATHS: Record<View, string> = {
   single: "/single",
@@ -257,6 +258,7 @@ const VIEW_PATHS: Record<View, string> = {
   gallery: "/gallery",
   museums: "/museums",
   exhibitions: "/exhibitions",
+  eras: "/eras",
 }
 
 const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
@@ -266,10 +268,11 @@ const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
   { view: "gallery", label: "图库", cloudVisible: true },
   { view: "museums", label: "场馆", cloudVisible: true },
   { view: "exhibitions", label: "展览", cloudVisible: true },
+  { view: "eras", label: "时代", cloudVisible: true },
 ]
 
 function isViewAvailable(view: View) {
-  return !cloudOnly || view === "gallery" || view === "museums" || view === "exhibitions"
+  return !cloudOnly || view === "gallery" || view === "museums" || view === "exhibitions" || view === "eras"
 }
 
 function getDefaultView(): View {
@@ -1316,6 +1319,8 @@ function App() {
         {view === "museums" ? <MuseumBrowser apiBaseUrl={apiBaseUrl} /> : null}
 
         {view === "exhibitions" ? <ExhibitionCatalog apiBaseUrl={apiBaseUrl} /> : null}
+
+        {view === "eras" ? <EraBrowser apiBaseUrl={apiBaseUrl} /> : null}
 
         {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AutoComplete, Button, Card, Checkbox, Dropdown, Input, Modal, Segmented, Select, Space, Tag, Tooltip } from "antd"
+import { AutoComplete, Button, Card, Dropdown, Input, Modal, Segmented, Select, Space, Tag, Tooltip } from "antd"
 import {
-  ArrowRight,
   Camera,
   Check,
   ChevronDown,
@@ -31,254 +30,84 @@ import {
 } from "./components/exif/MetadataSyncFieldControls"
 import { AnnotatedDescription, FieldReviewBadge, type ArtifactFieldWarning } from "./components/exif/ReviewIndicators"
 import { GpsMapPicker, geocodeLocationName, reverseGeocodeCoordinates } from "./components/exif/GpsMapPicker"
-import { formatFileSize } from "./lib/fileFormat"
+import {
+  MetadataSyncPreview,
+  type MetadataSyncDiffRow,
+  type MetadataSyncTargetMode,
+} from "./components/exif/MetadataSyncPreview"
 import { formatCapturedAt, indexedFileName } from "./lib/exifDisplay"
+import { createFallbackPreviewUrl, createRestoredPreviewUrl } from "./lib/exifPreview"
+import type {
+  ArtifactSubmitResult as ArtifactSubmitResultType,
+  DescriptionCandidate as DescriptionCandidateType,
+  DescriptionSearchHit as DescriptionSearchHitType,
+  ExhibitionRecommendation as ExhibitionRecommendationType,
+  ExistingArtifact as ExistingArtifactType,
+  ExistingArtifactMatch as ExistingArtifactMatchType,
+  ExifWorkbenchItem as ExifWorkbenchItemType,
+  FilePickerWindow as FilePickerWindowType,
+  FormState as FormStateType,
+  GeneratedDescription as GeneratedDescriptionType,
+  ImageExifMetadata as ImageExifMetadataType,
+  LiveProviderState as LiveProviderStateType,
+  MuseumOption as MuseumOptionType,
+  ParsedArtifactName as ParsedArtifactNameType,
+  PersistedExifDraft as PersistedExifDraftType,
+  PersistedExifDraftItem as PersistedExifDraftItemType,
+  ReuploadHint as ReuploadHintType,
+  SubmitNotice as SubmitNoticeType,
+  UploadActivity as UploadActivityType,
+  VerifiedClaim as VerifiedClaimType,
+  WritableDirectoryHandle as WritableDirectoryHandleType,
+  WritableFileHandle as WritableFileHandleType,
+} from "./components/exif/types"
 
 const EXIF_HISTORY_SCOPE = "exif"
 
 const Textarea = Input.TextArea
 const SHOW_DESCRIPTION_TOOLS_IN_QUICK_ENTRY = true
 
-type ParsedArtifactName = {
-  original_name: string
-  normalized_name: string
-  era: string | null
-  artifact_name: string | null
-  museum_name: string | null
-  Place_of_Excavation: string | null
-  catalog_no: string | null
-}
+type ParsedArtifactName = ParsedArtifactNameType
 
-type DescriptionCandidate = {
-  provider: string
-  model: string
-  description: string
-  tags: string[]
-  reasoning: string | null
-  research_summary?: string | null
-  field_warnings?: ArtifactFieldWarning[]
-  verified_claims?: VerifiedClaim[]
-  search_hits?: DescriptionSearchHit[]
-  status: string
-  error: string | null
-}
+type DescriptionCandidate = DescriptionCandidateType
 
-type VerifiedClaim = {
-  text: string
-  source_refs: string[]
-}
+type VerifiedClaim = VerifiedClaimType
 
-type LiveProviderState = {
-  model: string
-  status: "running" | "complete" | "error"
-  reasoning: string
-  message: string
-  descriptionLength: number
-  tagCount: number
-}
+type LiveProviderState = LiveProviderStateType
 
-type DescriptionSearchHit = {
-  title: string
-  url: string
-  snippet: string
-  source: string | null
-}
+type DescriptionSearchHit = DescriptionSearchHitType
 
-type GeneratedDescription = {
-  provider: string
-  model: string
-  description: string
-  tags: string[]
-  reasoning: string | null
-  research_id?: string | null
-  candidates: DescriptionCandidate[]
-  unavailable_providers: string[]
-}
+type GeneratedDescription = GeneratedDescriptionType
 
-type MuseumOption = {
-  id: number
-  name: string
-  latitude: number | null
-  longitude: number | null
-}
+type MuseumOption = MuseumOptionType
 
-type ExhibitionRecommendation = {
-  id: number
-  source_id: string
-  title: string
-  city: string
-  museum_name: string | null
-  venue: string | null
-  address: string | null
-  start_date: string | null
-  end_date: string | null
-  is_permanent: boolean
-  match_score: number
-  match_reasons: string[]
-  distance_km: number | null
-}
+type ExhibitionRecommendation = ExhibitionRecommendationType
 
-type SubmitNotice = {
-  type: "success" | "error"
-  text: string
-}
+type SubmitNotice = SubmitNoticeType
 
-type UploadActivity = "files" | "directory" | null
+type UploadActivity = UploadActivityType
 
-type ArtifactSubmitResult = {
-  duplicate_image_skipped?: boolean
-  duplicate_image_replaced?: boolean
-  duplicate_image_detail?: string | null
-  reconciled_after_timeout?: boolean
-}
+type ArtifactSubmitResult = ArtifactSubmitResultType
 
-type ExistingArtifactImage = {
-  url: string
-  capture_museum_name: string | null
-  exhibition_name: string | null
-  catalog_exhibition_source_id: string | null
-  catalog_exhibition_id: number | null
-  capture_location: string | null
-  latitude: number | null
-  longitude: number | null
-}
+type ExistingArtifact = ExistingArtifactType
 
-type ExistingArtifact = {
-  id: number
-  museum_name: string
-  name: string
-  era: string | null
-  Place_of_Excavation: string | null
-  description: string | null
-  tags: string[]
-  images: ExistingArtifactImage[]
-}
+type ExistingArtifactMatch = ExistingArtifactMatchType
 
-type ExistingArtifactMatch = {
-  artifact: ExistingArtifact
-  match_score: number
-  match_reason: string
-}
+type FormState = FormStateType
+type ImageExifMetadata = ImageExifMetadataType
+type ExifWorkbenchItem = ExifWorkbenchItemType
+type PersistedExifDraftItem = PersistedExifDraftItemType
+type PersistedExifDraft = PersistedExifDraftType
+type ReuploadHint = ReuploadHintType
+type WritableFileHandle = WritableFileHandleType
+type WritableDirectoryHandle = WritableDirectoryHandleType
+type FilePickerWindow = FilePickerWindowType
 
 type ExifConsoleProps = {
   apiBaseUrl: string
 }
 
-type FormState = {
-  museumName: string
-  name: string
-  era: string
-  placeOfExcavation: string
-  displayLocationName: string
-  exhibitionName: string
-  catalogExhibitionId: number | null
-  catalogExhibitionSourceId: string
-  latitude: string
-  longitude: string
-  cameraModel: string
-  lensModel: string
-  capturedAt: string
-  shutterSpeed: string
-  aperture: string
-  iso: string
-  description: string
-  tags: string[]
-}
-
-type MetadataSyncTargetMode = "current" | "selected" | "others"
-type MetadataSyncDiffRow = {
-  label: string
-  targetValue: string
-  sourceValue: string
-  changed: boolean
-  willClearTarget: boolean
-}
-
-type ImageExifMetadata = {
-  camera_model: string | null
-  lens_model: string | null
-  captured_at: string | null
-  shutter_speed: string | null
-  aperture: string | null
-  iso: number | null
-  latitude: number | null
-  longitude: number | null
-  preview_data_url: string | null
-}
-
-type ExifWorkbenchItem = {
-  id: string
-  fileName: string
-  originalFileName: string
-  previewUrl: string
-  localFile: File
-  fileHandle: WritableFileHandle | null
-  parsedName: ParsedArtifactName | null
-  form: FormState
-  originalForm: FormState
-  candidates: DescriptionCandidate[]
-  unavailableProviders: string[]
-  descriptionMeta: string | null
-  existingArtifactId: number | null
-  existingArtifactMatch: string | null
-  existingArtifactCandidates: ExistingArtifactMatch[]
-  existingArtifactReviewKey: string | null
-  verificationDecisions?: Record<string, "accepted" | "rejected">
-  submitState: "idle" | "submitting" | "submitted" | "error"
-  submitMessage: string | null
-  uploadProgress: number
-  uploadStage: string | null
-  sourceHash: string | null
-}
-
-type PersistedExifDraftItem = Omit<ExifWorkbenchItem, "previewUrl" | "fileHandle"> & {
-  previewUrl?: never
-  fileHandle?: never
-}
-
-type PersistedExifDraft = {
-  version: 1
-  items: PersistedExifDraftItem[]
-  selectedId: string | null
-  sharedForm: FormState
-}
-
-type ReuploadHint = {
-  version: 1
-  form: FormState
-  existingArtifactId: number | null
-  updatedAt: string
-}
-
-type WritableFileStream = { write(data: Blob): Promise<void>; close(): Promise<void> }
-type WritableFileHandle = {
-  kind?: "file"
-  name: string
-  getFile(): Promise<File>
-  createWritable(): Promise<WritableFileStream>
-  queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
-  requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
-}
-type WritableDirectoryHandle = {
-  kind?: "directory"
-  name: string
-  values(): AsyncIterableIterator<WritableFileHandle | WritableDirectoryHandle>
-  getFileHandle(name: string, options?: { create?: boolean }): Promise<WritableFileHandle>
-  removeEntry(name: string): Promise<void>
-  queryPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
-  requestPermission?: (descriptor?: { mode?: "read" | "readwrite" }) => Promise<"granted" | "denied" | "prompt">
-}
-type FilePickerWindow = Window & {
-  showDirectoryPicker?: (options?: { mode?: "read" | "readwrite" }) => Promise<WritableDirectoryHandle>
-  showOpenFilePicker?: (options: {
-    multiple: boolean
-    types: Array<{ description: string; accept: Record<string, string[]> }>
-  }) => Promise<WritableFileHandle[]>
-}
-
 const IMAGE_FILE_PATTERN = /\.(?:jpe?g|png|webp|tiff?)$/i
-const CLIENT_PREVIEW_FILE_LIMIT = 24 * 1024 * 1024
-const TIFF_BROWSER_FALLBACK_MAX_PIXELS = 24_000_000
 const EXIF_DRAFT_DB_NAME = "museum-exif-drafts"
 const EXIF_DRAFT_STORE_NAME = "workbench"
 const EXIF_DRAFT_RECORD_KEY = "active"
@@ -288,136 +117,7 @@ function yieldToMainThread() {
   return new Promise<void>((resolve) => window.setTimeout(resolve, 0))
 }
 
- function isTiffFile(file: File) {
-  return /\.(?:tif|tiff)$/i.test(file.name) || ["image/tif", "image/tiff", "application/tiff", "application/x-tiff"].includes(file.type.toLowerCase())
-}
-
-function tiffDimension(value: unknown) {
-  if (typeof value === "number") return value
-  if (Array.isArray(value) && typeof value[0] === "number") return value[0]
-  return 0
-}
-
-async function createTiffPreviewUrl(file: File) {
-  if (file.size > CLIENT_PREVIEW_FILE_LIMIT) throw new Error("TIFF 文件过大，使用轻量占位预览")
-  const UTIF = await import("utif")
-  const buffer = await file.arrayBuffer()
-  const ifds = UTIF.decode(buffer)
-  const mainIfd = ifds
-    .filter((ifd) => tiffDimension(ifd.width ?? ifd.t256) > 0 && tiffDimension(ifd.height ?? ifd.t257) > 0)
-    .reduce((best, current) => {
-      if (!best) return current
-      const bestPixels = tiffDimension(best.width ?? best.t256) * tiffDimension(best.height ?? best.t257)
-      const currentPixels = tiffDimension(current.width ?? current.t256) * tiffDimension(current.height ?? current.t257)
-      return currentPixels > bestPixels ? current : best
-    }, undefined as (typeof ifds)[number] | undefined)
-  if (!mainIfd) throw new Error("TIFF 中没有可预览的图像页")
-  UTIF.decodeImage(buffer, mainIfd, ifds)
-  const sourceWidth = tiffDimension(mainIfd.width ?? mainIfd.t256)
-  const sourceHeight = tiffDimension(mainIfd.height ?? mainIfd.t257)
-  if (sourceWidth * sourceHeight > TIFF_BROWSER_FALLBACK_MAX_PIXELS) {
-    throw new Error("TIFF 解码尺寸过大，使用轻量占位预览")
-  }
-  const rgba = UTIF.toRGBA8(mainIfd)
-  const scale = Math.min(1, 640 / Math.max(sourceWidth, sourceHeight))
-  const sourceCanvas = document.createElement("canvas")
-  sourceCanvas.width = sourceWidth
-  sourceCanvas.height = sourceHeight
-  const sourceContext = sourceCanvas.getContext("2d")
-  if (!sourceContext) throw new Error("浏览器无法生成 TIFF 预览")
-  sourceContext.putImageData(new ImageData(new Uint8ClampedArray(rgba), sourceWidth, sourceHeight), 0, 0)
-  const previewCanvas = document.createElement("canvas")
-  previewCanvas.width = Math.max(1, Math.round(sourceWidth * scale))
-  previewCanvas.height = Math.max(1, Math.round(sourceHeight * scale))
-  const previewContext = previewCanvas.getContext("2d")
-  if (!previewContext) throw new Error("浏览器无法缩放 TIFF 预览")
-  previewContext.drawImage(sourceCanvas, 0, 0, previewCanvas.width, previewCanvas.height)
-  const previewBlob = await new Promise<Blob | null>((resolve) => previewCanvas.toBlob(resolve, "image/jpeg", 0.82))
-  if (!previewBlob) throw new Error("TIFF 预览生成失败")
-  return URL.createObjectURL(previewBlob)
-}
-
-async function canvasToPreviewUrl(canvas: HTMLCanvasElement) {
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8))
-  if (!blob) throw new Error("缩略图生成失败")
-  return URL.createObjectURL(blob)
-}
-
-async function createRasterPreviewUrl(file: File) {
-  if (file.size > CLIENT_PREVIEW_FILE_LIMIT || !("createImageBitmap" in window)) {
-    // Large JPEG files are still directly previewable by the browser. Avoid
-    // decoding the full image into a canvas, but do not replace it with a file
-    // placeholder merely because it exceeds the thumbnail-generation limit.
-    return URL.createObjectURL(file)
-  }
-  let bitmap: ImageBitmap
-  try {
-    bitmap = await createImageBitmap(file, { resizeWidth: 640, resizeQuality: "high" })
-  } catch {
-    return URL.createObjectURL(file)
-  }
-  try {
-    const scale = Math.min(1, 640 / Math.max(bitmap.width, bitmap.height))
-    const canvas = document.createElement("canvas")
-    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
-    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-    const context = canvas.getContext("2d")
-    if (!context) throw new Error("浏览器无法生成缩略图")
-    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
-    return await canvasToPreviewUrl(canvas)
-  } finally {
-    bitmap.close()
-  }
-}
-
-async function createFilePlaceholderUrl(file: File) {
-  const canvas = document.createElement("canvas")
-  canvas.width = 640
-  canvas.height = 400
-  const context = canvas.getContext("2d")
-  if (!context) throw new Error("浏览器无法生成文件占位图")
-  context.fillStyle = "#f5f5f4"
-  context.fillRect(0, 0, canvas.width, canvas.height)
-  context.fillStyle = "#d6d3d1"
-  context.fillRect(48, 48, 104, 128)
-  context.fillStyle = "#44403c"
-  context.font = "600 34px system-ui, sans-serif"
-  context.fillText((file.name.split(".").pop() || "IMG").toUpperCase(), 48, 232)
-  context.font = "500 24px system-ui, sans-serif"
-  context.fillText(file.name.length > 34 ? `${file.name.slice(0, 31)}...` : file.name, 48, 286)
-  context.fillStyle = "#78716c"
-  context.font = "22px system-ui, sans-serif"
-  context.fillText(formatFileSize(file.size), 48, 326)
-  return canvasToPreviewUrl(canvas)
-}
-
-async function createFallbackPreviewUrl(file: File) {
-  try {
-    return isTiffFile(file) ? await createTiffPreviewUrl(file) : await createRasterPreviewUrl(file)
-  } catch {
-    return createFilePlaceholderUrl(file)
-  }
-}
-
-async function createRestoredPreviewUrl(file: File, apiBaseUrl: string) {
-  if (file.size <= CLIENT_PREVIEW_FILE_LIMIT || isTiffFile(file)) {
-    return createFallbackPreviewUrl(file)
-  }
-  try {
-    const formData = new FormData()
-    formData.append("file", file)
-    const metadata = await fetchJson<ImageExifMetadata>(
-      `${apiBaseUrl}/api/artifacts/extract-exif-file`,
-      { method: "POST", body: formData },
-    )
-    if (metadata.preview_data_url) return metadata.preview_data_url
-  } catch {
-    // The browser's direct object URL remains the last-resort preview path.
-  }
-  return createFallbackPreviewUrl(file)
-}
-
-function revokePreviewUrl(url: string) {
+ function revokePreviewUrl(url: string) {
   if (url.startsWith("blob:")) URL.revokeObjectURL(url)
 }
 
@@ -1143,7 +843,7 @@ async function restoreExifDraftItems(draft: PersistedExifDraftItem[], apiBaseUrl
       existingArtifactReviewKey: item.existingArtifactReviewKey ?? null,
       sourceHash,
       fileHandle: null,
-      previewUrl: await createRestoredPreviewUrl(item.localFile, apiBaseUrl),
+      previewUrl: await createRestoredPreviewUrl(item.localFile, apiBaseUrl, fetchJson),
       submitState: confirmedSubmitted ? "submitted" as const : item.submitState,
       submitMessage: confirmedSubmitted ? "已从云端确认这张图片完成入库。" : item.submitMessage,
       uploadProgress: confirmedSubmitted ? 100 : item.uploadProgress,
@@ -4478,169 +4178,24 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
           </div>
         </div>
       </Modal>
-      <Modal
-        title="选择目标与同步内容"
+      <MetadataSyncPreview
         open={metadataSyncPreviewOpen}
-        width={760}
-        centered
-        destroyOnHidden
+        source={metadataSyncSource}
+        targetMode={metadataSyncTargetMode}
+        availableTargets={metadataSyncAvailableTargets}
+        targets={metadataSyncTargets}
+        targetIds={metadataSyncTargetIds}
+        selection={metadataSyncSelection}
+        selectedFieldCount={metadataSyncSelectedCount}
+        changedCount={metadataSyncChangedCount}
+        diffs={metadataSyncDiffs}
+        itemIndex={(id) => items.findIndex((item) => item.id === id)}
         onCancel={() => setMetadataSyncPreviewOpen(false)}
-        footer={[
-          <Button key="cancel" htmlType="button" onClick={() => setMetadataSyncPreviewOpen(false)}>取消</Button>,
-          <Button
-            key="apply"
-            htmlType="button"
-            type="primary"
-            onClick={applyMetadataSync}
-            disabled={metadataSyncTargets.length === 0 || metadataSyncChangedCount === 0}
-          >
-            同步到 {metadataSyncTargets.length} 张照片
-          </Button>,
-        ]}
-      >
-        <div className="metadata-sync-preview">
-          {metadataSyncTargetMode === "selected" ? (
-            <section className="metadata-sync-target-picker">
-              <div className="metadata-sync-target-picker-head">
-                <div>
-                  <strong>选择目标照片</strong>
-                  <span>可以只选一张，也可以多选；来源照片不会出现在这里。</span>
-                </div>
-                <Space.Compact size="small">
-                  <Button
-                    htmlType="button"
-                    onClick={() => setMetadataSyncTargetIds(metadataSyncAvailableTargets.map((item) => item.id))}
-                    disabled={metadataSyncAvailableTargets.length === 0}
-                  >
-                    全选
-                  </Button>
-                  <Button
-                    htmlType="button"
-                    onClick={() => setMetadataSyncTargetIds([])}
-                    disabled={metadataSyncTargetIds.length === 0}
-                  >
-                    清空
-                  </Button>
-                </Space.Compact>
-              </div>
-              <div className="metadata-sync-target-list">
-                {metadataSyncAvailableTargets.map((item) => {
-                  const itemIndex = items.findIndex((entry) => entry.id === item.id)
-                  return (
-                    <Checkbox
-                      key={item.id}
-                      className="metadata-sync-target-option"
-                      checked={metadataSyncTargetIds.includes(item.id)}
-                      onChange={(event) => setMetadataSyncTargetIds((current) => (
-                        event.target.checked
-                          ? Array.from(new Set([...current, item.id]))
-                          : current.filter((id) => id !== item.id)
-                      ))}
-                    >
-                      <span className="metadata-sync-target-option-content">
-                        <img src={item.previewUrl} alt="" loading="lazy" decoding="async" />
-                        <span title={item.fileName}>{indexedFileName(item.fileName, itemIndex)}</span>
-                      </span>
-                    </Checkbox>
-                  )
-                })}
-              </div>
-              <p className="metadata-sync-target-picker-count">
-                已选择 {metadataSyncTargets.length}/{metadataSyncAvailableTargets.length} 张目标照片
-              </p>
-            </section>
-          ) : null}
-          <section className="metadata-sync-preview-fields">
-            <div className="metadata-sync-preview-fields-head">
-              <div>
-                <strong>选择同步内容</strong>
-                <span>相机、拍摄参数与时间默认关闭，避免覆盖每张照片自己的 EXIF。</span>
-              </div>
-              <span>{metadataSyncSelectedCount}/{METADATA_SYNC_FIELD_COUNT} 项已开启</span>
-            </div>
-            <div className="metadata-sync-presets" aria-label="同步范围快捷选择">
-              <span>快捷选择</span>
-              <Space.Compact size="small">
-                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("default")}>恢复默认</Button>
-                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("location")}>只选地点</Button>
-                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("content")}>只选内容</Button>
-                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("all")}>全部开启</Button>
-                <Button htmlType="button" onClick={() => selectMetadataSyncPreset("none")}>清空</Button>
-              </Space.Compact>
-            </div>
-            <MetadataSyncFieldControls
-              context="preview"
-              selection={metadataSyncSelection}
-              onChange={(field, checked) => setMetadataSyncSelection((current) => ({
-                ...current,
-                [field]: checked,
-              }))}
-            />
-          </section>
-          <div className="metadata-sync-preview-summary">
-            <div>
-              <span>来源照片</span>
-              <strong>{metadataSyncSource?.fileName ?? "未选择"}</strong>
-            </div>
-            <div>
-              <span>目标范围</span>
-              <strong>
-                {metadataSyncTargetMode === "current"
-                  ? "当前图片"
-                  : metadataSyncTargetMode === "selected"
-                    ? `指定照片（${metadataSyncTargets.length} 张）`
-                    : `全部其他图片（${metadataSyncTargets.length} 张）`}
-              </strong>
-            </div>
-            <div className="is-emphasis">
-              <span>预计变更</span>
-              <strong>{metadataSyncChangedCount} 项</strong>
-            </div>
-          </div>
-          {metadataSyncTargets.length === 0 ? (
-            <div className="metadata-sync-no-change">请先选择至少一张目标照片。</div>
-          ) : metadataSyncDiffs.every((entry) => entry.rows.length === 0) ? (
-            <div className="metadata-sync-no-change">来源照片与目标照片在所选范围内没有差异。</div>
-          ) : (
-            <div className="metadata-sync-preview-targets">
-              {metadataSyncDiffs.filter((entry) => entry.rows.length > 0).map(({ target, rows }) => (
-                <section key={target.id} className="metadata-sync-preview-target">
-                  <header>
-                    <img src={target.previewUrl} alt="" loading="lazy" decoding="async" />
-                    <div>
-                      <strong>{target.fileName}</strong>
-                      <span className="metadata-sync-target-change-count">{rows.length} 项将变更</span>
-                    </div>
-                  </header>
-                  <div className="metadata-sync-diff-list" role="table" aria-label={`${target.fileName} 的同步差异`}>
-                    <div className="metadata-sync-diff-row is-head" role="row">
-                      <span role="columnheader">字段</span>
-                      <span role="columnheader">同步前</span>
-                      <span role="columnheader">同步后</span>
-                    </div>
-                    {rows.map((row) => (
-                      <div key={row.label} className="metadata-sync-diff-row" role="row">
-                        <strong className="metadata-sync-table-field" role="cell">{row.label}</strong>
-                        <span className={`metadata-sync-table-before ${row.targetValue === "未填写" ? "is-empty" : ""}`} title={row.targetValue} role="cell">
-                          {row.targetValue}
-                        </span>
-                        <span className={`metadata-sync-table-after ${row.sourceValue === "未填写" ? "is-empty" : ""}`} title={row.sourceValue} role="cell">
-                          <ArrowRight size={13} strokeWidth={2} aria-hidden="true" />
-                          <strong>{row.sourceValue}</strong>
-                          {row.willClearTarget ? <Tag color="warning">将清空</Tag> : null}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
-          {metadataSyncDiffs.some((entry) => entry.rows.some((row) => row.willClearTarget)) ? (
-            <p className="metadata-sync-clear-warning">来源照片中有空字段，确认后会清空目标照片对应内容。</p>
-          ) : null}
-        </div>
-      </Modal>
+        onApply={applyMetadataSync}
+        onTargetIdsChange={setMetadataSyncTargetIds}
+        onSelectionChange={(field, checked) => setMetadataSyncSelection((current) => ({ ...current, [field]: checked }))}
+        onPreset={selectMetadataSyncPreset}
+      />
     </section>
   )
 }

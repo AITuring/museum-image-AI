@@ -1,0 +1,23 @@
+.era-browser { min-height: calc(100dvh - 64px); padding: 12px clamp(12px, 2vw, 28px) 48px; background: var(--ui-canvas); }
+.era-browser-head { display:flex; max-width:1480px; margin:0 auto 18px; align-items:end; justify-content:space-between; gap:24px; }
+.era-kicker { color:#8a6e48; font-size:10px; font-weight:700; letter-spacing:.16em; }
+.era-browser h2 { margin:2px 0 0; font-family:"Songti SC", "Noto Serif SC", serif; font-size:clamp(22px,2vw,30px); font-weight:600; letter-spacing:-.05em; }
+.era-browser-head p { margin:4px 0 0; color:var(--ui-text-secondary); font-size:13px; }
+.era-browser-total { display:grid; min-width:120px; color:var(--ui-text-tertiary); font-size:10px; text-align:right; }
+.era-browser-total strong { color:var(--ui-text-primary); font-family:"Songti SC", serif; font-size:27px; font-weight:600; }
+.era-layout { display:grid; grid-template-columns:150px minmax(0,1fr); max-width:1480px; margin:auto; gap:26px; }
+.era-rail { position:sticky; top:82px; align-self:start; }
+.era-rail-heading, .era-rail-list button { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.era-rail-heading { padding:0 6px 8px; color:var(--ui-text-tertiary); font-size:10px; letter-spacing:.08em; }
+.era-rail-heading button, .era-rail-list button { border:0; background:transparent; color:inherit; cursor:pointer; }
+.era-rail-heading button.active, .era-rail-list button.active { color:#6d4e28; }
+.era-rail-list { display:grid; max-height:calc(100dvh - 142px); overflow:auto; gap:2px; }
+.era-rail-list button { width:100%; padding:8px 7px; border-radius:7px; text-align:left; }
+.era-rail-list button:hover, .era-rail-list button.active { background:rgb(127 98 54 / .09); }
+.era-rail-list strong { font-family:"Songti SC", serif; font-size:14px; font-weight:600; }.era-rail-list span { color:var(--ui-text-tertiary); font-size:10px; }
+.era-summary { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:12px; border-bottom:1px solid var(--ui-line-subtle); }.era-summary > div { display:grid; gap:2px; }.era-summary strong { font-family:"Songti SC", serif; font-size:20px; font-weight:600; }.era-summary span { color:var(--ui-text-tertiary); font-size:11px; }.era-search { width:min(300px,42vw); }
+.era-subperiods { display:flex; flex-wrap:wrap; margin-top:12px; gap:6px; }.era-subperiods span { padding:3px 7px; border-radius:999px; background:rgb(125 98 57/.08); color:var(--ui-text-secondary); font-size:11px; }
+.era-state { display:flex; min-height:230px; align-items:center; justify-content:center; color:var(--ui-text-tertiary); font-size:13px; gap:8px; }.era-state.error { color:#a44b3c; }
+.era-artifact-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:18px; gap:14px; }.era-artifact-card { overflow:hidden; border:1px solid var(--ui-line-subtle); border-radius:10px; background:rgb(255 255 255/.72); box-shadow:0 8px 22px rgb(50 39 25/.04); color:inherit; text-decoration:none; transition:transform 160ms ease,box-shadow 160ms ease; }.era-artifact-card:hover { transform:translateY(-2px); box-shadow:0 14px 28px rgb(50 39 25/.09); }.era-artifact-cover { display:grid; aspect-ratio:1.18; place-items:center; overflow:hidden; background:var(--ui-surface-wash); color:var(--ui-text-tertiary); }.era-artifact-cover img { width:100%; height:100%; object-fit:cover; }.era-artifact-copy { display:grid; padding:10px; gap:4px; }.era-artifact-copy > span { color:#8a6e48; font-size:10px; }.era-artifact-copy strong { overflow:hidden; font-family:"Songti SC",serif; font-size:15px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }.era-artifact-copy p { display:flex; overflow:hidden; margin:0; align-items:center; color:var(--ui-text-tertiary); font-size:10px; gap:4px; text-overflow:ellipsis; white-space:nowrap; }
+@media (max-width:900px) { .era-artifact-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media (max-width:680px) { .era-browser-head { align-items:start; flex-direction:column; gap:8px; }.era-browser-total { text-align:left; }.era-layout { display:block; }.era-rail { position:static; margin-bottom:16px; }.era-rail-list { display:flex; max-height:none; overflow:auto; }.era-rail-list button { min-width:72px; flex-direction:column; align-items:start; }.era-summary { align-items:start; flex-direction:column; }.era-search { width:100%; }.era-artifact-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }

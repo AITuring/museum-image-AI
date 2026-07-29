@@ -97,7 +97,7 @@ from app.models import (
     Museum,
     PendingArtifact,
 )
-from app.reference_data import WENWU_ERA_OPTIONS, WENWU_MUSEUM_OPTIONS
+from app.reference_data import WENWU_ERA_OPTIONS, WENWU_ERA_TIMELINE, WENWU_MUSEUM_OPTIONS
 from app.reference_data import WENWU_MUSEUM_COORDINATES
 from app.oss import delete_image, upload_image
 from app.schemas import (
@@ -117,6 +117,8 @@ from app.schemas import (
     BatchScanResponse,
     CloudArtifactSubmitRequest,
     EraOptionRead,
+    EraTimelineItemRead,
+    EraTimelineRead,
     ExifArtifactSubmitRequest,
     ExhibitionCreate,
     ExhibitionRead,
@@ -4864,6 +4866,70 @@ def list_museums(
 def list_era_options(db: Session = Depends(get_db)) -> list[EraOption]:
     query = select(EraOption).order_by(EraOption.sort_order.asc(), EraOption.name.asc())
     return list(db.scalars(query))
+
+
+@app.get(f"{settings.api_prefix}/era-timeline", response_model=EraTimelineRead)
+def get_era_timeline(
+    era: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> EraTimelineRead:
+    """Return chronological era facets and the artifacts in the selected era.
+
+    Artifact.era deliberately retains operator input (for example ``商代`` or
+    ``红山文化``).  The timeline groups those variants for browsing only.
+    """
+    normalized_selected = era.strip() if era and era.strip() else None
+    timeline = list(WENWU_ERA_TIMELINE)
+    selected = next((item for item in timeline if item[0] == normalized_selected), None)
+    if normalized_selected and selected is None:
+        raise HTTPException(status_code=404, detail="未找到该时代")
+
+    # The local gallery intentionally proxies to the cloud in normal local
+    # operator mode.  This page must use that same collection rather than the
+    # usually-empty local cache.  It also cannot use exact SQL equality: old
+    # records commonly say "商代晚期" while the rail says "商".
+    if should_proxy_artifact_queries_to_cloud():
+        try:
+            all_artifacts = enrich_artifact_catalog_links(
+                merge_duplicate_artifact_reads(fetch_cloud_artifact_payload())
+            )
+        except Exception as exc:  # noqa: BLE001 - make the data-source error visible
+            raise HTTPException(status_code=502, detail=f"查询图库失败：{exc}") from exc
+    else:
+        all_artifacts = enrich_artifact_catalog_links(
+            merge_duplicate_artifact_reads(
+                list(db.scalars(artifact_detail_query().order_by(Artifact.created_at.desc())))
+            )
+        )
+
+    def matches_era(value: str | None, aliases: tuple[str, ...]) -> bool:
+        if not value:
+            return False
+        normalized = re.sub(r"[\s（()）]", "", value)
+        return any(
+            normalized == alias
+            or normalized.startswith(alias)
+            or alias in normalized
+            for alias in aliases
+        )
+
+    facets = [
+        EraTimelineItemRead(
+            name=name,
+            aliases=list(aliases),
+            count=sum(1 for artifact in all_artifacts if matches_era(artifact.era, aliases)),
+        )
+        for name, aliases in timeline
+    ]
+
+    artifacts: list[ArtifactRead] = []
+    if selected is not None:
+        artifacts = [artifact for artifact in all_artifacts if matches_era(artifact.era, selected[1])]
+    return EraTimelineRead(
+        eras=facets,
+        selected_era=normalized_selected,
+        artifacts=artifacts,
+    )
 
 
 @app.post(f"{settings.api_prefix}/museums", response_model=MuseumRead, status_code=201)

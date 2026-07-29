@@ -78,6 +78,18 @@ class EraOptionRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class EraTimelineItemRead(BaseModel):
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    count: int = 0
+
+
+class EraTimelineRead(BaseModel):
+    eras: list[EraTimelineItemRead] = Field(default_factory=list)
+    selected_era: str | None = None
+    artifacts: list["ArtifactRead"] = Field(default_factory=list)
+
+
 class ArtifactImageCreate(BaseModel):
     url: str
     camera_model: str | None = None
