@@ -13,6 +13,8 @@
 .era-rail-heading button.active, .era-rail-list button.active { color:#6d4e28; }
 .era-rail-list { display:grid; max-height:calc(100dvh - 142px); overflow:auto; gap:2px; }
 .era-rail-list button { width:100%; padding:8px 7px; border-radius:7px; text-align:left; }
+.era-rail-list button.era-rail-child { width:calc(100% - 14px); margin-left:14px; padding-top:5px; padding-bottom:5px; }
+.era-rail-list button.era-rail-child strong { font-size:12px; font-weight:500; }
 .era-rail-list button:hover, .era-rail-list button.active { background:rgb(127 98 54 / .09); }
 .era-rail-list strong { font-family:"Songti SC", serif; font-size:14px; font-weight:600; }.era-rail-list span { color:var(--ui-text-tertiary); font-size:10px; }
 .era-summary { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:12px; border-bottom:1px solid var(--ui-line-subtle); }.era-summary > div { display:grid; gap:2px; }.era-summary strong { font-family:"Songti SC", serif; font-size:20px; font-weight:600; }.era-summary span { color:var(--ui-text-tertiary); font-size:11px; }.era-search { width:min(300px,42vw); }

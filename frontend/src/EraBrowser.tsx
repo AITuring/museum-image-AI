@@ -6,6 +6,7 @@ import "./styles/eras.css"
 type EraItem = {
   name: string
   aliases: string[]
+  parent: string | null
   count: number
 }
 
@@ -22,6 +23,7 @@ type Artifact = {
 type EraTimelinePayload = {
   eras: EraItem[]
   selected_era: string | null
+  total_artifacts: number
   artifacts: Artifact[]
 }
 
@@ -94,7 +96,7 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           <p>按中国古代时期查看已入库文物；保留录入原文，在浏览中统一归类。</p>
         </div>
         <div className="era-browser-total">
-          <strong>{payload?.eras.reduce((sum, item) => sum + item.count, 0).toLocaleString("zh-CN") ?? "—"}</strong>
+          <strong>{payload?.total_artifacts.toLocaleString("zh-CN") ?? "—"}</strong>
           <span>件已归类文物</span>
         </div>
       </header>
@@ -104,7 +106,7 @@ export default function EraBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           <div className="era-rail-heading"><span>朝代</span><button className={!selectedEra ? "active" : ""} onClick={() => chooseEra(null)}>全部</button></div>
           <div className="era-rail-list">
             {(payload?.eras ?? []).map((item) => (
-              <button key={item.name} className={selectedEra === item.name ? "active" : ""} onClick={() => chooseEra(item.name)}>
+              <button key={item.name} className={`${item.parent ? "era-rail-child" : ""} ${selectedEra === item.name ? "active" : ""}`} onClick={() => chooseEra(item.name)}>
                 <strong>{item.name}</strong><span>{item.count}</span>
               </button>
             ))}

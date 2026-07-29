@@ -4917,9 +4917,10 @@ def get_era_timeline(
         EraTimelineItemRead(
             name=name,
             aliases=list(aliases),
+            parent=parent,
             count=sum(1 for artifact in all_artifacts if matches_era(artifact.era, aliases)),
         )
-        for name, aliases in timeline
+        for name, aliases, parent in timeline
     ]
 
     artifacts: list[ArtifactRead] = []
@@ -4928,6 +4929,11 @@ def get_era_timeline(
     return EraTimelineRead(
         eras=facets,
         selected_era=normalized_selected,
+        total_artifacts=sum(
+            1
+            for artifact in all_artifacts
+            if any(matches_era(artifact.era, aliases) for _, aliases, parent in timeline if parent is None)
+        ),
         artifacts=artifacts,
     )
 

@@ -40,7 +40,6 @@ import { createFallbackPreviewUrl, createRestoredPreviewUrl } from "./lib/exifPr
 import type {
   ArtifactSubmitResult as ArtifactSubmitResultType,
   DescriptionCandidate as DescriptionCandidateType,
-  DescriptionSearchHit as DescriptionSearchHitType,
   ExhibitionRecommendation as ExhibitionRecommendationType,
   ExistingArtifact as ExistingArtifactType,
   ExistingArtifactMatch as ExistingArtifactMatchType,
@@ -74,8 +73,6 @@ type DescriptionCandidate = DescriptionCandidateType
 type VerifiedClaim = VerifiedClaimType
 
 type LiveProviderState = LiveProviderStateType
-
-type DescriptionSearchHit = DescriptionSearchHitType
 
 type GeneratedDescription = GeneratedDescriptionType
 

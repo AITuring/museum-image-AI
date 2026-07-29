@@ -81,12 +81,14 @@ class EraOptionRead(BaseModel):
 class EraTimelineItemRead(BaseModel):
     name: str
     aliases: list[str] = Field(default_factory=list)
+    parent: str | None = None
     count: int = 0
 
 
 class EraTimelineRead(BaseModel):
     eras: list[EraTimelineItemRead] = Field(default_factory=list)
     selected_era: str | None = None
+    total_artifacts: int = 0
     artifacts: list["ArtifactRead"] = Field(default_factory=list)
 
 
