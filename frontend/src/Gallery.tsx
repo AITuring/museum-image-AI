@@ -8,6 +8,8 @@ import {
   Building2,
   CalendarRange,
   Camera,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
   Clock3,
   FileText,
@@ -15,6 +17,7 @@ import {
   History,
   Images,
   MapPin,
+  Maximize2,
   Plus,
   Search,
   SlidersHorizontal,
@@ -140,6 +143,17 @@ function formatExhibitionPeriod(
       : missingLabel
   }
   return `${startAt?.slice(0, 10) ?? "未知"} – ${endAt?.slice(0, 10) ?? "至今"}`
+}
+
+function getGalleryImageFilename(url: string, index: number) {
+  const cleanUrl = url.split(/[?#]/, 1)[0]
+  const encodedName = cleanUrl.split("/").filter(Boolean).at(-1)
+  if (!encodedName) return `image-${index + 1}`
+  try {
+    return decodeURIComponent(encodedName)
+  } catch {
+    return encodedName
+  }
 }
 
 type GeneratedDescription = {
@@ -622,86 +636,100 @@ function HistoricalExhibitionRow({
       <span className="gallery-history-index" title={`第 ${index + 1} 条展出记录`}>
         {index + 1}
       </span>
-      <AutoComplete
-        className="gallery-history-museum"
-        value={group.captureMuseumName}
-        options={museumOptions.map((museum) => ({ value: museum.name }))}
-        filterOption={(input, option) =>
-          normalizeLookupText(String(option?.value ?? "")).includes(normalizeLookupText(input))
-        }
-        aria-label={`第 ${index + 1} 条历史展出的场馆`}
-        placeholder="输入场馆名称联想搜索…"
-        onChange={(value) => onUpdate({
-          captureMuseumName: value,
-          catalogSourceId: "",
-          catalogExhibitionId: null,
-          startAt: null,
-          endAt: null,
-        })}
-      >
-        <Input />
-      </AutoComplete>
-      <AutoComplete
-        className="gallery-history-exhibition"
-        value={group.exhibitionName}
-        options={exhibitionOptions}
-        filterOption={false}
-        aria-label={`第 ${index + 1} 条历史展出的展览`}
-        placeholder={group.captureMuseumName.trim() ? "输入展览名称联想搜索…" : "请先选择场馆…"}
-        notFoundContent={loadingExhibitions ? "正在检索展览…" : "没有匹配展览"}
-        onFocus={() => setExhibitionQuery(group.exhibitionName)}
-        onSearch={setExhibitionQuery}
-        onChange={(value) => {
-          setExhibitionQuery(value)
-          onUpdate({
-            exhibitionName: value,
+      <div className="gallery-history-field gallery-history-field-museum">
+        <span className="gallery-history-field-label">展出场馆</span>
+        <AutoComplete
+          className="gallery-history-museum"
+          value={group.captureMuseumName}
+          options={museumOptions.map((museum) => ({ value: museum.name }))}
+          filterOption={(input, option) =>
+            normalizeLookupText(String(option?.value ?? "")).includes(normalizeLookupText(input))
+          }
+          aria-label={`第 ${index + 1} 条历史展出的场馆`}
+          placeholder="输入场馆名称联想搜索…"
+          onChange={(value) => onUpdate({
+            captureMuseumName: value,
             catalogSourceId: "",
             catalogExhibitionId: null,
             startAt: null,
             endAt: null,
-          })
-        }}
-        onSelect={(value) => {
-          const choice = exhibitionChoices.find((item) => item.name === value)
-          if (!choice) return
-          setExhibitionQuery(choice.name)
-          onUpdate({
-            captureMuseumName: choice.museumName || group.captureMuseumName,
-            exhibitionName: choice.name,
-            catalogSourceId: choice.catalogSourceId,
-            catalogExhibitionId: choice.catalogExhibitionId,
-            startAt: choice.startAt,
-            endAt: choice.endAt,
-          })
-        }}
-      >
-        <Input />
-      </AutoComplete>
-      <span className="gallery-history-period">
-        {formatExhibitionPeriod(
-          group.startAt,
-          group.endAt,
-          group.exhibitionName,
-          "请选择目录展览以带回时间",
-        )}
-      </span>
-      <div className="gallery-history-images" aria-label={`第 ${index + 1} 条历史展出的图片`}>
-        {group.imageIds.map((imageId) => {
-          const imageIndex = imageIndexes.get(imageId) ?? -1
-          return (
-            <button
-              key={imageId}
-              type="button"
-              draggable
-              className={`gallery-history-image-link${imageId === activeImageId ? " is-active" : ""}`}
-              onClick={() => onActivateImage(imageIndex)}
-              onDragStart={() => onSetDraggedImage(imageId)}
-              onDragEnd={() => onSetDraggedImage(null)}
-            >
-              图{imageIndex + 1}
-            </button>
-          )
-        })}
+          })}
+        >
+          <Input />
+        </AutoComplete>
+      </div>
+      <div className="gallery-history-field gallery-history-field-exhibition">
+        <span className="gallery-history-field-label">展览名称</span>
+        <AutoComplete
+          className="gallery-history-exhibition"
+          value={group.exhibitionName}
+          options={exhibitionOptions}
+          filterOption={false}
+          aria-label={`第 ${index + 1} 条历史展出的展览`}
+          placeholder={group.captureMuseumName.trim() ? "输入展览名称联想搜索…" : "请先选择场馆…"}
+          notFoundContent={loadingExhibitions ? "正在检索展览…" : "没有匹配展览"}
+          onFocus={() => setExhibitionQuery(group.exhibitionName)}
+          onSearch={setExhibitionQuery}
+          onChange={(value) => {
+            setExhibitionQuery(value)
+            onUpdate({
+              exhibitionName: value,
+              catalogSourceId: "",
+              catalogExhibitionId: null,
+              startAt: null,
+              endAt: null,
+            })
+          }}
+          onSelect={(value) => {
+            const choice = exhibitionChoices.find((item) => item.name === value)
+            if (!choice) return
+            setExhibitionQuery(choice.name)
+            onUpdate({
+              captureMuseumName: choice.museumName || group.captureMuseumName,
+              exhibitionName: choice.name,
+              catalogSourceId: choice.catalogSourceId,
+              catalogExhibitionId: choice.catalogExhibitionId,
+              startAt: choice.startAt,
+              endAt: choice.endAt,
+            })
+          }}
+        >
+          <Input />
+        </AutoComplete>
+      </div>
+      <div className="gallery-history-meta">
+        <div className="gallery-history-meta-item">
+          <span className="gallery-history-field-label">展期</span>
+          <span className="gallery-history-period">
+            {formatExhibitionPeriod(
+              group.startAt,
+              group.endAt,
+              group.exhibitionName,
+              "请选择目录展览以带回时间",
+            )}
+          </span>
+        </div>
+        <div className="gallery-history-meta-item">
+          <span className="gallery-history-field-label">关联图片</span>
+          <div className="gallery-history-images" aria-label={`第 ${index + 1} 条历史展出的图片`}>
+            {group.imageIds.map((imageId) => {
+              const imageIndex = imageIndexes.get(imageId) ?? -1
+              return (
+                <button
+                  key={imageId}
+                  type="button"
+                  draggable
+                  className={`gallery-history-image-link${imageId === activeImageId ? " is-active" : ""}`}
+                  onClick={() => onActivateImage(imageIndex)}
+                  onDragStart={() => onSetDraggedImage(imageId)}
+                  onDragEnd={() => onSetDraggedImage(null)}
+                >
+                  图{imageIndex + 1}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       </div>
       <Button
         type="text"
@@ -1045,6 +1073,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [artifactRouteId, setArtifactRouteId] = useState<number | null>(getGalleryArtifactIdFromLocation)
   const [activeImageIndex, setActiveImageIndex] = useState(0)
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
+  const [previewImageIndex, setPreviewImageIndex] = useState(0)
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState<GalleryEditFormState | null>(null)
   const [historicalExhibitions, setHistoricalExhibitions] = useState<HistoricalExhibitionDraft[]>([])
@@ -1145,6 +1174,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setGeneratingDescription(false)
     setDescriptionProgress(null)
     setImagePreviewOpen(false)
+    setPreviewImageIndex(0)
     if (!active) return
     setActiveImageIndex(0)
   }, [active?.id])
@@ -1563,7 +1593,10 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   }
 
   return (
-    <section className="gallery-workbench" aria-labelledby="gallery-page-title">
+    <section
+      className={`gallery-workbench${active ? " has-detail-route" : ""}`}
+      aria-labelledby="gallery-page-title"
+    >
       {!active ? (
         <>
       <header className="gallery-page-head">
@@ -1596,46 +1629,66 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         </div>
       ) : null}
 
-      <div className="gallery-grid">
-        {items.map((artifact) => {
-          const cover = artifact.images[0]
-          return (
-            <button data-ui="interactive-surface"
-              type="button"
-              key={artifact.id}
-              className="gallery-card"
-              onClick={() => navigateToArtifact(artifact)}
-            >
-              <div className="gallery-thumb">
-                {cover ? (
-                  <FallbackImage
-                    src={getBackendImageVariantUrl(apiBaseUrl, cover.url, 480)}
-                    fallbackSrc={toAbsoluteUrl(apiBaseUrl, cover.url)}
-                    alt={artifact.name}
-                    width={480}
-                    height={360}
-                    loading="lazy"
-                  />
-                ) : (
-                  <span className="gallery-noimg">无图</span>
-                )}
-              </div>
+      {loading ? (
+        <div className="gallery-grid gallery-skeleton-grid" aria-label="正在加载图库" aria-busy="true">
+          {Array.from({ length: 8 }, (_, index) => (
+            <div className="gallery-card gallery-skeleton-card" key={index} aria-hidden="true">
+              <div className="gallery-thumb gallery-skeleton-media" />
               <div className="gallery-meta">
-                <strong className="gallery-title">{artifact.name}</strong>
-                <div className="gallery-card-meta-row">
-                  <span className="gallery-card-context">
-                    {artifact.era || "待确认"} · {artifact.museum_name || "待识别"}
-                  </span>
-                  <span className="gallery-card-image-count">
-                    <Images size={13} aria-hidden="true" />
-                    <span>{artifact.images.length} 张</span>
-                  </span>
-                </div>
+                <span className="gallery-skeleton-line gallery-skeleton-title" />
+                <span className="gallery-skeleton-line gallery-skeleton-caption" />
               </div>
-            </button>
-          )
-        })}
-      </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="gallery-grid">
+          {items.map((artifact) => {
+            const cover = artifact.images[0]
+            return (
+              <button data-ui="interactive-surface"
+                type="button"
+                key={artifact.id}
+                className="gallery-card"
+                onClick={() => navigateToArtifact(artifact)}
+              >
+                <div className="gallery-thumb">
+                  {cover ? (
+                    <FallbackImage
+                      src={getBackendImageVariantUrl(apiBaseUrl, cover.url, 480)}
+                      fallbackSrc={toAbsoluteUrl(apiBaseUrl, cover.url)}
+                      alt={artifact.name}
+                      width={480}
+                      height={360}
+                      loading="lazy"
+                      onLoad={(event) => {
+                        const ratio = event.currentTarget.naturalWidth / event.currentTarget.naturalHeight
+                        event.currentTarget
+                          .closest<HTMLElement>(".gallery-card")
+                          ?.style.setProperty("--gallery-ratio", String(ratio))
+                      }}
+                    />
+                  ) : (
+                    <span className="gallery-noimg">无图</span>
+                  )}
+                </div>
+                <div className="gallery-meta">
+                  <strong className="gallery-title">{artifact.name}</strong>
+                  <div className="gallery-card-meta-row">
+                    <span className="gallery-card-context">
+                      {artifact.era || "待确认"} · {artifact.museum_name || "待识别"}
+                    </span>
+                    <span className="gallery-card-image-count">
+                      <Images size={13} aria-hidden="true" />
+                      <span>{artifact.images.length} 张</span>
+                    </span>
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
         </>
       ) : null}
@@ -1657,31 +1710,122 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                   const iso = formatMetaValue(currentImage?.iso)
                   return (
                     <>
+                      <header className="gallery-detail-head gallery-route-detail-head">
+                        <Button
+                          htmlType="button"
+                          type="text"
+                          className="gallery-back-button"
+                          onClick={navigateToGallery}
+                          aria-label={`返回${getGalleryReturnTarget().label}`}
+                        >
+                          <ArrowLeft size={16} aria-hidden="true" />
+                          <span className="sr-only">返回{getGalleryReturnTarget().label}</span>
+                        </Button>
+                        <div className="gallery-detail-heading">
+                          {editing ? <span className="gallery-edit-kicker">编辑文物资料</span> : null}
+                          <h3 id={`gallery-detail-title-${active.id}`} className="gallery-detail-title">{active.name}</h3>
+                        </div>
+                        <div className="gallery-actions" onClick={(event) => event.stopPropagation()}>
+                          {editing ? (
+                            <>
+                              <Button
+                                htmlType="button"
+                                type="default"
+                                onClick={handleCancelEdit}
+                                disabled={saving || generatingDescription}
+                              >
+                                取消编辑
+                              </Button>
+                              <Button
+                                htmlType="submit"
+                                type="primary"
+                                form={editFormId}
+                                disabled={saving || generatingDescription}
+                              >
+                                {saving ? "正在保存…" : generatingDescription ? "正在生成描述…" : "保存修改"}
+                              </Button>
+                            </>
+                          ) : (
+                            <Button htmlType="button" type="default" onClick={handleStartEdit}>
+                              编辑资料
+                            </Button>
+                          )}
+                        </div>
+                      </header>
                       <div className={`gallery-modal-media ${currentImage ? "has-image" : ""}`}>
                         {currentImage ? (
                           <>
-                            <button data-ui="interactive-surface"
-                              type="button"
-                              className="gallery-modal-main-stage"
-                              onClick={() => setImagePreviewOpen(true)}
-                              aria-label={`查看第 ${activeImageIndex + 1} 张原比例大图`}
-                            >
-                              <FallbackImage
-                                key={currentImage.id}
-                                className="gallery-modal-main-img"
-                                src={getBackendImageVariantUrl(apiBaseUrl, currentImage.url, 1280)}
-                                fallbackSrc={toAbsoluteUrl(apiBaseUrl, currentImage.url)}
-                                alt={active.name}
-                                width={1280}
-                                height={960}
-                              />
-                            </button>
+                            <div className="gallery-modal-main-stage">
+                              <button
+                                data-ui="interactive-surface"
+                                type="button"
+                                className="gallery-modal-image-hitarea"
+                                onClick={() => {
+                                  setPreviewImageIndex(activeImageIndex)
+                                  setImagePreviewOpen(true)
+                                }}
+                                aria-label={`放大查看第 ${activeImageIndex + 1} 张图片`}
+                              >
+                                <FallbackImage
+                                  key={currentImage.id}
+                                  className="gallery-modal-main-img"
+                                  src={getBackendImageVariantUrl(apiBaseUrl, currentImage.url, 1280)}
+                                  fallbackSrc={toAbsoluteUrl(apiBaseUrl, currentImage.url)}
+                                  alt={active.name}
+                                  width={1280}
+                                  height={960}
+                                />
+                              </button>
+                              <span className="gallery-media-image-name">
+                                {getGalleryImageFilename(currentImage.url, activeImageIndex)}
+                              </span>
+                              <div className="gallery-media-stage-meta">
+                                <span className="gallery-media-stage-counter">
+                                  {activeImageIndex + 1} / {active.images.length}
+                                </span>
+                                <button
+                                  type="button"
+                                  className="gallery-media-expand-button"
+                                  onClick={() => {
+                                    setPreviewImageIndex(activeImageIndex)
+                                    setImagePreviewOpen(true)
+                                  }}
+                                  aria-label="进入沉浸式大图查看"
+                                >
+                                  <Maximize2 size={15} aria-hidden="true" />
+                                </button>
+                              </div>
+                              {active.images.length > 1 && !editing ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="gallery-media-nav is-previous"
+                                    onClick={() => setActiveImageIndex((current) => (
+                                      (current - 1 + active.images.length) % active.images.length
+                                    ))}
+                                    aria-label="查看上一张图片"
+                                  >
+                                    <ChevronLeft size={20} aria-hidden="true" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="gallery-media-nav is-next"
+                                    onClick={() => setActiveImageIndex((current) => (
+                                      (current + 1) % active.images.length
+                                    ))}
+                                    aria-label="查看下一张图片"
+                                  >
+                                    <ChevronRight size={20} aria-hidden="true" />
+                                  </button>
+                                </>
+                              ) : null}
+                            </div>
                             <div className="gallery-media-foot">
                               {active.images.length > 1 ? (
                                 <>
                                   <div
                                     ref={thumbnailStripRef}
-                                    className={`gallery-modal-thumbs ${editing ? "edit-lock" : ""}`}
+                                    className={`gallery-modal-thumbs ${editing ? "preview-mode" : ""}`}
                                   >
                                     {active.images.map((image, index) => (
                                       <button data-ui="interactive-surface"
@@ -1689,9 +1833,17 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                         key={image.id}
                                         className={`gallery-modal-thumb ${index === activeImageIndex ? "active" : ""}`}
                                         data-image-index={index}
-                                        onClick={() => setActiveImageIndex(index)}
-                                        aria-label={`查看第 ${index + 1} 张`}
-                                        disabled={editing || saving}
+                                        onClick={() => {
+                                          if (editing) {
+                                            setPreviewImageIndex(index)
+                                            setImagePreviewOpen(true)
+                                            return
+                                          }
+                                          setActiveImageIndex(index)
+                                        }}
+                                        aria-label={editing ? `放大查看第 ${index + 1} 张` : `查看第 ${index + 1} 张`}
+                                        title={editing ? "在大图查看器中打开" : undefined}
+                                        disabled={saving}
                                       >
                                         <FallbackImage
                                           src={getBackendImageVariantUrl(apiBaseUrl, image.url, 160)}
@@ -1720,73 +1872,18 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                       </div>
 
                       <div className={`gallery-modal-info ${editing ? "is-editing" : "is-reading"}`}>
-                        <div className="gallery-detail-head">
-                          <div className="gallery-detail-heading">
-                            <h3 id={`gallery-detail-title-${active.id}`} className="gallery-detail-title">{active.name}</h3>
-                            
-                          </div>
-                          <div className="gallery-actions" onClick={(event) => event.stopPropagation()}>
-                            {editing ? (
-                              <>
-                                <Button
-                                  htmlType="button"
-                                  type="default"
-                                  onClick={handleCancelEdit}
-                                  disabled={saving || generatingDescription}
-                                >
-                                  取消
-                                </Button>
-                                <Button
-                                  htmlType="submit"
-                                  type="primary"
-                                  form={editFormId}
-                                  disabled={saving || generatingDescription}
-                                >
-                                  {saving ? "保存中…" : generatingDescription ? "描述生成中…" : "保存"}
-                                </Button>
-                                <Button
-                                  htmlType="button"
-                                  type="text"
-                                  shape="circle"
-                                  onClick={navigateToGallery}
-                                  disabled={editing}
-                                  aria-label={editing ? "编辑中不可返回" : `返回${getGalleryReturnTarget().label}`}
-                                >
-                                  <ArrowLeft size={16} aria-hidden="true" />
-                                </Button>
-                              </>
-                            ) : (
-                              <>
-                                <Button htmlType="button" type="primary" onClick={handleStartEdit}>
-                                  编辑资料
-                                </Button>
-                                <Button
-                                  htmlType="button"
-                                  type="text"
-                                  shape="circle"
-                                  onClick={navigateToGallery}
-                                  disabled={editing}
-                                  aria-label={editing ? "编辑中不可返回" : `返回${getGalleryReturnTarget().label}`}
-                                >
-                                  <ArrowLeft size={16} aria-hidden="true" />
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
                         {editing && editForm ? (
                           <form id={editFormId} className="gallery-edit-form" onSubmit={handleSave}>
                             <div className="gallery-edit-scroll">
                               <div className="form-fields">
                                 <section className="form-section gallery-edit-section gallery-edit-section-basic">
                                   <div className="form-section-head gallery-edit-section-head">
-                                    <h3><Building2 size={15} aria-hidden="true" /> 基本信息</h3>
+                                    <h3><Building2 size={15} aria-hidden="true" /> 文物信息</h3>
                                   </div>
                                   <div className="form-section-body">
                                     <div className="field-row">
                                       <label className="field">
-                                        <span>博物馆名称</span>
+                                        <span>馆藏博物馆</span>
                                         <Input
                                           list="gallery-museum-options"
                                           value={editForm.museumName}
@@ -1847,8 +1944,17 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     </div>
                                     <div className="field-row">
                                       <div className="field gallery-tags-field">
-                                        <span>历史展出（可直接逐条修改；把图片拖到目标展览）</span>
+                                        <span>历史展出</span>
+                                        <small className="gallery-history-help">左右滑动查看完整字段；拖动图片编号可调整所属展览</small>
                                         <div className="gallery-history-editor">
+                                          <div className="gallery-history-columns" aria-hidden="true">
+                                            <span>序号</span>
+                                            <span>展出场馆</span>
+                                            <span>展览名称</span>
+                                            <span>展期</span>
+                                            <span className="gallery-history-columns-images">关联图片</span>
+                                            <span className="gallery-history-columns-delete">删除</span>
+                                          </div>
                                           {groupHistoricalExhibitions(historicalExhibitions).map((group, index) => (
                                             <HistoricalExhibitionRow
                                               key={group.imageIds.slice().sort((left, right) => left - right).join("-")}
@@ -1908,10 +2014,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                             icon={<Plus size={13} aria-hidden="true" />}
                                             onClick={handleAddHistoricalExhibition}
                                           >
-                                            新增展览
-                                            <span className="gallery-history-add-hint">
-                                              （当前图{activeImageIndex + 1}）
-                                            </span>
+                                            为图{activeImageIndex + 1}新增展览
                                           </Button>
                                         </div>
                                       </div>
@@ -1945,26 +2048,47 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                               }
                                             }}
                                             onBlur={() => addTags(tagInput)}
-                                            placeholder="输入后回车或逗号添加…"
+                                            placeholder="输入标签，按回车添加"
                                           />
                                         </div>
                                       </label>
                                     </div>
-                                    <label className="field gallery-edit-description-field">
-                                      <span className="gallery-description-editor-head">
-                                        <span>描述</span>
+                                    <div className="field gallery-edit-description-field">
+                                      <div className="gallery-description-editor-head">
+                                        <label htmlFor="gallery-description-input">文物描述</label>
                                         <Button
                                           htmlType="button"
                                           type="default"
                                           size="small"
+                                          className="gallery-ai-generate-button"
+                                          title={editForm.description.trim() ? "重新生成会替换当前描述，保存前仍可修改" : "根据文物信息生成一段描述"}
                                           onClick={(event) => void handleGenerateDescription(event)}
                                           disabled={generatingDescription || saving}
                                         >
                                           <Sparkles size={13} aria-hidden="true" />
-                                          {generatingDescription ? "AI 生成中…" : "AI 补充描述"}
+                                          {generatingDescription
+                                            ? "正在生成…"
+                                            : editForm.description.trim()
+                                              ? "AI 重新生成"
+                                              : "AI 生成描述"}
                                         </Button>
-                                      </span>
+                                      </div>
+                                      {(generatingDescription || descriptionProgress) ? (
+                                        <div
+                                          className={`gallery-ai-status ${generatingDescription ? "is-generating" : "is-ready"}`}
+                                          role="status"
+                                          aria-live="polite"
+                                        >
+                                          <div className="gallery-ai-steps" aria-hidden="true">
+                                            <span className="is-done">整理资料</span>
+                                            <span className={generatingDescription ? "is-active" : "is-done"}>生成草稿</span>
+                                            <span className={generatingDescription ? "" : "is-active"}>检查并保存</span>
+                                          </div>
+                                          <p>{descriptionProgress}</p>
+                                        </div>
+                                      ) : null}
                                       <Textarea
+                                        id="gallery-description-input"
                                         rows={4}
                                         value={editForm.description}
                                         onChange={(event) =>
@@ -1972,12 +2096,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                             current ? { ...current, description: event.target.value } : current,
                                           )
                                         }
-                                        placeholder="文物简介，可补充或修正…"
+                                        placeholder="填写文物背景、形制、纹饰与相关历史"
                                       />
-                                      {descriptionProgress ? (
-                                        <span className="field-help" aria-live="polite">{descriptionProgress}</span>
-                                      ) : null}
-                                    </label>
+                                    </div>
                                   </div>
                                 </section>
 
@@ -2050,7 +2171,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     >
                                       <summary className="gallery-advanced-summary">
                                         <span>更多拍摄信息</span>
-                                        <span className="gallery-advanced-hint">坐标与曝光参数</span>
+                                        <span className="gallery-advanced-hint">位置、坐标与曝光参数</span>
                                       </summary>
                                       {advancedEditingOpen ? <div className="gallery-advanced-body">
                                         <GalleryLocationPicker
@@ -2298,8 +2419,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                       {imagePreviewOpen && currentImage ? (
                         <GalleryImagePreview
                           open={imagePreviewOpen}
-                          src={toAbsoluteUrl(apiBaseUrl, currentImage.url)}
-                          alt={active.name}
+                          images={active.images.map((image, index) => ({
+                            src: toAbsoluteUrl(apiBaseUrl, image.url),
+                            alt: `${active.name} · 图 ${index + 1}`,
+                            name: getGalleryImageFilename(image.url, index),
+                          }))}
+                          initialIndex={previewImageIndex}
                           onClose={() => setImagePreviewOpen(false)}
                         />
                       ) : null}

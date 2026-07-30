@@ -1,9 +1,7 @@
 @import "./gallery-foundation.css";
 @import "./gallery-media.css";
 @import "./gallery-editor.css";
-@import "./gallery-archive.css";
 @import "./gallery-detail.css";
 @import "./gallery-collection.css";
-@import "./gallery-hierarchy.css";
 @import "./gallery-route.css";
 @import "./gallery-accessibility.css";

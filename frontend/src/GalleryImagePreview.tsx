@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Button, Space } from "antd"
 import {
+  ChevronLeft,
+  ChevronRight,
   FlipHorizontal2,
   FlipVertical2,
   Minus,
@@ -23,8 +25,8 @@ type Size = {
 
 type GalleryImagePreviewProps = {
   open: boolean
-  src: string
-  alt: string
+  images: Array<{ src: string; alt: string; name: string }>
+  initialIndex: number
   onClose: () => void
 }
 
@@ -83,7 +85,7 @@ function clampOffset(offset: Point, maxOffsetX: number, maxOffsetY: number) {
   }
 }
 
-export default function GalleryImagePreview({ open, src, alt, onClose }: GalleryImagePreviewProps) {
+export default function GalleryImagePreview({ open, images, initialIndex, onClose }: GalleryImagePreviewProps) {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{
     pointerId: number
@@ -101,6 +103,10 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
   const [imageSize, setImageSize] = useState<Size>({ width: 0, height: 0 })
   const [viewportSize, setViewportSize] = useState<Size>({ width: 0, height: 0 })
   const [dragging, setDragging] = useState(false)
+  const [currentIndex, setCurrentIndex] = useState(initialIndex)
+  const currentImage = images[currentIndex] ?? images[0]
+  const src = currentImage?.src ?? ""
+  const alt = currentImage?.alt ?? ""
 
   useEffect(() => {
     if (!open) {
@@ -113,6 +119,33 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
     setOffset({ x: 0, y: 0 })
     setImageSize({ width: 0, height: 0 })
   }, [open, src])
+
+  useEffect(() => {
+    if (open) setCurrentIndex(initialIndex)
+  }, [initialIndex, open])
+
+  const selectRelativeImage = useCallback((direction: -1 | 1) => {
+    if (images.length < 2) return
+    setCurrentIndex((current) => (current + direction + images.length) % images.length)
+  }, [images.length])
+
+  useEffect(() => {
+    if (!open) return
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault()
+        onClose()
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault()
+        selectRelativeImage(-1)
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault()
+        selectRelativeImage(1)
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [onClose, open, selectRelativeImage])
 
   useEffect(() => {
     if (!open || !viewportRef.current) {
@@ -291,6 +324,15 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerEnd}
           onPointerCancel={handlePointerEnd}
+          onDoubleClick={() => {
+            setScale((current) => current > 1 ? 1 : 2)
+            setOffset({ x: 0, y: 0 })
+          }}
+          onWheel={(event) => {
+            event.preventDefault()
+            const delta = event.deltaY > 0 ? -0.2 : 0.2
+            setScale((current) => clamp(Number((current + delta).toFixed(2)), 1, 8))
+          }}
         >
           <div className="gallery-image-preview-canvas" style={previewCanvasStyle}>
             <img
@@ -308,7 +350,38 @@ export default function GalleryImagePreview({ open, src, alt, onClose }: Gallery
           </div>
         </div>
 
-        {minimap ? (
+        <div
+          key={src}
+          className="gallery-image-preview-meta"
+          role="status"
+          aria-live="polite"
+        >
+          <strong>{currentImage?.name || alt}</strong>
+          <span>{currentIndex + 1} / {images.length}</span>
+        </div>
+
+        {images.length > 1 ? (
+          <>
+            <button
+              type="button"
+              className="gallery-image-preview-nav is-previous"
+              onClick={() => selectRelativeImage(-1)}
+              aria-label="查看上一张图片"
+            >
+              <ChevronLeft size={22} aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              className="gallery-image-preview-nav is-next"
+              onClick={() => selectRelativeImage(1)}
+              aria-label="查看下一张图片"
+            >
+              <ChevronRight size={22} aria-hidden="true" />
+            </button>
+          </>
+        ) : null}
+
+        {minimap && scale > 1 ? (
           <div className="gallery-image-preview-minimap">
             <div className="gallery-image-preview-minimap-head">
               <span>Minimap</span>

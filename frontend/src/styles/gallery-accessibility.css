@@ -2,15 +2,15 @@
    former dialog's two-pane composition while participating in normal page flow. */
 .gallery-detail-page.gallery-modal-body {
   width: 100%;
-  height: calc(100dvh - 104px);
-  min-height: 640px;
+  height: 100%;
+  min-height: 0;
   margin: 0;
   box-shadow: none;
 }
 
 @media (max-width: 680px) {
   .gallery-detail-page.gallery-modal-body {
-    height: calc(100dvh - 72px);
+    height: auto;
     min-height: 0;
   }
 }
