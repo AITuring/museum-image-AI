@@ -1,3 +1,4 @@
+import { useCallback } from "react"
 import { assertWrittenExif, changedParts, toNullableNumber } from "./exifFormDomain"
 import { cloneFormState } from "./exifWorkbenchFormState"
 import { confirmPreviouslySubmittedItem, confirmSubmittedSourceHash, postFormDataWithProgress, waitForRetry } from "./exifSubmissionRecovery"
@@ -17,7 +18,7 @@ type SubmitOptions = {
   responseErrorMessage: (response: Response, prefix?: string) => Promise<string>
 }
 
-export function createExifSubmitOne({
+export function useExifSubmitOne({
   apiBaseUrl,
   directoryHandle,
   itemsRef,
@@ -27,7 +28,7 @@ export function createExifSubmitOne({
   fetchJson,
   responseErrorMessage,
 }: SubmitOptions) {
-  return async function submitOne(itemId: string): Promise<boolean> {
+  return useCallback(async (itemId: string): Promise<boolean> => {
       // Read the latest form snapshot at click time. Filename parsing and other
       // async updates must never cause a stale render closure to submit older
       // name or excavation values after the operator has corrected them.
@@ -292,5 +293,5 @@ export function createExifSubmitOne({
         }))
         return false
       }
-  }
+  }, [apiBaseUrl, clearHistory, directoryHandle, fetchJson, itemsRef, responseErrorMessage, setNotice, updateItem])
 }

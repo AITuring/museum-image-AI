@@ -1,18 +1,181 @@
-import { useEffect } from "react"
-import { loadMuseumSuggestions, lookupExistingArtifactCandidates, resolveMuseum } from "../lib/exifArtifactLookup"
-import { applyFilenameParseWithoutOverwritingEdits, createExifHistorySnapshot, type ExifHistorySnapshot } from "../lib/exifWorkbenchFormState"
-import { artifactReviewIdentityKey } from "../lib/exifArtifactLookup"
-import type { ExifWorkbenchItem, ExistingArtifact, MuseumOption, ParsedArtifactName } from "../components/exif/types"
+import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react"
+import {
+  artifactReviewIdentityKey,
+  lookupExistingArtifactCandidates,
+  parseArtifactName,
+  resolveMuseum,
+} from "../lib/exifArtifactLookup"
+import {
+  applyFilenameParseWithoutOverwritingEdits,
+  createExifHistorySnapshot,
+  type ExifHistorySnapshot,
+} from "../lib/exifWorkbenchFormState"
+import type { ExifWorkbenchItem, MuseumOption } from "../components/exif/types"
 
-type FetchJson = <T>(input: string, init?: RequestInit) => Promise<T>
-type Options = { apiBaseUrl: string; ready: boolean; items: ExifWorkbenchItem[]; itemsRef: { current: ExifWorkbenchItem[] }; selectedItem: ExifWorkbenchItem | null; selectedId: string | null; sharedForm: ExifWorkbenchItem["form"]; showMuseum: boolean; showLocation: boolean; showArtifact: boolean; sourceId: string; availableTargets: ExifWorkbenchItem[]; lookupRef: { current: Set<string> }; filenameHistory: { current: Map<string, string> }; setItems: React.Dispatch<React.SetStateAction<ExifWorkbenchItem[]>>; setSourceId: React.Dispatch<React.SetStateAction<string>>; setTargetIds: React.Dispatch<React.SetStateAction<string[]>>; setMuseumSuggestions: React.Dispatch<React.SetStateAction<MuseumOption[]>>; setLocationSuggestions: React.Dispatch<React.SetStateAction<MuseumOption[]>>; setArtifactResults: React.Dispatch<React.SetStateAction<ExistingArtifact[]>>; setReviewIds: React.Dispatch<React.SetStateAction<string[]>>; setParsing: React.Dispatch<React.SetStateAction<boolean>>; updateItem: (id: string, updater: (item: ExifWorkbenchItem) => ExifWorkbenchItem) => void; updateAfter: (id: string, snapshot: ExifHistorySnapshot) => void; revokePreview: (url: string) => void; fetchJson: FetchJson }
-export function useExifEditorEffects(o: Options) {
-  useEffect(() => { if (!o.ready) return; const target = o.items.find((item) => item.existingArtifactId == null && (item.existingArtifactCandidates?.length ?? 0) === 0 && Boolean(artifactReviewIdentityKey(item.form)) && item.existingArtifactReviewKey !== artifactReviewIdentityKey(item.form)); if (!target) return; const identity = artifactReviewIdentityKey(target.form); const key = `${target.id}:${identity}`; if (o.lookupRef.current.has(key)) return; o.lookupRef.current.add(key); o.setItems((current) => current.map((item) => item.id === target.id ? { ...item, existingArtifactReviewKey: identity } : item)); void lookupExistingArtifactCandidates(o.apiBaseUrl, target.form).then((matches) => { if (matches.length === 0) return; o.setItems((current) => current.map((item) => item.id === target.id ? { ...item, existingArtifactCandidates: matches, descriptionMeta: `发现 ${matches.length} 件可能对应的已入库文物，请确认后填入。`, submitMessage: "发现可能对应的已入库文物，请先选择是否复用。" } : item)); o.setReviewIds((current) => current.includes(target.id) ? current : [...current, target.id]) }).finally(() => o.lookupRef.current.delete(key)) }, [o.apiBaseUrl, o.ready, o.items])
-  useEffect(() => { if (!o.sourceId || !o.items.some((item) => item.id === o.sourceId)) o.setSourceId(o.items[0]?.id ?? "") }, [o.items, o.sourceId])
-  useEffect(() => { const ids = new Set(o.availableTargets.map((item) => item.id)); o.setTargetIds((current) => current.filter((id) => ids.has(id))) }, [o.availableTargets])
-  useEffect(() => () => { o.itemsRef.current.forEach((item) => o.revokePreview(item.previewUrl)) }, [])
-  useEffect(() => { if (!o.selectedItem || !o.showMuseum) return; const timer = window.setTimeout(() => void loadMuseumSuggestions(o.apiBaseUrl, o.selectedItem!.form.museumName.trim(), o.setMuseumSuggestions), 180); return () => window.clearTimeout(timer) }, [o.apiBaseUrl, o.selectedItem, o.showMuseum])
-  useEffect(() => { if (!o.selectedItem || !o.showLocation) return; const timer = window.setTimeout(() => void loadMuseumSuggestions(o.apiBaseUrl, o.selectedItem!.form.displayLocationName.trim(), o.setLocationSuggestions), 180); return () => window.clearTimeout(timer) }, [o.apiBaseUrl, o.selectedItem, o.showLocation])
-  useEffect(() => { const query = o.selectedItem?.form.name.trim() ?? ""; if (!o.showArtifact || query.length < 2) { o.setArtifactResults([]); return }; let cancelled = false; const timer = window.setTimeout(() => void o.fetchJson<ExistingArtifact>(`${o.apiBaseUrl}/api/artifacts?${new URLSearchParams({ q: query, limit: "8" }).toString()}`).then((results) => { if (!cancelled) o.setArtifactResults(results as unknown as ExistingArtifact[]) }).catch(() => { if (!cancelled) o.setArtifactResults([]) }), 180); return () => { cancelled = true; window.clearTimeout(timer) } }, [o.apiBaseUrl, o.selectedItem?.form.name, o.showArtifact])
-  useEffect(() => { const item = o.selectedItem; if (!item?.fileName.trim() || item.parsedName?.original_name === item.fileName) return; let cancelled = false; const timer = window.setTimeout(async () => { o.setParsing(true); try { const parsed = await o.fetchJson<ParsedArtifactName>(`${o.apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: item.fileName }).toString()}`); if (cancelled) return; let museum: MuseumOption | null = null; if (parsed.museum_name) try { museum = await resolveMuseum(o.apiBaseUrl, parsed.museum_name) } catch {} if (cancelled) return; o.updateItem(item.id, (current) => ({ ...current, parsedName: parsed, form: { ...applyFilenameParseWithoutOverwritingEdits(current.form, current.parsedName, parsed), latitude: current.form.latitude || museum?.latitude?.toString() || "", longitude: current.form.longitude || museum?.longitude?.toString() || "" } })); const operationId = o.filenameHistory.current.get(item.id); if (operationId) o.updateAfter(operationId, createExifHistorySnapshot(o.itemsRef.current, o.selectedId, o.sharedForm)) } finally { if (!cancelled) o.setParsing(false) } }, 280); return () => { cancelled = true; window.clearTimeout(timer) } }, [o.apiBaseUrl, o.selectedId, o.selectedItem?.fileName, o.sharedForm, o.updateAfter])
+type Options = {
+  apiBaseUrl: string
+  ready: boolean
+  items: ExifWorkbenchItem[]
+  itemsRef: MutableRefObject<ExifWorkbenchItem[]>
+  selectedItem: ExifWorkbenchItem | null
+  selectedId: string | null
+  sharedForm: ExifWorkbenchItem["form"]
+  sourceId: string
+  availableTargets: ExifWorkbenchItem[]
+  lookupRef: MutableRefObject<Set<string>>
+  filenameHistory: MutableRefObject<Map<string, string>>
+  setItems: Dispatch<SetStateAction<ExifWorkbenchItem[]>>
+  setSourceId: Dispatch<SetStateAction<string>>
+  setTargetIds: Dispatch<SetStateAction<string[]>>
+  setReviewIds: Dispatch<SetStateAction<string[]>>
+  setParsing: Dispatch<SetStateAction<boolean>>
+  updateItem: (id: string, updater: (item: ExifWorkbenchItem) => ExifWorkbenchItem) => void
+  updateAfter: (id: string, snapshot: ExifHistorySnapshot) => void
+  revokePreview: (url: string) => void
+}
+
+export function useExifEditorEffects({
+  apiBaseUrl,
+  ready,
+  items,
+  itemsRef,
+  selectedItem,
+  selectedId,
+  sharedForm,
+  sourceId,
+  availableTargets,
+  lookupRef,
+  filenameHistory,
+  setItems,
+  setSourceId,
+  setTargetIds,
+  setReviewIds,
+  setParsing,
+  updateItem,
+  updateAfter,
+  revokePreview,
+}: Options) {
+  useEffect(() => {
+    if (!ready) {
+      return
+    }
+
+    const target = items.find((item) => {
+      const identity = artifactReviewIdentityKey(item.form)
+      return (
+        item.existingArtifactId == null
+        && (item.existingArtifactCandidates?.length ?? 0) === 0
+        && Boolean(identity)
+        && item.existingArtifactReviewKey !== identity
+      )
+    })
+    if (!target) {
+      return
+    }
+
+    const identity = artifactReviewIdentityKey(target.form)
+    const lookupKey = `${target.id}:${identity}`
+    if (lookupRef.current.has(lookupKey)) {
+      return
+    }
+
+    lookupRef.current.add(lookupKey)
+    setItems((current) =>
+      current.map((item) => item.id === target.id ? { ...item, existingArtifactReviewKey: identity } : item),
+    )
+
+    void lookupExistingArtifactCandidates(apiBaseUrl, target.form)
+      .then((matches) => {
+        if (matches.length === 0) {
+          return
+        }
+
+        setItems((current) =>
+          current.map((item) => item.id === target.id
+            ? {
+                ...item,
+                existingArtifactCandidates: matches,
+                descriptionMeta: `发现 ${matches.length} 件可能对应的已入库文物，请确认后填入。`,
+                submitMessage: "发现可能对应的已入库文物，请先选择是否复用。",
+              }
+            : item),
+        )
+        setReviewIds((current) => (current.includes(target.id) ? current : [...current, target.id]))
+      })
+      .finally(() => {
+        lookupRef.current.delete(lookupKey)
+      })
+  }, [apiBaseUrl, items, lookupRef, ready, setItems, setReviewIds])
+
+  useEffect(() => {
+    if (!sourceId || !items.some((item) => item.id === sourceId)) {
+      setSourceId(items[0]?.id ?? "")
+    }
+  }, [items, setSourceId, sourceId])
+
+  useEffect(() => {
+    const ids = new Set(availableTargets.map((item) => item.id))
+    setTargetIds((current) => current.filter((id) => ids.has(id)))
+  }, [availableTargets, setTargetIds])
+
+  useEffect(() => {
+    const previewItems = itemsRef.current
+    return () => {
+      previewItems.forEach((item) => revokePreview(item.previewUrl))
+    }
+  }, [itemsRef, revokePreview])
+
+  useEffect(() => {
+    const item = selectedItem
+    if (!item?.fileName.trim() || item.parsedName?.original_name === item.fileName) {
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(async () => {
+      setParsing(true)
+      try {
+        const parsed = await parseArtifactName(apiBaseUrl, item.fileName)
+        if (cancelled) {
+          return
+        }
+
+        let museum: MuseumOption | null = null
+        if (parsed.museum_name) {
+          try {
+            museum = await resolveMuseum(apiBaseUrl, parsed.museum_name)
+          } catch {
+            museum = null
+          }
+        }
+        if (cancelled) {
+          return
+        }
+
+        updateItem(item.id, (current) => ({
+          ...current,
+          parsedName: parsed,
+          form: {
+            ...applyFilenameParseWithoutOverwritingEdits(current.form, current.parsedName, parsed),
+            latitude: current.form.latitude || museum?.latitude?.toString() || "",
+            longitude: current.form.longitude || museum?.longitude?.toString() || "",
+          },
+        }))
+
+        const operationId = filenameHistory.current.get(item.id)
+        if (operationId) {
+          updateAfter(operationId, createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm))
+        }
+      } finally {
+        if (!cancelled) {
+          setParsing(false)
+        }
+      }
+    }, 280)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [apiBaseUrl, filenameHistory, itemsRef, selectedId, selectedItem, setParsing, sharedForm, updateAfter, updateItem])
 }

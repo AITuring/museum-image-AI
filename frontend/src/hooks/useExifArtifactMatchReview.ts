@@ -10,20 +10,17 @@ type Options = {
   reviewIds: string[]
   reviewItem: ExifWorkbenchItem | null
   openPermissionAfterReview: boolean
-  artifactSearchResults: ExistingArtifact[]
   setReviewIds: Dispatch<SetStateAction<string[]>>
   setOpenPermissionAfterReview: Dispatch<SetStateAction<boolean>>
   setUploadPermissionOpen: Dispatch<SetStateAction<boolean>>
   setSelectedId: Dispatch<SetStateAction<string | null>>
-  setShowArtifactSearch: Dispatch<SetStateAction<boolean>>
-  setArtifactSearchResults: Dispatch<SetStateAction<ExistingArtifact[]>>
   recordItemsChange: (change: ItemChange) => unknown
 }
 
 export function useExifArtifactMatchReview({
-  itemsRef, reviewIds, reviewItem, openPermissionAfterReview, artifactSearchResults,
+  itemsRef, reviewIds, reviewItem, openPermissionAfterReview,
   setReviewIds, setOpenPermissionAfterReview, setUploadPermissionOpen, setSelectedId,
-  setShowArtifactSearch, setArtifactSearchResults, recordItemsChange,
+  recordItemsChange,
 }: Options) {
   function beginReview(items: ExifWorkbenchItem[], shouldOpenUploadPermission: boolean) {
     const ids = items.filter((item) => (item.existingArtifactCandidates?.length ?? 0) > 0).map((item) => item.id)
@@ -55,16 +52,14 @@ export function useExifArtifactMatchReview({
     recordItemsChange({ label: "按新文物填写", detail: reviewItem.fileName, nextItems, affected: [reviewItem.fileName] })
     advanceReview()
   }
-  function selectSearchResult(artifactId: number, selectedItem: ExifWorkbenchItem | null) {
+  function selectSearchResult(artifact: ExistingArtifact, selectedItem: ExifWorkbenchItem | null) {
     if (!selectedItem) return
-    const artifact = artifactSearchResults.find((item) => item.id === artifactId); if (!artifact) return
     const nextItems = itemsRef.current.map((item) => {
       if (item.id !== selectedItem.id) return item
       const form = applyExistingArtifactToForm(item.form, artifact)
       return { ...item, form, existingArtifactId: artifact.id, existingArtifactMatch: "手动搜索并选择已有文物。", existingArtifactCandidates: [], existingArtifactReviewKey: artifactReviewIdentityKey(form), descriptionMeta: `已手动关联云端文物 #${artifact.id}`, submitMessage: `已导入“${artifact.name}”的信息；新照片将追加到这件文物。` }
     })
     recordItemsChange({ label: "搜索并复用已有文物", detail: `${selectedItem.fileName} · ${artifact.name}`, nextItems, affected: [selectedItem.fileName] })
-    setShowArtifactSearch(false); setArtifactSearchResults([])
   }
   return { beginReview, selectMatch, rejectMatches, selectSearchResult }
 }

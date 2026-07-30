@@ -1,14 +1,9 @@
 import { useRef } from "react"
 import { App as AntApp } from "antd"
 import "./styles/gallery.css"
-import { toAbsoluteUrl } from "./lib/galleryArtifactIdentity"
-import { formatExhibitionPeriod, isFloorLabel } from "./lib/galleryEditorHelpers"
 import {
-  formatMetaDate,
-  formatMetaValue,
-  getGalleryImageFilename,
+  buildGalleryDetailState,
   getGalleryReturnTarget,
-  getSubjectTags,
 } from "./lib/galleryPageHelpers"
 import GalleryImagePreview from "./GalleryImagePreview"
 import { GalleryBrowseView } from "./components/gallery/GalleryBrowseView"
@@ -50,34 +45,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     noticeApi: message,
   })
 
-  const activeImageIndexById = new Map((pageState.active?.images ?? []).map((image, index) => [image.id, index]))
-
   const active = pageState.active
-  const currentImage = active?.images[pageState.activeImageIndex] ?? active?.images[0] ?? null
   const editFormId = active ? `gallery-edit-form-${active.id}` : ""
-  const subjectTags = active ? getSubjectTags(active.tags) : []
-  const capturedAt = formatMetaDate(currentImage?.captured_at)
-  const uploadedAt = formatMetaDate(currentImage?.uploaded_at)
-  const shutterSpeed = formatMetaValue(currentImage?.shutter_speed)
-  const aperture = formatMetaValue(currentImage?.aperture)
-  const iso = formatMetaValue(currentImage?.iso)
-  const exhibitionLinks =
-    active?.exhibitions.map((exhibition) => {
-      const exhibitionMuseumName = isFloorLabel(exhibition.museum_name) ? active.museum_name : exhibition.museum_name
-      const href = exhibition.catalog_source_id
-        ? `/exhibitions/source/${encodeURIComponent(exhibition.catalog_source_id)}`
-        : exhibition.catalog_exhibition_id
-          ? `/exhibitions/${exhibition.catalog_exhibition_id}`
-          : `/exhibitions/history/${encodeURIComponent(exhibition.name)}?${new URLSearchParams({
-              museum: exhibitionMuseumName,
-            }).toString()}`
-      const label = `${exhibitionMuseumName} · ${exhibition.name} · ${formatExhibitionPeriod(
-        exhibition.start_at,
-        exhibition.end_at,
-        exhibition.name,
-      )}`
-      return { id: exhibition.id, href, label }
-    }) ?? []
+  const detailState = active ? buildGalleryDetailState(active, pageState.activeImageIndex, apiBaseUrl) : null
 
   return (
     <section
@@ -103,8 +73,8 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           <GalleryDetailShell
             apiBaseUrl={apiBaseUrl}
             artifact={active}
-            currentImage={currentImage}
-            currentImageName={currentImage ? getGalleryImageFilename(currentImage.url, pageState.activeImageIndex) : ""}
+            currentImage={detailState?.currentImage ?? null}
+            currentImageName={detailState?.currentImageName ?? ""}
             activeImageIndex={pageState.activeImageIndex}
             editing={editingActions.editing}
             saving={saveArtifact.saving}
@@ -127,7 +97,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                 apiBaseUrl={apiBaseUrl}
                 active={active}
                 activeImageIndex={pageState.activeImageIndex}
-                activeImageIndexById={activeImageIndexById}
+                activeImageIndexById={detailState?.activeImageIndexById ?? new Map()}
                 museumOptions={pageState.museumOptions}
                 eraOptions={pageState.eraOptions}
                 editForm={editingActions.editForm}
@@ -135,15 +105,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                 draggedImageId={editingActions.draggedImageId}
                 advancedEditingOpen={editingActions.advancedEditingOpen}
                 tagInput={editingActions.tagInput}
-                uploadedAt={uploadedAt}
                 saving={saveArtifact.saving}
                 generatingDescription={editingActions.generatingDescription}
                 descriptionProgress={editingActions.descriptionProgress}
                 saveError={editingActions.saveError}
                 onSubmit={saveArtifact.handleSave}
-                onFormPatch={(patch) =>
-                  editingActions.setEditForm((current) => (current ? { ...current, ...patch } : current))
-                }
+                onFormPatch={editingActions.updateEditForm}
                 onChangeHistoricalExhibitions={editingActions.setHistoricalExhibitions}
                 onSetDraggedImage={editingActions.setDraggedImageId}
                 onAdvancedEditingOpenChange={editingActions.setAdvancedEditingOpen}
@@ -156,30 +123,27 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                 onLocationTextChange={editingActions.handleLocationTextChange}
                 onSetActiveImageIndex={pageState.setActiveImageIndex}
                 onNotice={editingActions.setSaveNotice}
+                uploadedAt={detailState?.uploadedAt ?? ""}
               />
             ) : (
               <GalleryDetailReadView
                 artifact={active}
-                currentImage={currentImage}
-                capturedAt={capturedAt}
-                shutterSpeed={shutterSpeed}
-                aperture={aperture}
-                iso={iso}
-                subjectTags={subjectTags}
+                currentImage={detailState?.currentImage ?? null}
+                capturedAt={detailState?.capturedAt ?? ""}
+                shutterSpeed={detailState?.shutterSpeed ?? ""}
+                aperture={detailState?.aperture ?? ""}
+                iso={detailState?.iso ?? ""}
+                subjectTags={detailState?.subjectTags ?? []}
                 saveNotice={editingActions.saveNotice}
-                exhibitionLinks={exhibitionLinks}
+                exhibitionLinks={detailState?.exhibitionLinks ?? []}
               />
             )}
           </GalleryDetailShell>
 
-          {pageState.imagePreviewOpen && currentImage ? (
+          {pageState.imagePreviewOpen && detailState?.currentImage ? (
             <GalleryImagePreview
               open={pageState.imagePreviewOpen}
-              images={active.images.map((image, index) => ({
-                src: toAbsoluteUrl(apiBaseUrl, image.url),
-                alt: `${active.name} · 图 ${index + 1}`,
-                name: getGalleryImageFilename(image.url, index),
-              }))}
+              images={detailState.previewImages}
               initialIndex={pageState.previewImageIndex}
               onClose={() => pageState.setImagePreviewOpen(false)}
             />

@@ -3,7 +3,12 @@ import { formatCapturedAt } from "../lib/exifDisplay"
 import { createFallbackPreviewUrl } from "../lib/exifPreview"
 import { hasMeaningfulFormValue } from "../lib/exifFormDomain"
 import { buildBaseForm, cloneFormState } from "../lib/exifWorkbenchFormState"
-import { artifactReviewIdentityKey, lookupExistingArtifactCandidates, resolveMuseum } from "../lib/exifArtifactLookup"
+import {
+  artifactReviewIdentityKey,
+  lookupExistingArtifactCandidates,
+  parseArtifactName,
+  resolveMuseum,
+} from "../lib/exifArtifactLookup"
 import { writeReuploadHints } from "../lib/exifDraftRecovery"
 import type {
   ExifWorkbenchItem,
@@ -101,9 +106,7 @@ export function useExifFileIntake({
     if (!previewUrl) previewUrl = await createFallbackPreviewUrl(file)
 
     try {
-      parsedName = await fetchJson<ParsedArtifactName>(
-        `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name: file.name }).toString()}`,
-      )
+      parsedName = await parseArtifactName(apiBaseUrl, file.name)
       form = {
         ...form,
         museumName: parsedName.museum_name ?? form.museumName,

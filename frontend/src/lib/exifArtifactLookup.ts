@@ -3,6 +3,7 @@ import type {
   ExistingArtifactMatch,
   FormState,
   MuseumOption,
+  ParsedArtifactName,
   WritableDirectoryHandle,
   WritableFileHandle,
 } from "../components/exif/types"
@@ -65,6 +66,25 @@ export async function resolveMuseum(apiBaseUrl: string, name: string): Promise<M
   return exact ?? items[0] ?? null
 }
 
+export async function parseArtifactName(apiBaseUrl: string, name: string): Promise<ParsedArtifactName> {
+  return fetchJson<ParsedArtifactName>(
+    `${apiBaseUrl}/api/artifacts/parse-name?${new URLSearchParams({ name }).toString()}`,
+  )
+}
+
+export async function searchExistingArtifactsByName(
+  apiBaseUrl: string,
+  name: string,
+  limit = 8,
+): Promise<ExistingArtifact[]> {
+  return fetchJson<ExistingArtifact[]>(
+    `${apiBaseUrl}/api/artifacts?${new URLSearchParams({
+      q: name,
+      limit: String(limit),
+    }).toString()}`,
+  )
+}
+
 export async function lookupExistingArtifact(
   apiBaseUrl: string,
   form: FormState,
@@ -111,8 +131,7 @@ export async function lookupExistingArtifactCandidates(
   })
   const [bestMatch, searchResults] = await Promise.all([
     lookupExistingArtifact(apiBaseUrl, form),
-    fetchJson<ExistingArtifact[]>(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
-      .catch(() => []),
+    fetchJson<ExistingArtifact[]>(`${apiBaseUrl}/api/artifacts?${params.toString()}`).catch(() => []),
   ])
   const normalizedMuseum = compactArtifactIdentity(form.museumName)
   const normalizedEra = compactArtifactIdentity(form.era)

@@ -3,11 +3,9 @@ import { getBackendImageVariantUrl } from "../lib/galleryArtifactIdentity"
 import { normalizeMuseumOptions } from "../lib/galleryEditorHelpers"
 import type { EraOption, MuseumOption } from "../lib/galleryEditorTypes"
 import {
+  fetchGalleryArtifacts,
   getGalleryArtifactIdFromLocation,
   getGalleryReturnTarget,
-  mergeGalleryArtifacts,
-  normalizeArtifact,
-  type RawGalleryArtifact,
 } from "../lib/galleryPageHelpers"
 import type { GalleryArtifact } from "../lib/galleryTypes"
 
@@ -59,12 +57,7 @@ export function useGalleryPageState({ apiBaseUrl, editingRef }: Params) {
       setLoading(true)
       setError(null)
       try {
-        const params = new URLSearchParams()
-        if (q.trim()) params.set("q", q.trim())
-        const res = await fetch(`${apiBaseUrl}/api/artifacts?${params.toString()}`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const payload = (await res.json()) as RawGalleryArtifact[]
-        setItems(mergeGalleryArtifacts(payload.map(normalizeArtifact)))
+        setItems(await fetchGalleryArtifacts(apiBaseUrl, q))
       } catch (err) {
         setError(err instanceof Error ? err.message : "加载失败")
       } finally {

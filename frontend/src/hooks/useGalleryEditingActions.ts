@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { isFloorLabel, normalizeLookupText } from "../lib/galleryEditorHelpers"
-import { buildEditForm, normalizeTags } from "../lib/galleryPageHelpers"
+import { buildEditForm, buildHistoricalExhibitionDrafts, normalizeTags } from "../lib/galleryPageHelpers"
 import type { GalleryEditFormState, HistoricalExhibitionDraft } from "../lib/galleryEditorTypes"
 import type { GalleryArtifact } from "../lib/galleryTypes"
 
@@ -44,6 +43,14 @@ export function useGalleryEditingActions({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
 
+  const clearFeedback = useCallback((options?: { keepNotice?: boolean }) => {
+    setSaveError(null)
+    if (!options?.keepNotice) {
+      setSaveNotice(null)
+    }
+    setDescriptionProgress(null)
+  }, [])
+
   const resetEditingState = useCallback(() => {
     setEditing(false)
     setEditForm(null)
@@ -51,11 +58,22 @@ export function useGalleryEditingActions({
     setDraggedImageId(null)
     setAdvancedEditingOpen(false)
     setTagInput("")
-    setSaveError(null)
-    setSaveNotice(null)
+    clearFeedback()
     setGeneratingDescription(false)
-    setDescriptionProgress(null)
+  }, [clearFeedback])
+
+  const updateEditForm = useCallback((patch: Partial<GalleryEditFormState>) => {
+    setEditForm((current) => (current ? { ...current, ...patch } : current))
   }, [])
+
+  const startEditingSession = useCallback((nextForm: GalleryEditFormState, nextHistory: HistoricalExhibitionDraft[]) => {
+    setEditForm(nextForm)
+    setHistoricalExhibitions(nextHistory)
+    setTagInput("")
+    clearFeedback()
+    setAdvancedEditingOpen(false)
+    setEditing(true)
+  }, [clearFeedback])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -72,42 +90,9 @@ export function useGalleryEditingActions({
         return
       }
       const image = active.images[activeImageIndex] ?? active.images[0] ?? null
-      setEditForm(buildEditForm(active, image))
-      setHistoricalExhibitions(
-        active.images.map((item) => {
-          const sameNameExhibitions = active.exhibitions.filter(
-            (candidate) => normalizeLookupText(candidate.name) === normalizeLookupText(item.exhibition_name),
-          )
-          const exhibition =
-            active.exhibitions.find(
-              (candidate) =>
-                candidate.id === item.exhibition_id ||
-                (normalizeLookupText(candidate.museum_name) === normalizeLookupText(item.capture_museum_name) &&
-                  normalizeLookupText(candidate.name) === normalizeLookupText(item.exhibition_name)),
-            ) ?? (sameNameExhibitions.length === 1 ? sameNameExhibitions[0] : undefined)
-          const exhibitionMuseumName = isFloorLabel(exhibition?.museum_name) ? "" : exhibition?.museum_name ?? ""
-          return {
-            imageId: item.id,
-            artifactId: item.artifact_id ?? active.id,
-            captureMuseumName: isFloorLabel(item.capture_museum_name)
-              ? exhibitionMuseumName || active.museum_name
-              : item.capture_museum_name ?? (exhibitionMuseumName || active.museum_name),
-            exhibitionName: item.exhibition_name ?? "常设",
-            catalogSourceId: item.catalog_exhibition_source_id ?? exhibition?.catalog_source_id ?? "",
-            catalogExhibitionId: item.catalog_exhibition_id ?? exhibition?.catalog_exhibition_id ?? null,
-            startAt: exhibition?.start_at ?? null,
-            endAt: exhibition?.end_at ?? null,
-          }
-        }),
-      )
-      setTagInput("")
-      setSaveError(null)
-      setSaveNotice(null)
-      setDescriptionProgress(null)
-      setAdvancedEditingOpen(false)
-      setEditing(true)
+      startEditingSession(buildEditForm(active, image), buildHistoricalExhibitionDrafts(active))
     },
-    [active, activeImageIndex],
+    [active, activeImageIndex, startEditingSession],
   )
 
   const handleCancelEdit = useCallback(() => {
@@ -115,9 +100,8 @@ export function useGalleryEditingActions({
     setEditForm(null)
     setAdvancedEditingOpen(false)
     setTagInput("")
-    setSaveError(null)
-    setDescriptionProgress(null)
-  }, [])
+    clearFeedback({ keepNotice: true })
+  }, [clearFeedback])
 
   const handleAddHistoricalExhibition = useCallback(() => {
     if (!active) return
@@ -162,9 +146,7 @@ export function useGalleryEditingActions({
         return
       }
       if (!editForm) {
-        setEditForm(targetForm)
-        setTagInput("")
-        setEditing(true)
+        startEditingSession(targetForm, buildHistoricalExhibitionDrafts(active))
       }
 
       setGeneratingDescription(true)
@@ -224,7 +206,7 @@ export function useGalleryEditingActions({
           throw new Error("模型返回的描述为空")
         }
 
-        setEditForm((current) => (current ? { ...current, description: preferred } : current))
+        updateEditForm({ description: preferred })
         setDescriptionProgress(`已由 ${generated.provider} / ${generated.model} 生成，请检查后保存`)
       } catch (err) {
         setSaveError(err instanceof Error ? err.message : "生成描述失败")
@@ -233,7 +215,7 @@ export function useGalleryEditingActions({
         setGeneratingDescription(false)
       }
     },
-    [active, activeImageIndex, apiBaseUrl, editForm, generatingDescription],
+    [active, activeImageIndex, apiBaseUrl, editForm, generatingDescription, startEditingSession, updateEditForm],
   )
 
   const addTags = useCallback((rawValue: string) => {
@@ -265,18 +247,19 @@ export function useGalleryEditingActions({
   }, [])
 
   const handleCoordinateChange = useCallback((next: { latitude: string; longitude: string }) => {
-    setEditForm((current) => (current ? { ...current, latitude: next.latitude, longitude: next.longitude } : current))
-  }, [])
+    updateEditForm({ latitude: next.latitude, longitude: next.longitude })
+  }, [updateEditForm])
 
   const handleLocationTextChange = useCallback((next: string) => {
-    setEditForm((current) => (current ? { ...current, captureLocation: next } : current))
-  }, [])
+    updateEditForm({ captureLocation: next })
+  }, [updateEditForm])
 
   return {
     editing,
     setEditing,
     editForm,
     setEditForm,
+    updateEditForm,
     historicalExhibitions,
     setHistoricalExhibitions,
     draggedImageId,

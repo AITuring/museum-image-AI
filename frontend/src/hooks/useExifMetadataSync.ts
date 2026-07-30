@@ -8,6 +8,7 @@ import {
 import type { MetadataSyncTargetMode } from "../components/exif/MetadataSyncPreview"
 import type { ExifWorkbenchItem, SubmitNotice } from "../components/exif/types"
 import { applySourceMetadata, buildMetadataSyncDiffRows } from "../lib/exifMetadataSync"
+import { replaceWorkbenchItemForm } from "../lib/exifWorkbenchItemMutations"
 
 type MetadataSyncPreset = "default" | "location" | "content" | "all" | "none"
 
@@ -86,10 +87,7 @@ export function useExifMetadataSync({ items, selectedItem, itemsRef, onItemsChan
     if (!source || targets.length === 0) return
     const targetIdSet = new Set(targets.map((item) => item.id))
     const nextItems = itemsRef.current.map((item) => targetIdSet.has(item.id) ? {
-      ...item,
-      form: applySourceMetadata(item.form, source.form, selection),
-      submitState: item.submitState === "submitted" ? "idle" : item.submitState,
-      submitMessage: item.submitState === "submitted" ? null : item.submitMessage,
+      ...replaceWorkbenchItemForm(item, applySourceMetadata(item.form, source.form, selection)),
     } : item)
     onItemsChange({ label: "同步照片信息", detail: `从“${source.fileName}”同步 ${changedCount} 项到 ${targets.length} 张照片`, nextItems, affected: targets.map((item) => item.fileName) })
     setPreviewOpen(false)

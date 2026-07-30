@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import { Card, Input, Tag, Tooltip } from "antd"
 import { FileCheck2 } from "lucide-react"
 import type { FormState } from "./types"
@@ -5,14 +6,19 @@ import type { FormState } from "./types"
 const Textarea = Input.TextArea
 
 type ExifMetadataEditorProps = {
+  itemId: string
   form: FormState
-  tagInput: string
   onChange: (changes: Partial<FormState>) => void
-  onTagInputChange: (value: string) => void
-  onAddTags: (value: string) => void
+  onAddTags: (value: string) => boolean
 }
 
-export function ExifMetadataEditor({ form, tagInput, onChange, onTagInputChange, onAddTags }: ExifMetadataEditorProps) {
+export function ExifMetadataEditor({ itemId, form, onChange, onAddTags }: ExifMetadataEditorProps) {
+  const [tagInput, setTagInput] = useState("")
+
+  useEffect(() => {
+    setTagInput("")
+  }, [itemId])
+
   return <Card
     size="small"
     className="form-section exif-form-card"
@@ -29,9 +35,20 @@ export function ExifMetadataEditor({ form, tagInput, onChange, onTagInputChange,
           <Input
             value={tagInput}
             placeholder="输入后回车或逗号添加"
-            onChange={(event) => onTagInputChange(event.target.value)}
-            onKeyDown={(event) => { if (event.key === "Enter" || event.key === ",") { event.preventDefault(); onAddTags(tagInput) } }}
-            onBlur={() => onAddTags(tagInput)}
+            onChange={(event) => setTagInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === ",") {
+                event.preventDefault()
+                if (onAddTags(tagInput)) {
+                  setTagInput("")
+                }
+              }
+            }}
+            onBlur={() => {
+              if (onAddTags(tagInput)) {
+                setTagInput("")
+              }
+            }}
           />
         </div>
       </label>

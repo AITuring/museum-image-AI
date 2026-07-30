@@ -1,10 +1,5 @@
 import { useCallback, useState, type Dispatch, type SetStateAction } from "react"
-import {
-  mergeGalleryArtifacts,
-  normalizeArtifact,
-  parseOptionalNumber,
-  type RawGalleryArtifact,
-} from "../lib/galleryPageHelpers"
+import { fetchGalleryArtifacts, mergeGalleryArtifacts, parseOptionalNumber } from "../lib/galleryPageHelpers"
 import type { GalleryEditFormState, HistoricalExhibitionDraft } from "../lib/galleryEditorTypes"
 import type { GalleryArtifact, GalleryImage } from "../lib/galleryTypes"
 
@@ -143,12 +138,7 @@ export function useGallerySaveArtifact({
         }
 
         await response.json()
-        const refreshParams = new URLSearchParams({ q: editForm.name.trim() })
-        const refreshResponse = await fetch(`${apiBaseUrl}/api/artifacts?${refreshParams.toString()}`)
-        if (!refreshResponse.ok) throw new Error("修改已保存，但刷新详情失败")
-        const refreshedItems = mergeGalleryArtifacts(
-          ((await refreshResponse.json()) as RawGalleryArtifact[]).map(normalizeArtifact),
-        )
+        const refreshedItems = await fetchGalleryArtifacts(apiBaseUrl, editForm.name.trim())
         const refreshedActive = refreshedItems.find((item) =>
           item.images.some((image) => active.images.some((previous) => previous.id === image.id)),
         )

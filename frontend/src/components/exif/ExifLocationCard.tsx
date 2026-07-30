@@ -1,16 +1,16 @@
+import { useEffect, useState } from "react"
 import { AutoComplete, Card, Input, Tooltip } from "antd"
 import { MapPin } from "lucide-react"
+import { loadMuseumSuggestions } from "../../lib/exifArtifactLookup"
 import { ExhibitionRecommendationPicker } from "./ExhibitionRecommendationPicker"
 import { GpsMapPicker } from "./GpsMapPicker"
 import type { ExhibitionRecommendation, FormState, MuseumOption } from "./types"
 
 type ExifLocationCardProps = {
   apiBaseUrl: string
+  itemId: string
   form: FormState
-  locationSuggestions: MuseumOption[]
-  showLocationSuggestions: boolean
   onChange: (changes: Partial<FormState>) => void
-  onLocationSuggestionsOpenChange: (open: boolean) => void
   onLocate: (value: string, museum?: MuseumOption) => void
 }
 
@@ -18,13 +18,31 @@ const SectionTitle = () => <Tooltip title="填写展出地点、展览名称和�
 
 export function ExifLocationCard({
   apiBaseUrl,
+  itemId,
   form,
-  locationSuggestions,
-  showLocationSuggestions,
   onChange,
-  onLocationSuggestionsOpenChange,
   onLocate,
 }: ExifLocationCardProps) {
+  const [locationSuggestions, setLocationSuggestions] = useState<MuseumOption[]>([])
+  const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
+
+  useEffect(() => {
+    setShowLocationSuggestions(false)
+    setLocationSuggestions([])
+  }, [itemId])
+
+  useEffect(() => {
+    if (!showLocationSuggestions) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      void loadMuseumSuggestions(apiBaseUrl, form.displayLocationName.trim(), setLocationSuggestions)
+    }, 180)
+
+    return () => window.clearTimeout(timer)
+  }, [apiBaseUrl, form.displayLocationName, showLocationSuggestions])
+
   const selectRecommendation = (item: ExhibitionRecommendation | null) => onChange(item ? {
     exhibitionName: item.title,
     catalogExhibitionId: item.id,
@@ -49,18 +67,18 @@ export function ExifLocationCard({
           filterOption={false}
           open={showLocationSuggestions && locationSuggestions.length > 0}
           placeholder="例如：山东省博物馆"
-          onFocus={() => onLocationSuggestionsOpenChange(true)}
-          onOpenChange={onLocationSuggestionsOpenChange}
+          onFocus={() => setShowLocationSuggestions(true)}
+          onOpenChange={setShowLocationSuggestions}
           onKeyDown={(event) => {
             if (event.key !== "Enter" || event.nativeEvent.isComposing) return
             event.preventDefault()
             event.stopPropagation()
             onLocate(form.displayLocationName)
           }}
-          onChange={(value) => { onChange({ displayLocationName: value }); onLocationSuggestionsOpenChange(true) }}
+          onChange={(value) => { onChange({ displayLocationName: value }); setShowLocationSuggestions(true) }}
           onSelect={(value) => {
             const museum = locationSuggestions.find((option) => option.name === value)
-            onLocationSuggestionsOpenChange(false)
+            setShowLocationSuggestions(false)
             onLocate(value, museum)
           }}
         />

@@ -1,12 +1,39 @@
-import { compactArtifactNameForMatch, normalizeIdentityText } from "./galleryArtifactIdentity"
+import { compactArtifactNameForMatch, normalizeIdentityText, toAbsoluteUrl } from "./galleryArtifactIdentity"
 import { isFloorLabel } from "./galleryEditorHelpers"
-import type { GalleryEditFormState } from "./galleryEditorTypes"
+import { formatExhibitionPeriod, normalizeLookupText } from "./galleryEditorHelpers"
+import type { GalleryEditFormState, HistoricalExhibitionDraft } from "./galleryEditorTypes"
 import type { GalleryArtifact, GalleryImage } from "./galleryTypes"
 
 export type RawGalleryArtifact = Omit<GalleryArtifact, "tags" | "images" | "exhibitions"> & {
   tags?: string[]
   images?: GalleryImage[]
   exhibitions?: GalleryArtifact["exhibitions"]
+}
+
+export type GalleryExhibitionLink = {
+  id: number
+  href: string
+  label: string
+}
+
+export type GalleryPreviewImage = {
+  src: string
+  alt: string
+  name: string
+}
+
+export type GalleryDetailState = {
+  activeImageIndexById: Map<number, number>
+  currentImage: GalleryImage | null
+  currentImageName: string
+  previewImages: GalleryPreviewImage[]
+  subjectTags: string[]
+  capturedAt: string
+  uploadedAt: string
+  shutterSpeed: string
+  aperture: string
+  iso: string
+  exhibitionLinks: GalleryExhibitionLink[]
 }
 
 export function getGalleryImageFilename(url: string, index: number) {
@@ -95,6 +122,34 @@ export function mergeGalleryArtifacts(items: GalleryArtifact[]) {
   return merged
 }
 
+async function readJson<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`
+    try {
+      const payload = (await response.json()) as { detail?: string }
+      if (payload.detail) {
+        message = payload.detail
+      }
+    } catch {
+      // Ignore non-JSON error bodies.
+    }
+    throw new Error(message)
+  }
+  return (await response.json()) as T
+}
+
+export async function fetchGalleryArtifacts(apiBaseUrl: string, query = "") {
+  const params = new URLSearchParams()
+  if (query.trim()) {
+    params.set("q", query.trim())
+  }
+  const queryString = params.toString()
+  const payload = await readJson<RawGalleryArtifact[]>(
+    await fetch(`${apiBaseUrl}/api/artifacts${queryString ? `?${queryString}` : ""}`),
+  )
+  return mergeGalleryArtifacts(payload.map(normalizeArtifact))
+}
+
 export function normalizeArtifact(item: RawGalleryArtifact): GalleryArtifact {
   return {
     ...item,
@@ -131,6 +186,83 @@ export function formatMetaDate(value?: string | null) {
 export function formatMetaValue(value?: string | number | null) {
   if (value === null || value === undefined) return ""
   return String(value)
+}
+
+export function buildHistoricalExhibitionDrafts(artifact: GalleryArtifact): HistoricalExhibitionDraft[] {
+  return artifact.images.map((image) => {
+    const sameNameExhibitions = artifact.exhibitions.filter(
+      (candidate) => normalizeLookupText(candidate.name) === normalizeLookupText(image.exhibition_name),
+    )
+    const exhibition =
+      artifact.exhibitions.find(
+        (candidate) =>
+          candidate.id === image.exhibition_id ||
+          (normalizeLookupText(candidate.museum_name) === normalizeLookupText(image.capture_museum_name) &&
+            normalizeLookupText(candidate.name) === normalizeLookupText(image.exhibition_name)),
+      ) ?? (sameNameExhibitions.length === 1 ? sameNameExhibitions[0] : undefined)
+    const exhibitionMuseumName = isFloorLabel(exhibition?.museum_name) ? "" : exhibition?.museum_name ?? ""
+
+    return {
+      imageId: image.id,
+      artifactId: image.artifact_id ?? artifact.id,
+      captureMuseumName: isFloorLabel(image.capture_museum_name)
+        ? exhibitionMuseumName || artifact.museum_name
+        : image.capture_museum_name ?? (exhibitionMuseumName || artifact.museum_name),
+      exhibitionName: image.exhibition_name ?? "常设",
+      catalogSourceId: image.catalog_exhibition_source_id ?? exhibition?.catalog_source_id ?? "",
+      catalogExhibitionId: image.catalog_exhibition_id ?? exhibition?.catalog_exhibition_id ?? null,
+      startAt: exhibition?.start_at ?? null,
+      endAt: exhibition?.end_at ?? null,
+    }
+  })
+}
+
+function buildExhibitionLinks(artifact: GalleryArtifact): GalleryExhibitionLink[] {
+  return artifact.exhibitions.map((exhibition) => {
+    const exhibitionMuseumName = isFloorLabel(exhibition.museum_name) ? artifact.museum_name : exhibition.museum_name
+    const href = exhibition.catalog_source_id
+      ? `/exhibitions/source/${encodeURIComponent(exhibition.catalog_source_id)}`
+      : exhibition.catalog_exhibition_id
+        ? `/exhibitions/${exhibition.catalog_exhibition_id}`
+        : `/exhibitions/history/${encodeURIComponent(exhibition.name)}?${new URLSearchParams({
+            museum: exhibitionMuseumName,
+          }).toString()}`
+    return {
+      id: exhibition.id,
+      href,
+      label: `${exhibitionMuseumName} · ${exhibition.name} · ${formatExhibitionPeriod(
+        exhibition.start_at,
+        exhibition.end_at,
+        exhibition.name,
+      )}`,
+    }
+  })
+}
+
+export function buildGalleryDetailState(
+  artifact: GalleryArtifact,
+  activeImageIndex: number,
+  apiBaseUrl: string,
+): GalleryDetailState {
+  const currentImage = artifact.images[activeImageIndex] ?? artifact.images[0] ?? null
+
+  return {
+    activeImageIndexById: new Map(artifact.images.map((image, index) => [image.id, index])),
+    currentImage,
+    currentImageName: currentImage ? getGalleryImageFilename(currentImage.url, activeImageIndex) : "",
+    previewImages: artifact.images.map((image, index) => ({
+      src: toAbsoluteUrl(apiBaseUrl, image.url),
+      alt: `${artifact.name} · 图 ${index + 1}`,
+      name: getGalleryImageFilename(image.url, index),
+    })),
+    subjectTags: getSubjectTags(artifact.tags),
+    capturedAt: formatMetaDate(currentImage?.captured_at),
+    uploadedAt: formatMetaDate(currentImage?.uploaded_at),
+    shutterSpeed: formatMetaValue(currentImage?.shutter_speed),
+    aperture: formatMetaValue(currentImage?.aperture),
+    iso: formatMetaValue(currentImage?.iso),
+    exhibitionLinks: buildExhibitionLinks(artifact),
+  }
 }
 
 export function buildEditForm(artifact: GalleryArtifact, image?: GalleryImage | null): GalleryEditFormState {

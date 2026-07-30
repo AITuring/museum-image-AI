@@ -1,6 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react"
 import { applySharedForm, ensureCandidates, ensureStringList, fileBaseName, normalizeVerifiedClaims, uniqueTags } from "../lib/exifFormDomain"
 import { cloneFormState } from "../lib/exifWorkbenchFormState"
+import { patchWorkbenchItemForm, replaceWorkbenchItemForm } from "../lib/exifWorkbenchItemMutations"
 import type { DescriptionCandidate, ExifWorkbenchItem, FormState, GeneratedDescription, LiveProviderState, SubmitNotice, VerifiedClaim } from "../components/exif/types"
 
 type ItemChange = { label: string; detail: string; nextItems: ExifWorkbenchItem[]; affected: string[] }
@@ -71,11 +72,25 @@ export function useExifDescriptionOperations({
       const meta = `${isSharedTarget ? "共享描述采用" : "默认采用"}：${generated.provider} / ${generated.model}${generated.research_id ? ` · 研究 ${generated.research_id.slice(0, 8)}` : ""}`
       if (isSharedTarget) {
         const nextSharedForm = { ...cloneFormState(resolvedForm), description, tags: [...resolvedForm.tags] }
-        const nextItems = itemsRef.current.map((item) => ({ ...item, form: applySharedForm(item.form, nextSharedForm), candidates, unavailableProviders, descriptionMeta: meta, verificationDecisions: {}, submitState: item.submitState === "submitted" ? "idle" : item.submitState, submitMessage: item.submitState === "submitted" ? null : item.submitMessage }))
+        const nextItems = itemsRef.current.map((item) => ({
+          ...replaceWorkbenchItemForm(item, applySharedForm(item.form, nextSharedForm)),
+          candidates,
+          unavailableProviders,
+          descriptionMeta: meta,
+          verificationDecisions: {},
+        }))
         recordSharedDescription(nextItems, nextSharedForm, generated)
         setNotice({ type: "success", text: `已根据共享字段并行请求千问和豆包，并把完整描述应用到 ${nextItems.length} 张图片` })
       } else {
-        const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? { ...item, form: { ...item.form, description, tags: [...item.form.tags] }, candidates, unavailableProviders, descriptionMeta: meta, verificationDecisions: {} } : item)
+        const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id
+          ? {
+              ...patchWorkbenchItemForm(item, { description, tags: [...item.form.tags] }),
+              candidates,
+              unavailableProviders,
+              descriptionMeta: meta,
+              verificationDecisions: {},
+            }
+          : item)
         recordItemsChange({ label: "生成文物描述", detail: `${selectedItem.fileName} · ${generated.provider} / ${generated.model}`, nextItems, affected: [selectedItem.fileName] })
         setNotice({ type: "success", text: "已根据名称、年代、博物馆与出土地点生成完整描述" })
       }
@@ -85,7 +100,12 @@ export function useExifDescriptionOperations({
 
   function applyCandidate(candidate: DescriptionCandidate) {
     if (!selectedItem || candidate.status !== "success") return
-    const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id ? { ...item, form: { ...item.form, description: candidate.description, tags: [...item.form.tags] }, descriptionMeta: `当前采用：${candidate.provider} / ${candidate.model}` } : item)
+    const nextItems = itemsRef.current.map((item) => item.id === selectedItem.id
+      ? {
+          ...patchWorkbenchItemForm(item, { description: candidate.description, tags: [...item.form.tags] }),
+          descriptionMeta: `当前采用：${candidate.provider} / ${candidate.model}`,
+        }
+      : item)
     recordItemsChange({ label: "切换描述版本", detail: `${selectedItem.fileName} · ${candidate.provider} / ${candidate.model}`, nextItems, affected: [selectedItem.fileName] })
     setNotice({ type: "success", text: `已采用 ${candidate.provider} 的描述；标签仍可跨模型单独点选` })
   }
