@@ -1286,6 +1286,23 @@ def catalog_museum_query_name(museum_name: str) -> str:
     return museum_name
 
 
+def canonical_catalog_museum_name(
+    museum_name: str | None,
+    address: str | None = None,
+) -> str | None:
+    """Resolve legacy Shanghai Museum catalog labels to a physical venue."""
+    normalized_name = normalize_museum_directory_key(museum_name)
+    if normalized_name == normalize_museum_directory_key("上海博物馆"):
+        return "上海博物馆人民广场馆"
+    if re.fullmatch(r"[负-]?\d+楼", (museum_name or "").strip()):
+        normalized_address = normalize_museum_directory_key(address)
+        if normalize_museum_directory_key("世纪大道1952号") in normalized_address:
+            return "上海博物馆东馆"
+        if normalize_museum_directory_key("人民大道201号") in normalized_address:
+            return "上海博物馆人民广场馆"
+    return optional_text(museum_name)
+
+
 def museum_name_matches_catalog_museum(
     museum_name: str | None,
     catalog_museum_name: str | None,
@@ -1459,7 +1476,7 @@ def resolve_capture_context(
                 catalog_item.id if catalog_item is not None else catalog_exhibition_id
             ),
         )
-        if capture_museum is not None
+        if capture_museum is not None and optional_text(resolved_exhibition_name)
         else None
     )
     return capture_museum, exhibition
@@ -2591,16 +2608,25 @@ def enrich_artifact_catalog_links(items: list[ArtifactRead]) -> list[ArtifactRea
         for exhibition in item.exhibitions
         if exhibition.name.strip() and not exhibition.catalog_source_id
     }
-    if not missing_names:
+    catalog_source_ids = {
+        exhibition.catalog_source_id
+        for item in items
+        for exhibition in item.exhibitions
+        if exhibition.catalog_source_id
+    }
+    if not missing_names and not catalog_source_ids:
         return items
 
     try:
+        catalog_filters = []
+        if missing_names:
+            catalog_filters.append(CatalogExhibition.title.in_(sorted(missing_names)))
+        if catalog_source_ids:
+            catalog_filters.append(CatalogExhibition.source_id.in_(sorted(catalog_source_ids)))
         with ExhibitionSessionLocal() as catalog_db:
             catalog_items = list(
                 catalog_db.scalars(
-                    select(CatalogExhibition).where(
-                        CatalogExhibition.title.in_(sorted(missing_names))
-                    )
+                    select(CatalogExhibition).where(or_(*catalog_filters))
                 )
             )
     except Exception:
@@ -2617,41 +2643,71 @@ def enrich_artifact_catalog_links(items: list[ArtifactRead]) -> list[ArtifactRea
     for item in items:
         enriched_exhibitions: list[ExhibitionRead] = []
         for exhibition in item.exhibitions:
-            if exhibition.catalog_source_id:
-                enriched_exhibitions.append(exhibition)
-                continue
-            candidates = by_title.get(exhibition.name.strip(), [])
-            if not candidates:
+            matched = (
+                by_source_id.get(exhibition.catalog_source_id)
+                if exhibition.catalog_source_id
+                else None
+            )
+            if matched is None:
+                candidates = by_title.get(exhibition.name.strip(), [])
+                if candidates:
+                    def candidate_score(candidate: CatalogExhibition) -> tuple[int, int]:
+                        score = 0
+                        museum_name = exhibition.museum_name.casefold()
+                        if candidate.museum_name and (
+                            museum_name in candidate.museum_name.casefold()
+                            or candidate.museum_name.casefold() in museum_name
+                        ):
+                            score += 40
+                        if candidate.venue and (
+                            museum_name in candidate.venue.casefold()
+                            or candidate.venue.casefold() in museum_name
+                        ):
+                            score += 20
+                        if exhibition.start_at and candidate.start_date:
+                            score += max(
+                                0,
+                                10
+                                - abs((exhibition.start_at.date() - candidate.start_date).days),
+                            )
+                        return score, -candidate.id
+
+                    matched = max(candidates, key=candidate_score)
+
+            if matched is None:
                 enriched_exhibitions.append(exhibition)
                 continue
 
-            def candidate_score(candidate: CatalogExhibition) -> tuple[int, int]:
-                score = 0
-                museum_name = exhibition.museum_name.casefold()
-                if candidate.museum_name and (
-                    museum_name in candidate.museum_name.casefold()
-                    or candidate.museum_name.casefold() in museum_name
-                ):
-                    score += 40
-                if candidate.venue and (
-                    museum_name in candidate.venue.casefold()
-                    or candidate.venue.casefold() in museum_name
-                ):
-                    score += 20
-                if exhibition.start_at and candidate.start_date:
-                    score += max(
-                        0,
-                        10
-                        - abs((exhibition.start_at.date() - candidate.start_date).days),
-                    )
-                return score, -candidate.id
-
-            matched = max(candidates, key=candidate_score)
+            explicit_branch_names = {
+                normalize_museum_directory_key("上海博物馆东馆"),
+                normalize_museum_directory_key("上海博物馆人民广场馆"),
+            }
+            canonical_museum_name = canonical_catalog_museum_name(
+                matched.museum_name,
+                matched.address,
+            )
+            resolved_museum_name = (
+                exhibition.museum_name
+                if normalize_museum_directory_key(exhibition.museum_name)
+                in explicit_branch_names
+                else canonical_museum_name or exhibition.museum_name
+            )
             enriched_exhibitions.append(
                 exhibition.model_copy(
                     update={
+                        "museum_name": resolved_museum_name,
                         "catalog_source_id": matched.source_id,
                         "catalog_exhibition_id": matched.id,
+                        "start_at": exhibition.start_at or (
+                            datetime.combine(matched.start_date, time.min, tzinfo=timezone.utc)
+                            if matched.start_date
+                            else None
+                        ),
+                        "end_at": exhibition.end_at or (
+                            datetime.combine(matched.end_date, time.max, tzinfo=timezone.utc)
+                            if matched.end_date
+                            else None
+                        ),
                     }
                 )
             )

@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 from sqlalchemy import create_engine
@@ -10,6 +10,7 @@ from app.db import Base
 from app.exhibition_db import ExhibitionCatalogBase
 from app.exhibition_models import CatalogExhibition
 from app.main import (
+    canonical_catalog_museum_name,
     enrich_artifact_catalog_links,
     ensure_exhibition,
     ensure_museum,
@@ -53,6 +54,8 @@ class ExhibitionLinkingTests(unittest.TestCase):
                     museum_name="上海博物馆",
                     venue="第一展览厅",
                     is_permanent=False,
+                    start_date=date(2024, 11, 13),
+                    end_date=date(2025, 2, 16),
                 )
             )
             catalog_db.commit()
@@ -70,6 +73,19 @@ class ExhibitionLinkingTests(unittest.TestCase):
         self.assertIsNotNone(exhibition)
         self.assertEqual(museum.name, "上海博物馆东馆")
         self.assertEqual(exhibition.museum_name, "上海博物馆东馆")
+
+    def test_capture_museum_without_exhibition_detaches_exhibition(self) -> None:
+        museum, exhibition = resolve_capture_context(
+            self.artifact_db,
+            "上海博物馆",
+            None,
+            None,
+            None,
+        )
+
+        self.assertIsNotNone(museum)
+        self.assertEqual(museum.name, "上海博物馆")
+        self.assertIsNone(exhibition)
 
     def test_catalog_selection_reuses_normalized_manual_exhibition(self) -> None:
         museum = ensure_museum(self.artifact_db, "上海博物馆")
@@ -93,6 +109,20 @@ class ExhibitionLinkingTests(unittest.TestCase):
         self.assertEqual(from_artifact_provenance.id, canonical.id)
         self.assertEqual(from_artifact_provenance.name, "河北博物院")
 
+    def test_legacy_shanghai_catalog_labels_resolve_to_physical_venues(self) -> None:
+        self.assertEqual(
+            canonical_catalog_museum_name("上海博物馆", "上海市黄浦区人民大道201号"),
+            "上海博物馆人民广场馆",
+        )
+        self.assertEqual(
+            canonical_catalog_museum_name("3楼", "上海市黄浦区人民大道201号"),
+            "上海博物馆人民广场馆",
+        )
+        self.assertEqual(
+            canonical_catalog_museum_name("2楼", "上海市浦东新区世纪大道1952号"),
+            "上海博物馆东馆",
+        )
+
     def test_gallery_read_merges_old_venue_and_museum_duplicates(self) -> None:
         with self.catalog_session_factory() as catalog_db:
             catalog_db.add(
@@ -106,6 +136,8 @@ class ExhibitionLinkingTests(unittest.TestCase):
                     museum_name="上海博物馆",
                     venue="第一展览厅",
                     is_permanent=False,
+                    start_date=date(2024, 11, 13),
+                    end_date=date(2025, 2, 16),
                 )
             )
             catalog_db.commit()
@@ -139,11 +171,66 @@ class ExhibitionLinkingTests(unittest.TestCase):
             enriched = enrich_artifact_catalog_links([artifact])
 
         self.assertEqual(len(enriched[0].exhibitions), 1)
-        self.assertEqual(enriched[0].exhibitions[0].museum_name, "上海博物馆")
+        self.assertEqual(
+            enriched[0].exhibitions[0].museum_name,
+            "上海博物馆人民广场馆",
+        )
         self.assertEqual(
             enriched[0].exhibitions[0].catalog_source_id,
             "shanghai-civilization",
         )
+        self.assertEqual(
+            enriched[0].exhibitions[0].start_at.date(),
+            date(2024, 11, 13),
+        )
+        self.assertEqual(
+            enriched[0].exhibitions[0].end_at.date(),
+            date(2025, 2, 16),
+        )
+
+    def test_gallery_read_backfills_dates_for_already_linked_catalog_exhibition(self) -> None:
+        with self.catalog_session_factory() as catalog_db:
+            catalog_db.add(
+                CatalogExhibition(
+                    source_id="linked-exhibition",
+                    source_url="https://example.com/linked-exhibition",
+                    title="中国历代绘画馆",
+                    region="中国大陆",
+                    city="上海",
+                    city_slug="shanghai",
+                    museum_name="上海博物馆",
+                    venue="2楼",
+                    is_permanent=False,
+                    start_date=date(2024, 11, 13),
+                    end_date=None,
+                )
+            )
+            catalog_db.commit()
+
+        now = datetime.now(timezone.utc)
+        artifact = ArtifactRead(
+            id=2,
+            museum_id=1,
+            museum_name="上海博物馆",
+            name="测试文物",
+            created_at=now,
+            exhibitions=[
+                ExhibitionRead(
+                    id=12,
+                    museum_id=1,
+                    museum_name="上海博物馆",
+                    name="中国历代绘画馆",
+                    catalog_source_id="linked-exhibition",
+                    created_at=now,
+                )
+            ],
+        )
+
+        with patch("app.main.ExhibitionSessionLocal", self.catalog_session_factory):
+            enriched = enrich_artifact_catalog_links([artifact])
+
+        self.assertEqual(enriched[0].exhibitions[0].start_at.date(), date(2024, 11, 13))
+        self.assertIsNone(enriched[0].exhibitions[0].end_at)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ImgHTMLAttributes } from "react"
-import { AutoComplete, Button, Input, Select, Tag } from "antd"
+import { App as AntApp, AutoComplete, Button, Input, Select, Tag } from "antd"
 import "./styles/gallery.css"
 import { compactArtifactNameForMatch, getBackendImageVariantUrl, normalizeIdentityText, toAbsoluteUrl } from "./lib/galleryArtifactIdentity"
 import {
@@ -15,11 +15,13 @@ import {
   History,
   Images,
   MapPin,
+  Plus,
   Search,
   SlidersHorizontal,
   Sparkles,
   Tag as TagIcon,
   Timer,
+  Trash2,
 } from "lucide-react"
 import GalleryImagePreview from "./GalleryImagePreview"
 
@@ -107,6 +109,10 @@ type HistoricalExhibitionDraft = {
   artifactId: number
   captureMuseumName: string
   exhibitionName: string
+  catalogSourceId: string
+  catalogExhibitionId: number | null
+  startAt: string | null
+  endAt: string | null
 }
 
 type HistoricalExhibitionGroup = HistoricalExhibitionDraft & { imageIds: number[] }
@@ -114,12 +120,26 @@ type HistoricalExhibitionGroup = HistoricalExhibitionDraft & { imageIds: number[
 function groupHistoricalExhibitions(records: HistoricalExhibitionDraft[]) {
   const groups = new Map<string, HistoricalExhibitionGroup>()
   for (const record of records) {
-    const key = `${record.captureMuseumName}\u0000${record.exhibitionName}`
+    const key = `${record.captureMuseumName}\u0000${record.exhibitionName}\u0000${record.startAt ?? ""}\u0000${record.endAt ?? ""}`
     const existing = groups.get(key)
     if (existing) existing.imageIds.push(record.imageId)
     else groups.set(key, { ...record, imageIds: [record.imageId] })
   }
   return Array.from(groups.values())
+}
+
+function formatExhibitionPeriod(
+  startAt: string | null,
+  endAt: string | null,
+  exhibitionName = "",
+  missingLabel = "时间未注明",
+) {
+  if (!startAt && !endAt) {
+    return normalizeLookupText(exhibitionName).includes("常设")
+      ? "常设展"
+      : missingLabel
+  }
+  return `${startAt?.slice(0, 10) ?? "未知"} – ${endAt?.slice(0, 10) ?? "至今"}`
 }
 
 type GeneratedDescription = {
@@ -139,13 +159,57 @@ type MuseumOption = {
   name: string
 }
 
+const SHANGHAI_MUSEUM_BRANCHES = [
+  "上海博物馆东馆",
+  "上海博物馆人民广场馆",
+] as const
+
+function normalizeMuseumOptions(options: MuseumOption[]) {
+  const genericKey = normalizeLookupText("上海博物馆")
+  const next = options.filter((museum) => normalizeLookupText(museum.name) !== genericKey)
+  const existingNames = new Set(next.map((museum) => normalizeLookupText(museum.name)))
+  SHANGHAI_MUSEUM_BRANCHES.forEach((name, index) => {
+    if (!existingNames.has(normalizeLookupText(name))) {
+      next.push({ id: -(index + 1), name })
+    }
+  })
+  return next.sort((left, right) => left.name.localeCompare(right.name, "zh-CN"))
+}
+
+function catalogMuseumQueryName(museumName: string) {
+  return normalizeLookupText(museumName) === normalizeLookupText("上海博物馆人民广场馆")
+    ? "上海博物馆"
+    : museumName
+}
+
+function canonicalCatalogMuseumName(item: {
+  museum_name: string | null
+  address?: string | null
+}) {
+  const museumName = item.museum_name?.trim() ?? ""
+  if (normalizeLookupText(museumName) === normalizeLookupText("上海博物馆")) {
+    return "上海博物馆人民广场馆"
+  }
+  if (isFloorLabel(museumName)) {
+    const addressKey = normalizeLookupText(item.address)
+    if (addressKey.includes(normalizeLookupText("世纪大道1952号"))) {
+      return "上海博物馆东馆"
+    }
+    if (addressKey.includes(normalizeLookupText("人民大道201号"))) {
+      return "上海博物馆人民广场馆"
+    }
+  }
+  return museumName
+}
+
 type CatalogExhibitionOption = {
   id: number
   source_id: string
   title: string
+  city: string
   museum_name: string | null
   venue: string | null
-  city: string
+  address: string | null
   start_date: string | null
   end_date: string | null
   is_permanent: boolean
@@ -155,17 +219,22 @@ type LocalExhibitionOption = {
   id: number
   museum_name: string
   name: string
+  start_at: string | null
+  end_at: string | null
   catalog_source_id: string | null
   catalog_exhibition_id: number | null
 }
 
-type GalleryExhibitionChoice = {
+type HistoricalExhibitionChoice = {
   key: string
   name: string
   museumName: string
-  meta: string
+  venue: string
   catalogSourceId: string
   catalogExhibitionId: number | null
+  startAt: string | null
+  endAt: string | null
+  isPermanent: boolean
 }
 
 type EraOption = {
@@ -356,164 +425,296 @@ function normalizeLookupText(value: string | null | undefined) {
     .replace(/[\s·•・,，。．()（）[\]【】<>《》\-—–_/]+/g, "")
 }
 
-function GalleryExhibitionPicker({
+function HistoricalExhibitionRow({
+  activeImageId,
   apiBaseUrl,
-  museumName,
-  selectedName,
-  selectedSourceId,
-  onSelect,
-  onManualChange,
+  draggedImageId,
+  group,
+  imageIndexes,
+  index,
+  museumOptions,
+  onActivateImage,
+  onDelete,
+  onDropImage,
+  onSetDraggedImage,
+  onUpdate,
 }: {
+  activeImageId: number | null
   apiBaseUrl: string
-  museumName: string
-  selectedName: string
-  selectedSourceId: string
-  onSelect: (choice: GalleryExhibitionChoice | null) => void
-  onManualChange: (value: string) => void
+  draggedImageId: number | null
+  group: HistoricalExhibitionGroup
+  imageIndexes: Map<number, number>
+  index: number
+  museumOptions: MuseumOption[]
+  onActivateImage: (imageIndex: number) => void
+  onDelete: () => void
+  onDropImage: (imageId: number) => void
+  onSetDraggedImage: (imageId: number | null) => void
+  onUpdate: (patch: Partial<HistoricalExhibitionDraft>) => void
 }) {
-  const [query, setQuery] = useState("")
-  const [choices, setChoices] = useState<GalleryExhibitionChoice[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [exhibitionQuery, setExhibitionQuery] = useState(group.exhibitionName)
+  const [exhibitionChoices, setExhibitionChoices] = useState<HistoricalExhibitionChoice[]>([])
+  const [loadingExhibitions, setLoadingExhibitions] = useState(false)
+  const hydratedCatalogSourceRef = useRef<string | null>(null)
 
   useEffect(() => {
-    const keyword = query.trim()
-    const museum = museumName.trim()
-    if (!keyword && !museum) {
-      setChoices([])
-      setError(null)
+    if (
+      !group.catalogSourceId
+      || group.startAt
+      || group.endAt
+      || hydratedCatalogSourceRef.current === group.catalogSourceId
+    ) return
+    hydratedCatalogSourceRef.current = group.catalogSourceId
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/exhibition-catalog/source/${encodeURIComponent(group.catalogSourceId)}`,
+          { signal: controller.signal },
+        )
+        if (!response.ok) return
+        const catalogItem = (await response.json()) as CatalogExhibitionOption
+        onUpdate({
+          catalogExhibitionId: catalogItem.id,
+          startAt: catalogItem.start_date,
+          endAt: catalogItem.end_date,
+        })
+      } catch {
+        // Keep the saved exhibition link when the catalog is temporarily unavailable.
+      }
+    })()
+    return () => controller.abort()
+  }, [apiBaseUrl, group.catalogSourceId, group.endAt, group.startAt, onUpdate])
+
+  useEffect(() => {
+    const museumName = group.captureMuseumName.trim()
+    if (!museumName) {
+      setExhibitionChoices([])
       return
     }
 
     const controller = new AbortController()
     const timer = window.setTimeout(async () => {
-      setLoading(true)
-      setError(null)
+      setLoadingExhibitions(true)
       try {
+        const catalogMuseumName = catalogMuseumQueryName(museumName)
         const catalogParams = new URLSearchParams({
           include_facets: "false",
-          page_size: "30",
+          museum_name: catalogMuseumName,
+          page_size: "50",
         })
-        catalogParams.set("q", keyword || museum)
-        const localParams = new URLSearchParams({ limit: "100" })
-        if (museum) localParams.set("museum_name", museum)
+        const keyword = exhibitionQuery.trim()
+        if (keyword) catalogParams.set("q", keyword)
+        const localParams = new URLSearchParams({
+          museum_name: museumName,
+          limit: "100",
+        })
         if (keyword) localParams.set("q", keyword)
 
-        const [catalogResponse, localResponse] = await Promise.all([
+        const broadCatalogParams = new URLSearchParams({
+          include_facets: "false",
+          page_size: "50",
+        })
+        if (keyword) broadCatalogParams.set("q", keyword)
+        const [catalogResponse, broadCatalogResponse, localResponse] = await Promise.all([
           fetch(`${apiBaseUrl}/api/exhibition-catalog?${catalogParams.toString()}`, {
             signal: controller.signal,
           }),
+          keyword
+            ? fetch(`${apiBaseUrl}/api/exhibition-catalog?${broadCatalogParams.toString()}`, {
+                signal: controller.signal,
+              })
+            : Promise.resolve(null),
           fetch(`${apiBaseUrl}/api/exhibitions?${localParams.toString()}`, {
             signal: controller.signal,
           }),
         ])
-        if (!catalogResponse.ok || !localResponse.ok) {
+        if (!catalogResponse.ok || (broadCatalogResponse && !broadCatalogResponse.ok) || !localResponse.ok) {
           throw new Error("展览联想加载失败")
         }
+
         const catalogPayload = (await catalogResponse.json()) as { items: CatalogExhibitionOption[] }
+        const broadCatalogPayload = broadCatalogResponse
+          ? (await broadCatalogResponse.json()) as { items: CatalogExhibitionOption[] }
+          : { items: [] }
         const localPayload = (await localResponse.json()) as LocalExhibitionOption[]
-        const museumKey = normalizeLookupText(museum)
-        const catalogChoices: GalleryExhibitionChoice[] = catalogPayload.items.map((item) => ({
-          key: `catalog:${item.source_id}`,
-          name: item.title,
-          museumName: item.museum_name ?? "",
-          meta: [item.museum_name, item.venue, item.city, item.is_permanent ? "常设展" : null]
-            .filter(Boolean)
-            .join(" · "),
-          catalogSourceId: item.source_id,
-          catalogExhibitionId: item.id,
-        }))
-        const localChoices: GalleryExhibitionChoice[] = localPayload
-          .filter((item) => (
-            !museumKey
-            || normalizeLookupText(item.museum_name).includes(museumKey)
-            || museumKey.includes(normalizeLookupText(item.museum_name))
-          ))
-          .map((item) => ({
+        const museumKey = normalizeLookupText(museumName)
+        const catalogMuseumQueryKey = normalizeLookupText(catalogMuseumName)
+        const constrainedCatalogItems = [...catalogPayload.items, ...broadCatalogPayload.items].filter((item) => {
+          const catalogMuseumKey = normalizeLookupText(canonicalCatalogMuseumName(item))
+          const museumMatches = (
+            Boolean(catalogMuseumKey)
+            && (
+              catalogMuseumKey.includes(museumKey)
+              || museumKey.includes(catalogMuseumKey)
+              || catalogMuseumKey === catalogMuseumQueryKey
+            )
+          )
+          return item.source_id === group.catalogSourceId || museumMatches
+        })
+        const combined: HistoricalExhibitionChoice[] = [
+          ...constrainedCatalogItems.map((item) => ({
+            key: `catalog:${item.source_id}`,
+            name: item.title,
+            museumName: canonicalCatalogMuseumName(item) || museumName,
+            venue: item.venue ?? "",
+            catalogSourceId: item.source_id,
+            catalogExhibitionId: item.id,
+            startAt: item.start_date,
+            endAt: item.end_date,
+            isPermanent: item.is_permanent,
+          })),
+          ...localPayload.map((item) => ({
             key: item.catalog_source_id ? `catalog:${item.catalog_source_id}` : `local:${item.id}`,
             name: item.name,
-            museumName: item.museum_name,
-            meta: `${item.museum_name} · 已入库展览`,
+            museumName: canonicalCatalogMuseumName({ museum_name: item.museum_name }),
+            venue: "",
             catalogSourceId: item.catalog_source_id ?? "",
-            catalogExhibitionId: item.catalog_exhibition_id ?? null,
-          }))
-
+            catalogExhibitionId: item.catalog_exhibition_id,
+            startAt: item.start_at,
+            endAt: item.end_at,
+            isPermanent: normalizeLookupText(item.name).includes("常设"),
+          })),
+        ]
         const seen = new Set<string>()
-        const combined = [...catalogChoices, ...localChoices]
-          .sort((left, right) => {
-            const leftMuseumMatch = museumKey && normalizeLookupText(left.museumName).includes(museumKey) ? 1 : 0
-            const rightMuseumMatch = museumKey && normalizeLookupText(right.museumName).includes(museumKey) ? 1 : 0
-            return rightMuseumMatch - leftMuseumMatch
-          })
-          .filter((choice) => {
-            const identity = `${normalizeLookupText(choice.museumName)}:${normalizeLookupText(choice.name)}`
-            if (seen.has(identity)) return false
-            seen.add(identity)
-            return true
-          })
-        setChoices(combined.slice(0, 30))
-      } catch (nextError) {
-        if (!controller.signal.aborted) {
-          setChoices([])
-          setError(nextError instanceof Error ? nextError.message : "展览联想加载失败")
-        }
+        setExhibitionChoices(combined.filter((choice) => {
+          const identity = `${normalizeLookupText(choice.museumName)}:${normalizeLookupText(choice.name)}`
+          if (seen.has(identity)) return false
+          seen.add(identity)
+          return true
+        }))
+      } catch {
+        if (!controller.signal.aborted) setExhibitionChoices([])
       } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        if (!controller.signal.aborted) setLoadingExhibitions(false)
       }
-    }, 240)
+    }, 180)
 
     return () => {
       window.clearTimeout(timer)
       controller.abort()
     }
-  }, [apiBaseUrl, museumName, query])
+  }, [apiBaseUrl, exhibitionQuery, group.captureMuseumName])
 
-  const options = choices.map((choice) => ({
-    value: choice.key,
+  const exhibitionOptions = exhibitionChoices.map((choice) => ({
+    value: choice.name,
     label: (
       <span className="gallery-exhibition-option">
         <strong>{choice.name}</strong>
-        <small>{choice.meta}</small>
+        <small>
+          {[choice.museumName, choice.venue, formatExhibitionPeriod(choice.startAt, choice.endAt, choice.name)]
+            .filter(Boolean)
+            .join(" · ")}
+        </small>
       </span>
     ),
   }))
-  if (selectedSourceId && !options.some((option) => option.value === `catalog:${selectedSourceId}`)) {
-    options.unshift({
-      value: `catalog:${selectedSourceId}`,
-      label: (
-        <span className="gallery-exhibition-option">
-          <strong>{selectedName || "已关联展览"}</strong>
-          <small>已保存的目录关联</small>
-        </span>
-      ),
-    })
-  }
 
   return (
-    <div className="gallery-exhibition-picker">
-      <Select
-        allowClear
-        showSearch
+    <div
+      className={`gallery-history-row${draggedImageId !== null && !group.imageIds.includes(draggedImageId) ? " is-drop-target" : ""}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={() => {
+        if (draggedImageId === null || group.imageIds.includes(draggedImageId)) return
+        onDropImage(draggedImageId)
+      }}
+    >
+      <span className="gallery-history-index" title={`第 ${index + 1} 条展出记录`}>
+        {index + 1}
+      </span>
+      <AutoComplete
+        className="gallery-history-museum"
+        value={group.captureMuseumName}
+        options={museumOptions.map((museum) => ({ value: museum.name }))}
+        filterOption={(input, option) =>
+          normalizeLookupText(String(option?.value ?? "")).includes(normalizeLookupText(input))
+        }
+        aria-label={`第 ${index + 1} 条历史展出的场馆`}
+        placeholder="输入场馆名称联想搜索…"
+        onChange={(value) => onUpdate({
+          captureMuseumName: value,
+          catalogSourceId: "",
+          catalogExhibitionId: null,
+          startAt: null,
+          endAt: null,
+        })}
+      >
+        <Input />
+      </AutoComplete>
+      <AutoComplete
+        className="gallery-history-exhibition"
+        value={group.exhibitionName}
+        options={exhibitionOptions}
         filterOption={false}
-        loading={loading}
-        value={selectedSourceId ? `catalog:${selectedSourceId}` : undefined}
-        options={options}
-        placeholder={museumName.trim() ? "输入展名检索该馆及目录展览…" : "请先填写拍摄馆…"}
-        popupMatchSelectWidth={420}
-        notFoundContent={loading ? "正在检索…" : "没有匹配展览，可在下方手动填写"}
-        onSearch={setQuery}
-        onClear={() => onSelect(null)}
-        onSelect={(key) => {
-          const choice = choices.find((item) => item.key === key)
-          if (choice) onSelect(choice)
+        aria-label={`第 ${index + 1} 条历史展出的展览`}
+        placeholder={group.captureMuseumName.trim() ? "输入展览名称联想搜索…" : "请先选择场馆…"}
+        notFoundContent={loadingExhibitions ? "正在检索展览…" : "没有匹配展览"}
+        onFocus={() => setExhibitionQuery(group.exhibitionName)}
+        onSearch={setExhibitionQuery}
+        onChange={(value) => {
+          setExhibitionQuery(value)
+          onUpdate({
+            exhibitionName: value,
+            catalogSourceId: "",
+            catalogExhibitionId: null,
+            startAt: null,
+            endAt: null,
+          })
         }}
-      />
-      <Input
-        value={selectedName}
-        placeholder="也可手动填写；再次匹配时会自动复用同名展览…"
-        onChange={(event) => onManualChange(event.target.value)}
-      />
-      {error ? <span className="field-help error">{error}</span> : null}
+        onSelect={(value) => {
+          const choice = exhibitionChoices.find((item) => item.name === value)
+          if (!choice) return
+          setExhibitionQuery(choice.name)
+          onUpdate({
+            captureMuseumName: choice.museumName || group.captureMuseumName,
+            exhibitionName: choice.name,
+            catalogSourceId: choice.catalogSourceId,
+            catalogExhibitionId: choice.catalogExhibitionId,
+            startAt: choice.startAt,
+            endAt: choice.endAt,
+          })
+        }}
+      >
+        <Input />
+      </AutoComplete>
+      <span className="gallery-history-period">
+        {formatExhibitionPeriod(
+          group.startAt,
+          group.endAt,
+          group.exhibitionName,
+          "请选择目录展览以带回时间",
+        )}
+      </span>
+      <div className="gallery-history-images" aria-label={`第 ${index + 1} 条历史展出的图片`}>
+        {group.imageIds.map((imageId) => {
+          const imageIndex = imageIndexes.get(imageId) ?? -1
+          return (
+            <button
+              key={imageId}
+              type="button"
+              draggable
+              className={`gallery-history-image-link${imageId === activeImageId ? " is-active" : ""}`}
+              onClick={() => onActivateImage(imageIndex)}
+              onDragStart={() => onSetDraggedImage(imageId)}
+              onDragEnd={() => onSetDraggedImage(null)}
+            >
+              图{imageIndex + 1}
+            </button>
+          )
+        })}
+      </div>
+      <Button
+        type="text"
+        danger
+        size="small"
+        className="gallery-history-delete"
+        aria-label={`删除第 ${index + 1} 条历史展出`}
+        title="删除这条展出记录"
+        icon={<Trash2 size={13} aria-hidden="true" />}
+        onClick={onDelete}
+      >
+        <span className="sr-only">删除</span>
+      </Button>
     </div>
   )
 }
@@ -832,6 +1033,7 @@ function GalleryLocationPicker({
 }
 
 export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
+  const { message } = AntApp.useApp()
   const [query, setQuery] = useState("")
   const [submittedQuery, setSubmittedQuery] = useState("")
   const [items, setItems] = useState<GalleryArtifact[]>([])
@@ -847,6 +1049,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [editForm, setEditForm] = useState<GalleryEditFormState | null>(null)
   const [historicalExhibitions, setHistoricalExhibitions] = useState<HistoricalExhibitionDraft[]>([])
   const [draggedImageId, setDraggedImageId] = useState<number | null>(null)
+  const activeImageIndexById = new Map(
+    (active?.images ?? []).map((image, index) => [image.id, index]),
+  )
   const [advancedEditingOpen, setAdvancedEditingOpen] = useState(false)
   const [tagInput, setTagInput] = useState("")
   const [saving, setSaving] = useState(false)
@@ -922,7 +1127,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?limit=200`),
           fetchJson<EraOption[]>(`${apiBaseUrl}/api/era-options`),
         ])
-        setMuseumOptions(museums)
+        setMuseumOptions(normalizeMuseumOptions(museums))
         setEraOptions(eras)
       } catch (err) {
         setError(err instanceof Error ? err.message : "加载联想选项失败")
@@ -1040,12 +1245,28 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     }
     const image = active.images[activeImageIndex] ?? active.images[0] ?? null
     setEditForm(buildEditForm(active, image))
-    setHistoricalExhibitions(active.images.map((item) => ({
-      imageId: item.id,
-      artifactId: item.artifact_id ?? active.id,
-      captureMuseumName: isFloorLabel(item.capture_museum_name) ? active.museum_name : item.capture_museum_name ?? active.museum_name,
-      exhibitionName: item.exhibition_name ?? "常设",
-    })))
+    setHistoricalExhibitions(active.images.map((item) => {
+      const sameNameExhibitions = active.exhibitions.filter((candidate) => (
+        normalizeLookupText(candidate.name) === normalizeLookupText(item.exhibition_name)
+      ))
+      const exhibition = active.exhibitions.find((candidate) => (
+        candidate.id === item.exhibition_id
+        || (
+          normalizeLookupText(candidate.museum_name) === normalizeLookupText(item.capture_museum_name)
+          && normalizeLookupText(candidate.name) === normalizeLookupText(item.exhibition_name)
+        )
+      )) ?? (sameNameExhibitions.length === 1 ? sameNameExhibitions[0] : undefined)
+      return {
+        imageId: item.id,
+        artifactId: item.artifact_id ?? active.id,
+        captureMuseumName: isFloorLabel(item.capture_museum_name) ? active.museum_name : item.capture_museum_name ?? active.museum_name,
+        exhibitionName: item.exhibition_name ?? "常设",
+        catalogSourceId: item.catalog_exhibition_source_id ?? exhibition?.catalog_source_id ?? "",
+        catalogExhibitionId: item.catalog_exhibition_id ?? exhibition?.catalog_exhibition_id ?? null,
+        startAt: exhibition?.start_at ?? null,
+        endAt: exhibition?.end_at ?? null,
+      }
+    }))
     setTagInput("")
     setSaveError(null)
     setSaveNotice(null)
@@ -1061,6 +1282,34 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     setTagInput("")
     setSaveError(null)
     setDescriptionProgress(null)
+  }
+
+  function handleAddHistoricalExhibition() {
+    if (!active) return
+    const image = active.images[activeImageIndex]
+    if (!image) return
+    const existing = historicalExhibitions.find((item) => item.imageId === image.id)
+    if (existing && !existing.captureMuseumName.trim() && !existing.exhibitionName.trim()) {
+      message.info(`图${activeImageIndex + 1}已在新增展览行中`)
+      return
+    }
+    const blankRecord: HistoricalExhibitionDraft = {
+      imageId: image.id,
+      artifactId: image.artifact_id ?? active.id,
+      captureMuseumName: "",
+      exhibitionName: "",
+      catalogSourceId: "",
+      catalogExhibitionId: null,
+      startAt: null,
+      endAt: null,
+    }
+    setHistoricalExhibitions((current) => (
+      current.some((item) => item.imageId === image.id)
+        ? current.map((item) => item.imageId === image.id ? blankRecord : item)
+        : [...current, blankRecord]
+    ))
+    setSaveError(null)
+    setSaveNotice(`已为图${activeImageIndex + 1}新增展览行，请选择场馆和展览`)
   }
 
   async function handleGenerateDescription(
@@ -1195,6 +1444,20 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
       return
     }
 
+    const historyByImageId = new Map(historicalExhibitions.map((record) => [record.imageId, record]))
+    const incompleteImageNumbers = active.images.flatMap((image, index) => {
+      const history = historyByImageId.get(image.id)
+      return history?.captureMuseumName.trim() && history.exhibitionName.trim()
+        ? []
+        : [index + 1]
+    })
+    if (incompleteImageNumbers.length > 0) {
+      const errorMessage = `图${incompleteImageNumbers.join("、图")}缺少展出场馆或展览，无法保存`
+      setSaveError(errorMessage)
+      message.error(errorMessage)
+      return
+    }
+
     setSaving(true)
     setSaveError(null)
     setSaveNotice(null)
@@ -1214,32 +1477,38 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         ? null
         : active.images.find((image) => image.id === editForm.imageId) ?? null
       const targetArtifactId = selectedImage?.artifact_id ?? active.id
-      const response = await fetch(`${apiBaseUrl}/api/artifacts/${targetArtifactId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const buildImageUpdatePayload = (image: GalleryImage, isSelected: boolean) => {
+        const history = historyByImageId.get(image.id)
+        return {
           museum_name: editForm.museumName.trim(),
           name: editForm.name.trim(),
           era: editForm.era.trim() || null,
           Place_of_Excavation: editForm.Place_of_Excavation.trim() || null,
           description: editForm.description.trim() || null,
           tags: editForm.tags,
-          image_id: editForm.imageId,
-          camera_model: editForm.cameraModel.trim() || null,
-          lens_model: editForm.lensModel.trim() || null,
-          capture_museum_name: editForm.captureMuseumName.trim() || null,
-          exhibition_name: editForm.exhibitionName.trim() || "常设",
-          catalog_exhibition_source_id: editForm.catalogExhibitionSourceId || null,
-          catalog_exhibition_id: editForm.catalogExhibitionId,
-          capture_location: editForm.captureLocation.trim() || null,
-          latitude: parseOptionalNumber(editForm.latitude, "纬度"),
-          longitude: parseOptionalNumber(editForm.longitude, "经度"),
-          captured_at: editForm.capturedAt.trim() || null,
-          shutter_speed: editForm.shutterSpeed.trim() || null,
-          aperture: editForm.aperture.trim() || null,
-          iso: parseOptionalNumber(editForm.iso, "ISO"),
-          edit_method: editForm.editMethod || null,
-        }),
+          image_id: image.id,
+          camera_model: isSelected ? editForm.cameraModel.trim() || null : image.camera_model ?? null,
+          lens_model: isSelected ? editForm.lensModel.trim() || null : image.lens_model ?? null,
+          capture_museum_name: history?.captureMuseumName.trim() || image.capture_museum_name || null,
+          exhibition_name: history ? history.exhibitionName.trim() || null : null,
+          catalog_exhibition_source_id: history?.catalogSourceId || null,
+          catalog_exhibition_id: history?.catalogExhibitionId ?? null,
+          capture_location: isSelected ? editForm.captureLocation.trim() || null : image.capture_location ?? null,
+          latitude: isSelected ? parseOptionalNumber(editForm.latitude, "纬度") : image.latitude ?? null,
+          longitude: isSelected ? parseOptionalNumber(editForm.longitude, "经度") : image.longitude ?? null,
+          captured_at: isSelected ? editForm.capturedAt.trim() || null : image.captured_at ?? null,
+          shutter_speed: isSelected ? editForm.shutterSpeed.trim() || null : image.shutter_speed ?? null,
+          aperture: isSelected ? editForm.aperture.trim() || null : image.aperture ?? null,
+          iso: isSelected ? parseOptionalNumber(editForm.iso, "ISO") : image.iso ?? null,
+          edit_method: isSelected ? editForm.editMethod || null : image.edit_method ?? null,
+        }
+      }
+      const primaryImage = selectedImage ?? active.images[0] ?? null
+      if (primaryImage === null) throw new Error("这件文物没有可编辑的图片")
+      const response = await fetch(`${apiBaseUrl}/api/artifacts/${targetArtifactId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildImageUpdatePayload(primaryImage, true)),
       })
       if (!response.ok) {
         let message = `HTTP ${response.status}`
@@ -1254,58 +1523,34 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
         throw new Error(message)
       }
 
-      const otherHistoryUpdates = historicalExhibitions.filter((record) => record.imageId !== editForm.imageId)
-      for (const record of otherHistoryUpdates) {
-        const historyResponse = await fetch(`${apiBaseUrl}/api/artifacts/${record.artifactId}`, {
+      const otherImages = active.images.filter((image) => image.id !== primaryImage.id)
+      for (const image of otherImages) {
+        const historyResponse = await fetch(`${apiBaseUrl}/api/artifacts/${image.artifact_id ?? active.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            museum_name: editForm.museumName.trim(), name: editForm.name.trim(), era: editForm.era.trim() || null,
-            Place_of_Excavation: editForm.Place_of_Excavation.trim() || null, description: editForm.description.trim() || null,
-            tags: editForm.tags, image_id: record.imageId, camera_model: null, lens_model: null,
-            capture_museum_name: record.captureMuseumName.trim() || null, exhibition_name: record.exhibitionName.trim() || "常设",
-            capture_location: record.captureMuseumName.trim() || null, latitude: null, longitude: null, captured_at: null,
-            shutter_speed: null, aperture: null, iso: null, edit_method: null,
-          }),
+          body: JSON.stringify(buildImageUpdatePayload(image, false)),
         })
-        if (!historyResponse.ok) throw new Error(`第 ${active.images.findIndex((image) => image.id === record.imageId) + 1} 张图的历史展出保存失败`)
+        if (!historyResponse.ok) throw new Error(`第 ${active.images.findIndex((item) => item.id === image.id) + 1} 张图的历史展出保存失败`)
       }
 
-      const updated = normalizeArtifact((await response.json()) as RawGalleryArtifact)
-      const updatedSelectedImage = editForm.imageId === null
-        ? null
-        : updated.images.find((image) => image.id === editForm.imageId) ?? null
-      // Keep the merged card intact while replacing its edited image with the
-      // canonical response from the record that actually owns it.
-      const updatedForActive = targetArtifactId === active.id
-        ? updated
-        : {
-            ...active,
-            museum_name: updated.museum_name,
-            name: updated.name,
-            era: updated.era,
-            Place_of_Excavation: updated.Place_of_Excavation,
-            description: updated.description,
-            tags: updated.tags,
-            images: updatedSelectedImage
-              ? active.images.map((image) => image.id === updatedSelectedImage.id ? updatedSelectedImage : image)
-              : active.images,
-          }
-      const nextIndex =
-        updatedForActive.images.findIndex((image) => image.id === editForm.imageId) >= 0
-          ? updatedForActive.images.findIndex((image) => image.id === editForm.imageId)
-          : 0
-      let mergedUpdated = updatedForActive
-      setItems((current) => {
-        const mergedItems = mergeGalleryArtifacts([
-          ...current.map((item) => (item.id === active.id ? updatedForActive : item)),
-          ...(current.some((item) => item.id === active.id) ? [] : [updatedForActive]),
-        ])
-        mergedUpdated = mergedItems.find((item) => galleryArtifactMergeKey(item) === galleryArtifactMergeKey(updatedForActive)) ?? updatedForActive
-        return mergedItems
-      })
-      setActive(mergedUpdated)
-      setActiveImageIndex(Math.min(nextIndex, Math.max(mergedUpdated.images.length - 1, 0)))
+      await response.json()
+      const refreshParams = new URLSearchParams({ q: editForm.name.trim() })
+      const refreshResponse = await fetch(`${apiBaseUrl}/api/artifacts?${refreshParams.toString()}`)
+      if (!refreshResponse.ok) throw new Error("修改已保存，但刷新详情失败")
+      const refreshedItems = mergeGalleryArtifacts(
+        ((await refreshResponse.json()) as RawGalleryArtifact[]).map(normalizeArtifact),
+      )
+      const refreshedActive = refreshedItems.find((item) => (
+        item.images.some((image) => active.images.some((previous) => previous.id === image.id))
+      ))
+      if (!refreshedActive) throw new Error("修改已保存，但未找到刷新后的文物")
+      setItems((current) => mergeGalleryArtifacts([
+        ...current.filter((item) => item.id !== active.id),
+        refreshedActive,
+      ]))
+      setActive(refreshedActive)
+      const nextIndex = refreshedActive.images.findIndex((image) => image.id === primaryImage.id)
+      setActiveImageIndex(nextIndex >= 0 ? nextIndex : 0)
       setEditing(false)
       setEditForm(null)
       setTagInput("")
@@ -1569,26 +1814,6 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       </label>
                                     </div>
                                     <div className="field-row">
-                                      <div className="field gallery-tags-field">
-                                        <span>历史展出（可直接逐条修改；把图片拖到目标展览）</span>
-                                        {groupHistoricalExhibitions(historicalExhibitions).map((group, index) => {
-                                          return <div key={`${group.captureMuseumName}-${group.exhibitionName}`} className="gallery-badge-row" style={{ display: "flex", flexWrap: "nowrap", alignItems: "center", gap: 10, overflowX: "auto" }} onDragOver={(event) => event.preventDefault()} onDrop={() => {
-                                            if (draggedImageId === null || group.imageIds.includes(draggedImageId)) return
-                                            setHistoricalExhibitions((current) => current.map((item) => item.imageId === draggedImageId ? { ...item, captureMuseumName: group.captureMuseumName, exhibitionName: group.exhibitionName } : item))
-                                            setDraggedImageId(null)
-                                          }}>
-                                            <span style={{ flex: "0 0 auto" }}>{index + 1}</span>
-                                            <Input style={{ flex: "0 0 180px" }} value={group.captureMuseumName} onChange={(event) => setHistoricalExhibitions((current) => current.map((item) => group.imageIds.includes(item.imageId) ? { ...item, captureMuseumName: event.target.value } : item))} />
-                                            <Input style={{ flex: "0 0 220px" }} value={group.exhibitionName} onChange={(event) => setHistoricalExhibitions((current) => current.map((item) => group.imageIds.includes(item.imageId) ? { ...item, exhibitionName: event.target.value } : item))} />
-                                            {group.imageIds.map((imageId) => {
-                                              const image = active.images.find((item) => item.id === imageId)
-                                              return image ? <img key={imageId} draggable onDragStart={() => setDraggedImageId(imageId)} src={toAbsoluteUrl(apiBaseUrl, image.url)} alt={`第 ${active.images.findIndex((item) => item.id === imageId) + 1} 张图`} title={`第 ${active.images.findIndex((item) => item.id === imageId) + 1} 张图`} style={{ width: 54, height: 54, objectFit: "cover", borderRadius: 6, cursor: "grab", flex: "0 0 auto" }} /> : null
-                                            })}
-                                          </div>
-                                        })}
-                                      </div>
-                                    </div>
-                                    <div className="field-row">
                                       <label className="field">
                                         <span>时代</span>
                                         <AutoComplete
@@ -1621,70 +1846,75 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                       </label>
                                     </div>
                                     <div className="field-row">
-                                      <label className="field">
-                                        <span>拍摄馆</span>
-                                        <AutoComplete
-                                          value={editForm.captureMuseumName}
-                                          options={museumOptions.map((museum) => ({
-                                            value: museum.name,
-                                            label: museum.name,
-                                          }))}
-                                          filterOption={(input, option) => (
-                                            normalizeLookupText(String(option?.value ?? "")).includes(
-                                              normalizeLookupText(input),
-                                            )
-                                          )}
-                                          onChange={(value) =>
-                                            setEditForm((current) =>
-                                              current ? {
-                                                ...current,
-                                                captureMuseumName: value,
-                                                catalogExhibitionSourceId: "",
-                                                catalogExhibitionId: null,
-                                              } : current,
-                                            )
-                                          }
-                                          onSelect={(value) =>
-                                            setEditForm((current) =>
-                                              current ? {
-                                                ...current,
-                                                captureMuseumName: value,
-                                                captureLocation: current.captureLocation || value,
-                                              } : current,
-                                            )
-                                          }
-                                          placeholder="输入或选择标准场馆名称…"
-                                        />
-                                      </label>
-                                      <label className="field">
-                                        <span>历年展览</span>
-                                        <GalleryExhibitionPicker
-                                          apiBaseUrl={apiBaseUrl}
-                                          museumName={editForm.captureMuseumName}
-                                          selectedName={editForm.exhibitionName}
-                                          selectedSourceId={editForm.catalogExhibitionSourceId}
-                                          onSelect={(choice) =>
-                                            setEditForm((current) =>
-                                              current ? {
-                                                ...current,
-                                                exhibitionName: choice?.name ?? "常设",
-                                                catalogExhibitionSourceId: choice?.catalogSourceId ?? "",
-                                                catalogExhibitionId: choice?.catalogExhibitionId ?? null,
-                                              } : current,
-                                            )
-                                          }
-                                          onManualChange={(value) =>
-                                            setEditForm((current) =>
-                                              current ? {
-                                                ...current,
-                                                exhibitionName: value,
-                                                catalogExhibitionSourceId: "",
-                                                catalogExhibitionId: null,
-                                              } : current,
-                                            )
-                                          }
-                                        />
-                                      </label>
+                                      <div className="field gallery-tags-field">
+                                        <span>历史展出（可直接逐条修改；把图片拖到目标展览）</span>
+                                        <div className="gallery-history-editor">
+                                          {groupHistoricalExhibitions(historicalExhibitions).map((group, index) => (
+                                            <HistoricalExhibitionRow
+                                              key={group.imageIds.slice().sort((left, right) => left - right).join("-")}
+                                              activeImageId={active.images[activeImageIndex]?.id ?? null}
+                                              apiBaseUrl={apiBaseUrl}
+                                              draggedImageId={draggedImageId}
+                                              group={group}
+                                              imageIndexes={activeImageIndexById}
+                                              index={index}
+                                              museumOptions={museumOptions}
+                                              onActivateImage={setActiveImageIndex}
+                                              onSetDraggedImage={setDraggedImageId}
+                                              onUpdate={(patch) => setHistoricalExhibitions((current) => current.map((item) => (
+                                                group.imageIds.includes(item.imageId)
+                                                  ? { ...item, ...patch }
+                                                  : item
+                                              )))}
+                                              onDropImage={(imageId) => {
+                                                setHistoricalExhibitions((current) => current.map((item) => (
+                                                  item.imageId === imageId
+                                                    ? {
+                                                        ...item,
+                                                        captureMuseumName: group.captureMuseumName,
+                                                        exhibitionName: group.exhibitionName,
+                                                        catalogSourceId: group.catalogSourceId,
+                                                        catalogExhibitionId: group.catalogExhibitionId,
+                                                        startAt: group.startAt,
+                                                        endAt: group.endAt,
+                                                      }
+                                                    : item
+                                                )))
+                                                setDraggedImageId(null)
+                                              }}
+                                              onDelete={() => {
+                                                setHistoricalExhibitions((current) => current.map((item) => (
+                                                  group.imageIds.includes(item.imageId)
+                                                    ? {
+                                                        ...item,
+                                                        captureMuseumName: "",
+                                                        exhibitionName: "",
+                                                        catalogSourceId: "",
+                                                        catalogExhibitionId: null,
+                                                        startAt: null,
+                                                        endAt: null,
+                                                      }
+                                                    : item
+                                                )))
+                                                setSaveNotice("已删除该条展出记录，请为这些图片重新选择场馆和展览")
+                                              }}
+                                            />
+                                          ))}
+                                          <Button
+                                            htmlType="button"
+                                            type="text"
+                                            size="small"
+                                            className="gallery-history-add"
+                                            icon={<Plus size={13} aria-hidden="true" />}
+                                            onClick={handleAddHistoricalExhibition}
+                                          >
+                                            新增展览
+                                            <span className="gallery-history-add-hint">
+                                              （当前图{activeImageIndex + 1}）
+                                            </span>
+                                          </Button>
+                                        </div>
+                                      </div>
                                     </div>
                                     <div className="field-row">
                                       <label className="field gallery-tags-field">
@@ -1968,12 +2198,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                   </span>
                                   <div className="gallery-badge-row">
                                     {active.exhibitions.map((exhibition) => {
+                                      const exhibitionMuseumName = isFloorLabel(exhibition.museum_name)
+                                        ? active.museum_name
+                                        : exhibition.museum_name
                                       const label = (
                                         <>
-                                          {exhibition.museum_name} · {exhibition.name}
-                                          {exhibition.start_at || exhibition.end_at
-                                            ? ` (${exhibition.start_at?.slice(0, 10) ?? "未知"} - ${exhibition.end_at?.slice(0, 10) ?? "至今"})`
-                                            : ""}
+                                          {exhibitionMuseumName} · {exhibition.name}
+                                          {` · ${formatExhibitionPeriod(exhibition.start_at, exhibition.end_at, exhibition.name)}`}
                                         </>
                                       )
                                       const detailPath = exhibition.catalog_source_id
@@ -1981,7 +2212,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                         : exhibition.catalog_exhibition_id
                                           ? `/exhibitions/${exhibition.catalog_exhibition_id}`
                                           : `/exhibitions/history/${encodeURIComponent(exhibition.name)}?${new URLSearchParams({
-                                              museum: exhibition.museum_name,
+                                              museum: exhibitionMuseumName,
                                             }).toString()}`
                                       return (
                                         <a key={exhibition.id} className="gallery-exhibition-link" href={detailPath}>{label}</a>
