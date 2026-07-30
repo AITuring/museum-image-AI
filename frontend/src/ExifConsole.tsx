@@ -608,7 +608,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
               <div className="exif-sidebar-head">
                 <h2>图片列表</h2>
               </div>
-              {items.length > 0 ? <Space className="exif-queue-actions" size={6} role="toolbar" aria-label="图片列表操作">
+              {items.length > 0 ? <Space className="exif-queue-actions" size={2} role="toolbar" aria-label="图片列表操作">
                 <Dropdown
                   trigger={["click"]}
                   menu={{
@@ -649,7 +649,7 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
                     icon={submittingAll
                       ? <Loader2 size={15} strokeWidth={1.8} className="animate-spin" aria-hidden="true" />
                       : allItemsSubmitted
-                        ? <Check size={15} strokeWidth={2.1} aria-hidden="true" />
+                        ? <Check size={15} strokeWidth={1.8} aria-hidden="true" />
                         : <CloudUpload size={15} strokeWidth={1.8} aria-hidden="true" />}
                     onClick={() => void handleSubmitAll()}
                     disabled={submittingAll || items.length === 0 || allItemsSubmitted}

@@ -216,6 +216,16 @@ function canonicalCatalogMuseumName(item: {
   return museumName
 }
 
+function resolvedCatalogMuseumName(
+  item: { museum_name: string | null; address?: string | null },
+  fallbackMuseumName: string,
+) {
+  const canonicalName = canonicalCatalogMuseumName(item)
+  return !canonicalName || isFloorLabel(canonicalName)
+    ? fallbackMuseumName
+    : canonicalName
+}
+
 type CatalogExhibitionOption = {
   id: number
   source_id: string
@@ -397,7 +407,12 @@ function getSubjectTags(tags: string[]) {
 }
 
 function isFloorLabel(value: string | null | undefined) {
-  return /^\s*[负-]?\d+\s*楼\s*$/.test(value ?? "")
+  const normalized = (value ?? "").trim()
+  if (!normalized || /(博物馆|博物院|美术馆|纪念馆|艺术馆)$/.test(normalized)) return false
+  return (
+    /^[负\-]?\d+\s*(楼|层)$/.test(normalized)
+    || /(展厅|展区|展馆)$/.test(normalized)
+  )
 }
 
 function buildEditForm(artifact: GalleryArtifact, image?: GalleryImage | null): GalleryEditFormState {
@@ -570,7 +585,7 @@ function HistoricalExhibitionRow({
           ...constrainedCatalogItems.map((item) => ({
             key: `catalog:${item.source_id}`,
             name: item.title,
-            museumName: canonicalCatalogMuseumName(item) || museumName,
+            museumName: resolvedCatalogMuseumName(item, museumName),
             venue: item.venue ?? "",
             catalogSourceId: item.source_id,
             catalogExhibitionId: item.id,
@@ -581,7 +596,7 @@ function HistoricalExhibitionRow({
           ...localPayload.map((item) => ({
             key: item.catalog_source_id ? `catalog:${item.catalog_source_id}` : `local:${item.id}`,
             name: item.name,
-            museumName: canonicalCatalogMuseumName({ museum_name: item.museum_name }),
+            museumName: resolvedCatalogMuseumName({ museum_name: item.museum_name }, museumName),
             venue: "",
             catalogSourceId: item.catalog_source_id ?? "",
             catalogExhibitionId: item.catalog_exhibition_id,
@@ -617,7 +632,10 @@ function HistoricalExhibitionRow({
         <strong>{choice.name}</strong>
         <small>
           {[choice.museumName, choice.venue, formatExhibitionPeriod(choice.startAt, choice.endAt, choice.name)]
-            .filter(Boolean)
+            .filter((item, index, details) => (
+              Boolean(item)
+              && details.findIndex((candidate) => normalizeLookupText(candidate) === normalizeLookupText(item)) === index
+            ))
             .join(" · ")}
         </small>
       </span>
@@ -637,7 +655,7 @@ function HistoricalExhibitionRow({
         {index + 1}
       </span>
       <div className="gallery-history-field gallery-history-field-museum">
-        <span className="gallery-history-field-label">展出场馆</span>
+        <span className="gallery-history-field-label">展出博物馆</span>
         <AutoComplete
           className="gallery-history-museum"
           value={group.captureMuseumName}
@@ -645,8 +663,8 @@ function HistoricalExhibitionRow({
           filterOption={(input, option) =>
             normalizeLookupText(String(option?.value ?? "")).includes(normalizeLookupText(input))
           }
-          aria-label={`第 ${index + 1} 条历史展出的场馆`}
-          placeholder="输入场馆名称联想搜索…"
+          aria-label={`第 ${index + 1} 条历史展出的博物馆`}
+          placeholder="输入博物馆名称联想搜索…"
           onChange={(value) => onUpdate({
             captureMuseumName: value,
             catalogSourceId: "",
@@ -666,7 +684,7 @@ function HistoricalExhibitionRow({
           options={exhibitionOptions}
           filterOption={false}
           aria-label={`第 ${index + 1} 条历史展出的展览`}
-          placeholder={group.captureMuseumName.trim() ? "输入展览名称联想搜索…" : "请先选择场馆…"}
+          placeholder={group.captureMuseumName.trim() ? "输入展览名称联想搜索…" : "请先选择博物馆…"}
           notFoundContent={loadingExhibitions ? "正在检索展览…" : "没有匹配展览"}
           onFocus={() => setExhibitionQuery(group.exhibitionName)}
           onSearch={setExhibitionQuery}
@@ -685,7 +703,9 @@ function HistoricalExhibitionRow({
             if (!choice) return
             setExhibitionQuery(choice.name)
             onUpdate({
-              captureMuseumName: choice.museumName || group.captureMuseumName,
+              captureMuseumName: !choice.museumName || isFloorLabel(choice.museumName)
+                ? group.captureMuseumName
+                : choice.museumName,
               exhibitionName: choice.name,
               catalogSourceId: choice.catalogSourceId,
               catalogExhibitionId: choice.catalogExhibitionId,
@@ -1286,10 +1306,15 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           && normalizeLookupText(candidate.name) === normalizeLookupText(item.exhibition_name)
         )
       )) ?? (sameNameExhibitions.length === 1 ? sameNameExhibitions[0] : undefined)
+      const exhibitionMuseumName = isFloorLabel(exhibition?.museum_name)
+        ? ""
+        : exhibition?.museum_name ?? ""
       return {
         imageId: item.id,
         artifactId: item.artifact_id ?? active.id,
-        captureMuseumName: isFloorLabel(item.capture_museum_name) ? active.museum_name : item.capture_museum_name ?? active.museum_name,
+        captureMuseumName: isFloorLabel(item.capture_museum_name)
+          ? exhibitionMuseumName || active.museum_name
+          : item.capture_museum_name ?? (exhibitionMuseumName || active.museum_name),
         exhibitionName: item.exhibition_name ?? "常设",
         catalogSourceId: item.catalog_exhibition_source_id ?? exhibition?.catalog_source_id ?? "",
         catalogExhibitionId: item.catalog_exhibition_id ?? exhibition?.catalog_exhibition_id ?? null,
@@ -1326,7 +1351,7 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
     const blankRecord: HistoricalExhibitionDraft = {
       imageId: image.id,
       artifactId: image.artifact_id ?? active.id,
-      captureMuseumName: "",
+      captureMuseumName: active.museum_name,
       exhibitionName: "",
       catalogSourceId: "",
       catalogExhibitionId: null,
@@ -1945,14 +1970,13 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
                                     <div className="field-row">
                                       <div className="field gallery-tags-field">
                                         <span>历史展出</span>
-                                        <small className="gallery-history-help">左右滑动查看完整字段；拖动图片编号可调整所属展览</small>
+                                        <small className="gallery-history-help">拖动图片编号可调整照片所属展览</small>
                                         <div className="gallery-history-editor">
                                           <div className="gallery-history-columns" aria-hidden="true">
                                             <span>序号</span>
-                                            <span>展出场馆</span>
+                                            <span>展出博物馆</span>
                                             <span>展览名称</span>
                                             <span>展期</span>
-                                            <span className="gallery-history-columns-images">关联图片</span>
                                             <span className="gallery-history-columns-delete">删除</span>
                                           </div>
                                           {groupHistoricalExhibitions(historicalExhibitions).map((group, index) => (

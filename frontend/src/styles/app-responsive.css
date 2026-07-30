@@ -3,84 +3,9 @@
   border-radius: 10px;
 }
 
-.exif-editor-heading,
-.exif-queue-panel .section-heading {
+.exif-editor-heading {
   min-height: 48px;
   padding: 9px 14px;
-}
-
-.exif-sidebar-summary {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  margin: 0;
-  padding: 7px 14px;
-  border-bottom: 1px solid var(--ui-line-subtle);
-  color: var(--ui-text-tertiary);
-  font-size: var(--ui-type-caption);
-}
-
-.exif-sidebar-summary strong {
-  color: var(--ui-text-primary);
-  font-size: var(--ui-type-body);
-}
-
-.exif-sidebar-tools {
-  gap: 6px;
-  padding: 8px;
-}
-
-.batch-rename-panel,
-.batch-location-panel,
-.metadata-sync-panel {
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: var(--ui-surface-wash);
-}
-
-.batch-location-panel {
-  background: var(--ui-surface-accent);
-}
-
-.exif-sidebar-head h2 {
-  font-size: var(--ui-type-section);
-  letter-spacing: -0.015em;
-}
-
-.exif-queue-actions {
-  gap: 2px !important;
-}
-
-.exif-queue-actions .ant-btn {
-  width: 32px;
-  min-width: 32px;
-  padding-inline: 0;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-
-.exif-queue-actions .ant-btn:not(:disabled):hover {
-  border-color: transparent;
-  background: var(--ui-surface-accent);
-}
-
-.exif-queue-actions .ant-btn-primary {
-  background: var(--ui-surface-accent);
-  color: var(--ui-primary);
-}
-
-.exif-tool-summary-copy {
-  gap: 0;
-}
-
-.exif-tool-summary-copy small {
-  display: none;
-}
-
-.exif-tool-summary-copy strong {
-  font-size: var(--ui-type-body);
-  font-weight: 650;
 }
 
 .exif-tool-summary-count,
@@ -90,53 +15,6 @@
   font-size: var(--ui-type-caption);
 }
 
-.metadata-sync-target-row {
-  display: grid;
-  align-items: center;
-  justify-content: stretch;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.metadata-sync-target-row .ant-segmented {
-  width: 100%;
-  padding: 2px;
-}
-
-.metadata-sync-target-row .ant-segmented-group {
-  width: 100%;
-}
-
-.metadata-sync-target-row .ant-segmented-item {
-  min-width: 0;
-  flex: 1;
-}
-
-.metadata-sync-target-row .ant-segmented-item-label {
-  min-height: 28px;
-  overflow: hidden;
-  padding-inline: 6px;
-  font-size: var(--ui-type-label);
-  line-height: 28px;
-  text-overflow: ellipsis;
-}
-
-.metadata-sync-status {
-  margin-top: 4px;
-  padding: 6px 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.metadata-sync-status > strong {
-  font-size: var(--ui-type-caption);
-}
-
-.exif-sidebar-tools details[open] > :not(summary) {
-  animation: exif-detail-enter var(--ui-motion-slow) var(--ui-ease-out) both;
-}
-
-.exif-queue-item,
 .exif-form-card,
 .form-section,
 .single-panel,
@@ -147,24 +25,8 @@
     transform var(--ui-motion-base) var(--ui-ease-out);
 }
 
-.exif-queue-item:not(:disabled):hover {
-  transform: translateX(2px);
-}
-
 .app-content > section {
   animation: workspace-enter var(--ui-motion-slow) var(--ui-ease-out) both;
-}
-
-@keyframes exif-detail-enter {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 @keyframes workspace-enter {
@@ -294,7 +156,7 @@
     gap: 8px;
   }
 
-  button:not(.ant-btn):not([data-ui="interactive-surface"]),
+  button:not([class*="ant-"]):not([data-ui="interactive-surface"]),
   .gallery-toolbar-link {
     min-height: 44px;
   }

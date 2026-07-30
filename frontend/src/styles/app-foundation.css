@@ -123,7 +123,7 @@
   align-items: center;
 }
 
-button:not(.ant-btn):not([data-ui="interactive-surface"]),
+button:not([class*="ant-"]):not([data-ui="interactive-surface"]),
 .gallery-toolbar-link {
   min-height: 30px;
   padding: 0 10px;
@@ -138,19 +138,19 @@ button:not(.ant-btn):not([data-ui="interactive-surface"]),
   transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, opacity 140ms ease;
 }
 
-button:not(.ant-btn):not([data-ui="interactive-surface"]):hover:not(:disabled),
+button:not([class*="ant-"]):not([data-ui="interactive-surface"]):hover:not(:disabled),
 .gallery-toolbar-link:hover {
   background: var(--app-muted);
 }
 
-button:not(.ant-btn):not([data-ui="interactive-surface"]):disabled {
+button:not([class*="ant-"]):not([data-ui="interactive-surface"]):disabled {
   cursor: not-allowed;
   opacity: 0.5;
 }
 
-button:not(.ant-btn):not([data-ui="interactive-surface"]):focus-visible,
-input:not(.ant-input):focus-visible,
-textarea:not(.ant-input):focus-visible,
+button:not([class*="ant-"]):not([data-ui="interactive-surface"]):focus-visible,
+input:not([class*="ant-"]):focus-visible,
+textarea:not([class*="ant-"]):focus-visible,
 select:focus-visible,
 .gallery-toolbar-link:focus-visible {
   outline: none;
@@ -395,13 +395,12 @@ button.danger,
   font-size: 12px;
 }
 
-input:not(.ant-input),
-textarea:not(.ant-input),
-select,
-.gallery-search input:not(.ant-input),
-.gallery-location-query input:not(.ant-input),
-.batch-rename-panel input:not(.ant-input),
-.batch-location-fields input:not(.ant-input) {
+/* 只重置原生控件。排除条件必须覆盖所有 ant- 前缀的类：Ant Design 组件内部也用
+   原生 input，且类名会随版本变化（v6 起 Select 内部是 .ant-select-input 而非
+   .ant-input），只挡 .ant-input 会让这里的高度和内边距漏进组件内部并裁掉文字。 */
+input:not([class*="ant-"]),
+textarea:not([class*="ant-"]),
+select {
   width: 100%;
   border: 1px solid var(--app-input);
   border-radius: 6px;
@@ -412,21 +411,21 @@ select,
   outline: none;
 }
 
-input:not(.ant-input),
+input:not([class*="ant-"]),
 select {
   min-height: 32px;
   padding: 6px 9px;
 }
 
-textarea:not(.ant-input) {
+textarea:not([class*="ant-"]) {
   min-height: 70px;
   padding: 7px 9px;
   line-height: 1.45;
   resize: vertical;
 }
 
-input:not(.ant-input)::placeholder,
-textarea:not(.ant-input)::placeholder {
+input:not([class*="ant-"])::placeholder,
+textarea:not([class*="ant-"])::placeholder {
   color: color-mix(in oklch, var(--app-soft) 72%, transparent);
 }
 
@@ -531,7 +530,7 @@ label.field,
   min-height: 28px;
   padding: 0 10px;
   border: 1px solid var(--app-border);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-md);
   font-size: 12px;
   font-weight: 400;
   line-height: 1.45;

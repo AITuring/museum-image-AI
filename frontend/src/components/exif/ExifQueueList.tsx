@@ -18,12 +18,13 @@ function QueueStateTag({ item, changes }: { item: ExifWorkbenchItem; changes: st
   const isSubmitted = item.submitState === "submitted"
   const isSubmitting = item.submitState === "submitting"
   const isError = item.submitState === "error"
+  const hasChanges = !isSubmitted && !isSubmitting && !isError && changes.length > 0
   return <Tag
-    color={isSubmitted ? "success" : isError ? "error" : isSubmitting ? "processing" : changes.length > 0 ? "warning" : undefined}
-    className={`queue-submit-state is-${item.submitState}`}
-    icon={isSubmitted ? <Check size={14} strokeWidth={2.2} aria-hidden="true" /> : isSubmitting ? <Loader2 size={14} strokeWidth={2.2} className="queue-state-icon is-active" aria-hidden="true" /> : isError ? <X size={14} strokeWidth={2.2} aria-hidden="true" /> : changes.length > 0 ? <FileCheck2 size={14} strokeWidth={2} className="queue-state-icon is-pending" aria-hidden="true" /> : undefined}
+    variant="filled"
+    className={`queue-submit-state is-${item.submitState}${hasChanges ? " has-changes" : ""}`}
+    icon={isSubmitted ? <Check size={12} strokeWidth={2} aria-hidden="true" /> : isSubmitting ? <Loader2 size={12} strokeWidth={2} className="queue-state-icon is-active" aria-hidden="true" /> : isError ? <X size={12} strokeWidth={2} aria-hidden="true" /> : hasChanges ? <FileCheck2 size={12} strokeWidth={1.8} className="queue-state-icon is-pending" aria-hidden="true" /> : undefined}
   >
-    {isSubmitted ? "已提交" : isSubmitting ? "提交中" : isError ? "提交失败" : changes.length > 0 ? `待提交 · ${changes.length} 项` : "待处理"}
+    {isSubmitted ? "已提交" : isSubmitting ? "提交中" : isError ? "提交失败" : hasChanges ? `待提交 · ${changes.length} 项` : "待处理"}
   </Tag>
 }
 
@@ -38,7 +39,7 @@ export function ExifQueueList({
   onRetry,
   onRemove,
 }: ExifQueueListProps) {
-  if (items.length === 0) return <p className="muted">还没有图片，先上传一批图片开始处理。</p>
+  if (items.length === 0) return <div className="exif-queue-list"><p className="muted">还没有图片，先上传一批图片开始处理。</p></div>
 
   return <div className="exif-queue-list">
     {items.map((item) => {
@@ -59,13 +60,13 @@ export function ExifQueueList({
             {item.submitState === "submitting" ? <span className="queue-upload" aria-label={`${item.uploadStage ?? "提交中"} ${item.uploadProgress}%`}><i style={{ width: `${item.uploadProgress}%` }} /><small>{item.uploadStage ?? "提交中"} · {item.uploadProgress}%</small></span> : null}
           </div>
         </button>
-        <Space className="exif-queue-item-actions" size={6}>
+        <Space className="exif-queue-item-actions" size={2}>
           <span className="queue-state-tags">
-            {showDescriptionTools && descriptionGeneratingItemIds.includes(item.id) ? <Tag color="processing" icon={<Loader2 size={11} strokeWidth={2.2} className="animate-spin" aria-hidden="true" />}>描述中</Tag> : showDescriptionTools && hasGeneratedDescription(item) ? <Tag color="success" icon={<Check size={11} strokeWidth={2.2} aria-hidden="true" />}>描述完成</Tag> : null}
+            {showDescriptionTools && descriptionGeneratingItemIds.includes(item.id) ? <Tag variant="filled" className="queue-aux-state is-active" icon={<Loader2 size={12} strokeWidth={2} className="queue-state-icon is-active" aria-hidden="true" />}>描述中</Tag> : showDescriptionTools && hasGeneratedDescription(item) ? <Tag variant="filled" className="queue-aux-state is-done" icon={<Check size={12} strokeWidth={2} aria-hidden="true" />}>描述完成</Tag> : null}
             <QueueStateTag item={item} changes={changes} />
           </span>
           {item.submitState === "error" ? <Tooltip title={needsAuthorization ? "重新授权原文件夹" : "重试入库"}><Button htmlType="button" size="small" className="exif-queue-retry" icon={<RefreshCw size={14} strokeWidth={1.8} aria-hidden="true" />} aria-label={needsAuthorization ? "重新授权原文件夹" : "重试入库"} onClick={() => onRetry(item)} /></Tooltip> : null}
-          <Button htmlType="button" size="small" danger className="exif-queue-remove" icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />} aria-label={`移除 ${item.fileName}`} onClick={() => onRemove(item.id)} />
+          <Button htmlType="button" size="small" className="exif-queue-remove" icon={<Trash2 size={14} strokeWidth={1.8} aria-hidden="true" />} aria-label={`移除 ${item.fileName}`} onClick={() => onRemove(item.id)} />
         </Space>
       </div>
     })}

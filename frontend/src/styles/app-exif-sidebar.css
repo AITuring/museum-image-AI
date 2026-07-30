@@ -1,0 +1,553 @@
+/* 快速录入 · 图片列表侧栏
+   该侧栏的所有样式集中在本文件，避免同一处视觉散落在多个文件里互相覆盖。
+   横向留白只由 --queue-gutter 定义，标题栏、统计条、工具面板、图片行共用同一条左右边界。 */
+
+.exif-queue-panel {
+  --queue-gutter: 12px;
+  --queue-radius: var(--ui-radius-lg);
+  --queue-gap: 6px;
+  --queue-action-size: 30px;
+  --queue-row-action-size: 26px;
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border-radius: var(--ui-radius-xl);
+  box-shadow: var(--ui-shadow-card);
+}
+
+/* ---------- 标题栏 ---------- */
+
+.exif-queue-panel .section-heading {
+  min-height: 50px;
+  padding: 8px var(--queue-gutter);
+  border-bottom: 1px solid var(--ui-line-subtle);
+  background: var(--ui-surface-wash);
+}
+
+.exif-queue-panel .exif-sidebar-head h2 {
+  margin: 0;
+  color: var(--ui-text-primary);
+  font-size: var(--ui-type-section);
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  line-height: var(--ui-leading-tight);
+}
+
+/* 三个图标按钮的静止态完全一致：同尺寸、同圆角、同底色、同图标颜色。
+   主次与危险语义只在 hover / focus 时用颜色提示，静止时不制造色差。 */
+.exif-queue-panel .exif-queue-actions {
+  flex: 0 0 auto;
+}
+
+.exif-queue-panel .exif-queue-actions .ant-btn {
+  width: var(--queue-action-size);
+  min-width: var(--queue-action-size);
+  height: var(--queue-action-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-tertiary);
+  box-shadow: none;
+  transition:
+    background-color var(--ui-motion-fast) ease,
+    color var(--ui-motion-fast) ease;
+}
+
+.exif-queue-panel .exif-queue-actions .ant-btn:not(:disabled):hover,
+.exif-queue-panel .exif-queue-actions .ant-btn:not(:disabled):focus-visible {
+  background: var(--ui-surface-accent);
+  color: var(--ui-text-primary);
+}
+
+.exif-queue-panel .exif-queue-actions .ant-btn-primary:not(:disabled):hover,
+.exif-queue-panel .exif-queue-actions .ant-btn-primary:not(:disabled):focus-visible {
+  color: var(--ui-primary);
+}
+
+.exif-queue-panel .exif-queue-actions .ant-btn-dangerous:not(:disabled):hover,
+.exif-queue-panel .exif-queue-actions .ant-btn-dangerous:not(:disabled):focus-visible {
+  color: var(--ui-danger);
+}
+
+.exif-queue-panel .exif-queue-actions .ant-btn:disabled {
+  background: transparent;
+  color: var(--ui-text-tertiary);
+  opacity: 0.32;
+}
+
+.exif-queue-panel .exif-queue-actions .ant-btn:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ui-primary) 45%, transparent);
+  outline-offset: -2px;
+}
+
+/* ---------- 批次统计 ---------- */
+
+.exif-queue-panel .exif-sidebar-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin: 0;
+  padding: 7px var(--queue-gutter);
+  border-bottom: 1px solid var(--ui-line-subtle);
+  background: var(--ui-surface-wash);
+  color: var(--ui-text-tertiary);
+  font-size: var(--ui-type-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.exif-queue-panel .exif-sidebar-summary strong {
+  color: var(--ui-text-primary);
+  font-size: var(--ui-type-label);
+  font-weight: 620;
+}
+
+.exif-queue-panel .exif-sidebar-summary > span {
+  color: var(--ui-line-strong);
+}
+
+/* ---------- 滚动区与工具区 ---------- */
+
+/* 侧栏宽度固定，网格轨道一律用 minmax(0, 1fr)：默认的 auto 轨道会按 max-content
+   撑开，一个长文件名就能让整列横向滚动。 */
+.exif-queue-panel .exif-sidebar-scroll {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.exif-sidebar-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--queue-gap);
+  min-width: 0;
+  padding: 10px var(--queue-gutter) 14px;
+}
+
+.exif-sidebar-tools > * {
+  min-width: 0;
+}
+
+/* ---------- 折叠工具面板 ---------- */
+
+/* 用 `> details` 而非逐个类名，两个面板结构上无法再出现不同底色。
+   工具用描边、列表项用填充，两类内容在同一列里靠形态而非颜色区分。 */
+.exif-sidebar-tools > details {
+  padding: 0;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: var(--queue-radius);
+  background: transparent;
+  transition:
+    background-color var(--ui-motion-base) ease,
+    border-color var(--ui-motion-base) ease;
+}
+
+.exif-sidebar-tools > details:not([open]):hover {
+  background: var(--ui-surface-wash);
+  border-color: var(--ui-line-accent);
+}
+
+.exif-sidebar-tools > details[open] {
+  padding-bottom: 12px;
+  background: var(--ui-surface-wash);
+}
+
+.exif-sidebar-tools > details > summary {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 var(--queue-gutter);
+  border-radius: inherit;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.exif-sidebar-tools > details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.exif-sidebar-tools > details > summary:focus {
+  outline: none;
+}
+
+.exif-sidebar-tools > details > summary:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ui-primary) 45%, transparent);
+  outline-offset: -2px;
+}
+
+.exif-sidebar-tools > details > :not(summary) {
+  margin-inline: var(--queue-gutter);
+}
+
+.exif-sidebar-tools > details[open] > :not(summary) {
+  animation: exif-detail-enter var(--ui-motion-slow) var(--ui-ease-out) both;
+}
+
+.exif-sidebar-tools .exif-tool-summary-copy strong {
+  font-size: var(--ui-type-label);
+  font-weight: 560;
+}
+
+/* 侧栏窄，副标题让位给标题本身。 */
+.exif-sidebar-tools .exif-tool-summary-copy small {
+  display: none;
+}
+
+.exif-sidebar-tools > details[open] .exif-tool-summary-meta svg {
+  transform: rotate(180deg);
+}
+
+/* ---------- 面板内部控件 ---------- */
+
+/* 面板里只有三级文字：面板标题 12px、字段标签 11px、控件内容 14px，
+   与右侧「基础信息」表单保持同一套刻度。 */
+.exif-sidebar-tools .exif-tool-field > span,
+.exif-sidebar-tools .metadata-sync-source-head,
+.exif-sidebar-tools .metadata-sync-field-group > header strong {
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-caption);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.exif-sidebar-tools .metadata-sync-field .ant-checkbox + span {
+  padding-inline-start: 7px;
+  font-size: var(--ui-type-label);
+}
+
+.exif-sidebar-tools .batch-location-actions {
+  margin-top: 10px;
+}
+
+.exif-sidebar-tools .batch-location-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.exif-sidebar-tools .metadata-sync-target-row {
+  display: grid;
+  align-items: center;
+  justify-content: stretch;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.exif-sidebar-tools .metadata-sync-target-row .ant-segmented,
+.exif-sidebar-tools .metadata-sync-target-row .ant-segmented-group {
+  width: 100%;
+}
+
+.exif-sidebar-tools .metadata-sync-target-row .ant-segmented {
+  padding: 3px;
+}
+
+.exif-sidebar-tools .metadata-sync-target-row .ant-segmented-item {
+  min-width: 0;
+  flex: 1;
+}
+
+.exif-sidebar-tools .metadata-sync-target-row .ant-segmented-item-label {
+  min-height: 28px;
+  overflow: hidden;
+  padding-inline: 6px;
+  font-size: var(--ui-type-label);
+  line-height: 28px;
+  text-overflow: ellipsis;
+}
+
+.exif-sidebar-tools .metadata-sync-status {
+  margin-top: 4px;
+  padding: 6px 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.exif-sidebar-tools .metadata-sync-status > span,
+.exif-sidebar-tools .metadata-sync-status > strong {
+  font-size: var(--ui-type-caption);
+}
+
+/* ---------- 图片队列 ---------- */
+
+/* 列表与折叠面板共用工具区的左右留白，不再叠加自己的横向 padding。 */
+.exif-sidebar-tools .exif-queue-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--ui-line-subtle);
+  background: transparent;
+}
+
+/* 行是一个两列网格：主按钮 + 操作区，宽度自适应，不需要预留固定 padding。 */
+.exif-queue-item-shell {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  align-self: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding-right: 6px;
+  border-radius: var(--queue-radius);
+  background: var(--ui-surface-wash);
+  transition: background-color var(--ui-motion-fast) ease;
+}
+
+.exif-queue-item-shell:hover {
+  background: var(--ui-surface-accent);
+}
+
+/* 选中与出错只靠底色区分，不加侧边高亮条。 */
+.exif-queue-item-shell:has(.exif-queue-item.is-selected) {
+  background: var(--ui-surface-accent-strong);
+}
+
+.exif-queue-item-shell.is-error {
+  background: color-mix(in oklch, var(--ui-danger) 7%, var(--ui-surface-wash));
+}
+
+.exif-queue-item {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 2px 8px 8px;
+  border: 0;
+  border-radius: var(--queue-radius);
+  background: transparent;
+  color: var(--ui-text-primary);
+  text-align: left;
+  box-shadow: none;
+}
+
+.exif-queue-item:not(:disabled):hover,
+.exif-queue-item.is-selected {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ui-text-primary);
+  box-shadow: none;
+}
+
+.exif-queue-thumb {
+  width: 40px;
+  height: 40px;
+  overflow: hidden;
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-accent);
+  object-fit: cover;
+}
+
+.exif-queue-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.exif-queue-copy strong {
+  overflow: hidden;
+  color: var(--ui-text-primary);
+  font-size: var(--ui-type-label);
+  font-weight: 560;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exif-queue-copy .queue-change-summary {
+  overflow: hidden;
+  color: var(--ui-text-tertiary);
+  font-size: var(--ui-type-caption);
+  font-weight: 400;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exif-queue-copy .queue-upload {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.exif-queue-copy .queue-upload i {
+  display: block;
+  height: 2px;
+  max-width: 100%;
+  border-radius: var(--ui-radius-pill);
+  background: var(--ui-primary);
+  transition: width var(--ui-motion-base) ease;
+}
+
+.exif-queue-copy .queue-upload small {
+  overflow: hidden;
+  color: var(--ui-text-tertiary);
+  font-size: var(--ui-type-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 行状态 ---------- */
+
+/* 状态是辅助信息：与文件名同级字号，但更轻的字重与更低的对比度。 */
+.queue-state-tags {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  gap: 6px;
+}
+
+.queue-state-tags .ant-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ui-text-tertiary);
+  box-shadow: none;
+  font-size: var(--ui-type-caption);
+  font-weight: 450;
+  line-height: 1.4;
+}
+
+.queue-state-tags .queue-submit-state.is-idle {
+  color: var(--ui-text-tertiary);
+}
+
+.queue-state-tags .queue-submit-state.is-idle.has-changes {
+  color: var(--ui-warning);
+  font-weight: 500;
+}
+
+.queue-state-tags .queue-submit-state.is-submitting {
+  color: var(--ui-primary);
+}
+
+.queue-state-tags .queue-submit-state.is-submitted {
+  color: var(--ui-success);
+}
+
+.queue-state-tags .queue-submit-state.is-error {
+  color: var(--ui-danger);
+  font-weight: 500;
+}
+
+.queue-state-tags .queue-aux-state.is-active {
+  color: var(--ui-primary);
+}
+
+.queue-state-tags .queue-aux-state.is-done {
+  color: var(--ui-success);
+}
+
+/* ---------- 行内操作 ---------- */
+
+.exif-queue-item-actions {
+  position: static;
+  flex: 0 0 auto;
+  transform: none;
+}
+
+.exif-queue-item-actions .ant-btn {
+  width: var(--queue-row-action-size);
+  min-width: var(--queue-row-action-size);
+  height: var(--queue-row-action-size);
+  padding: 0;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  background: transparent;
+  color: var(--ui-text-tertiary);
+  box-shadow: none;
+  opacity: 0.4;
+  transition:
+    background-color var(--ui-motion-fast) ease,
+    color var(--ui-motion-fast) ease,
+    opacity var(--ui-motion-fast) ease;
+}
+
+.exif-queue-item-shell:hover .exif-queue-item-actions .ant-btn,
+.exif-queue-item-shell:focus-within .exif-queue-item-actions .ant-btn {
+  opacity: 1;
+}
+
+.exif-queue-item-actions .ant-btn:not(:disabled):hover,
+.exif-queue-item-actions .ant-btn:not(:disabled):focus-visible {
+  background: var(--ui-surface-default);
+  opacity: 1;
+}
+
+.exif-queue-item-actions .exif-queue-remove.ant-btn:not(:disabled):hover,
+.exif-queue-item-actions .exif-queue-remove.ant-btn:not(:disabled):focus-visible {
+  color: var(--ui-danger);
+}
+
+.exif-queue-item-actions .exif-queue-retry.ant-btn {
+  color: var(--ui-primary);
+  opacity: 0.75;
+}
+
+.exif-queue-item-actions .exif-queue-retry.ant-btn:not(:disabled):hover,
+.exif-queue-item-actions .exif-queue-retry.ant-btn:not(:disabled):focus-visible {
+  color: var(--ui-primary-hover);
+}
+
+.exif-queue-item-actions .ant-btn:focus-visible {
+  outline: 2px solid color-mix(in oklch, var(--ui-primary) 45%, transparent);
+  outline-offset: -2px;
+}
+
+/* ---------- 空状态与地图 ---------- */
+
+.exif-sidebar-tools .exif-queue-list > .muted:only-child {
+  display: grid;
+  min-height: 96px;
+  margin: 0;
+  padding: 20px;
+  place-items: center;
+  border-top: 0;
+  color: var(--ui-text-tertiary);
+  font-size: var(--ui-type-label);
+  text-align: center;
+}
+
+.exif-sidebar-map .gps-map-wrap {
+  min-height: 220px;
+  margin-top: 10px;
+  border-color: var(--ui-line-subtle);
+  border-radius: var(--queue-radius);
+  box-shadow: none;
+}
+
+@keyframes exif-detail-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exif-sidebar-tools > details[open] > :not(summary) {
+    animation: none;
+  }
+}

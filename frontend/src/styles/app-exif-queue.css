@@ -12,7 +12,7 @@
   width: 100%;
   padding: 12px;
   border: 1px solid var(--app-border);
-  border-radius: 12px;
+  border-radius: var(--ui-radius-lg);
   background: var(--app-card);
   color: inherit;
   text-align: left;
@@ -31,7 +31,7 @@
   place-items: center;
   min-height: 128px;
   overflow: hidden;
-  border-radius: 9px;
+  border-radius: var(--ui-radius-sm);
   background: var(--app-muted);
   color: var(--app-soft);
 }
@@ -99,7 +99,7 @@
 .exif-upload-permission-note {
   padding: 12px 14px;
   border: 1px solid var(--app-border);
-  border-radius: 10px;
+  border-radius: var(--ui-radius-lg);
   background: var(--app-muted);
   color: var(--app-soft);
   font-size: 13px;
@@ -119,7 +119,7 @@
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--app-border);
-  border-radius: 9px;
+  border-radius: var(--ui-radius-lg);
   background: var(--app-card);
 }
 
@@ -175,7 +175,7 @@
 .metadata-sync-target-option-content img {
   width: 30px;
   height: 30px;
-  border-radius: 5px;
+  border-radius: var(--ui-radius-sm);
   background: var(--app-muted);
   object-fit: cover;
 }
@@ -196,7 +196,7 @@
 .metadata-sync-preview-fields {
   padding: 12px;
   border: 1px solid var(--app-border);
-  border-radius: 9px;
+  border-radius: var(--ui-radius-lg);
   background: color-mix(in oklch, var(--app-card) 82%, var(--app-muted));
 }
 
@@ -227,7 +227,7 @@
 .metadata-sync-preview-fields-head > span {
   flex: 0 0 auto;
   padding: 4px 7px;
-  border-radius: 6px;
+  border-radius: var(--ui-radius-xs);
   background: var(--app-muted);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
@@ -243,7 +243,7 @@
   gap: 10px;
   padding: 12px;
   border: 1px solid var(--app-border);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-lg);
   background: var(--app-muted);
 }
 
@@ -255,7 +255,7 @@
 
 .metadata-sync-preview-summary > .is-emphasis {
   padding: 7px 10px;
-  border-radius: 6px;
+  border-radius: var(--ui-radius-xs);
   background: color-mix(in oklch, var(--app-primary) 9%, var(--app-card));
 }
 
@@ -289,7 +289,7 @@
   min-height: max-content;
   overflow: hidden;
   border: 1px solid var(--app-border);
-  border-radius: 8px;
+  border-radius: var(--ui-radius-lg);
 }
 
 .metadata-sync-preview-target header {
@@ -303,7 +303,7 @@
 .metadata-sync-preview-target header img {
   width: 32px;
   height: 32px;
-  border-radius: 5px;
+  border-radius: var(--ui-radius-sm);
   object-fit: cover;
 }
 
@@ -419,7 +419,7 @@
 .metadata-sync-no-change {
   margin: 0;
   padding: 10px 12px;
-  border-radius: 7px;
+  border-radius: var(--ui-radius-md);
   color: var(--app-soft);
   background: var(--app-muted);
   font-size: 12px;
@@ -451,8 +451,8 @@
 }
 
 .exif-tool-field > span {
-  color: color-mix(in oklch, var(--app-fg) 78%, var(--app-soft));
-  font-size: 10px;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-caption);
   font-weight: 500;
   letter-spacing: 0.01em;
 }
@@ -465,20 +465,6 @@
   margin-top: 8px;
 }
 
-.exif-sidebar-tools .batch-rename-panel > div,
-.exif-sidebar-tools .batch-location-fields {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.exif-sidebar-tools .batch-location-fields {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.exif-sidebar-tools .batch-rename-panel > div .ant-btn {
-  justify-self: start;
-}
-
 .exif-tool-actions {
   display: flex;
   justify-content: flex-end;
@@ -488,19 +474,7 @@
   border-top: 1px solid var(--app-border);
 }
 
-.exif-sidebar-tools .field > span:first-child,
-.exif-sidebar-tools summary span:first-child {
-  font-size: 10px;
-}
-
-.exif-queue-list {
-  display: grid;
-  grid-auto-rows: max-content;
-  align-content: start;
-  gap: 8px;
-  padding: 8px 12px 12px;
-  border-top: 0;
-  background: var(--ui-surface-default);
-  overflow: visible;
+.exif-sidebar-tools .field > span:first-child {
+  font-size: var(--ui-type-caption);
 }
 

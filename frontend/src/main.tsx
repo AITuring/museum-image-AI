@@ -18,13 +18,21 @@ createRoot(document.getElementById("root")!).render(
           colorSuccess: "#48745b",
           colorWarning: "#a56c23",
           colorError: "#b94d45",
+          // antd 的 colorLink 不跟随 colorPrimary，不显式覆盖会留下默认的蓝色链接。
+          colorLink: "#70543b",
+          colorLinkHover: "#8d7054",
+          colorLinkActive: "#503824",
           colorBgLayout: "#f3f0ea",
           colorBgContainer: "#fffdf9",
           colorText: "#24221f",
           colorTextSecondary: "#66615a",
           colorBorder: "#d9d2c8",
           colorBorderSecondary: "#e8e2d9",
+          // 与 index.css 的 --ui-radius-* 一一对应：控件 10、分块 12、标签 6。
           borderRadius: 10,
+          borderRadiusLG: 12,
+          borderRadiusSM: 10,
+          borderRadiusXS: 6,
           controlHeight: 36,
           controlHeightSM: 32,
           fontSize: 14,
@@ -34,7 +42,8 @@ createRoot(document.getElementById("root")!).render(
         },
         components: {
           Button: {
-            borderRadius: 8,
+            borderRadius: 10,
+            borderRadiusSM: 10,
             controlHeight: 36,
             controlHeightSM: 32,
             defaultBg: "#f1ece4",
@@ -62,6 +71,7 @@ createRoot(document.getElementById("root")!).render(
             hoverBorderColor: "#b7a694",
           },
           Card: {
+            borderRadiusLG: 12,
             bodyPadding: 20,
             bodyPaddingSM: 16,
             headerHeight: 50,
@@ -69,15 +79,18 @@ createRoot(document.getElementById("root")!).render(
             headerBg: "#fffdf9",
           },
           Checkbox: {
-            borderRadiusSM: 4,
+            borderRadiusSM: 6,
           },
           Segmented: {
+            borderRadius: 10,
+            borderRadiusSM: 10,
+            borderRadiusXS: 7,
             itemActiveBg: "#fffdf9",
             itemHoverBg: "#ebe4db",
             trackBg: "#f1ece4",
           },
           Tag: {
-            borderRadiusSM: 7,
+            borderRadiusSM: 6,
             defaultBg: "#f1ede6",
           },
           Tabs: {

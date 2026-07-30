@@ -172,7 +172,7 @@
   background: color-mix(in oklch, var(--ui-danger) 6%, white);
 }
 
-button:not(.ant-btn):not([data-ui="interactive-surface"]),
+button:not([class*="ant-"]):not([data-ui="interactive-surface"]),
 .gallery-toolbar-link {
   min-height: 36px;
   padding-inline: 13px;
@@ -180,9 +180,9 @@ button:not(.ant-btn):not([data-ui="interactive-surface"]),
   font-size: 13px;
 }
 
-button:not(.ant-btn):not([data-ui="interactive-surface"]):focus-visible,
-input:not(.ant-input):focus-visible,
-textarea:not(.ant-input):focus-visible,
+button:not([class*="ant-"]):not([data-ui="interactive-surface"]):focus-visible,
+input:not([class*="ant-"]):focus-visible,
+textarea:not([class*="ant-"]):focus-visible,
 select:focus-visible,
 .gallery-toolbar-link:focus-visible,
 [data-ui="interactive-surface"]:focus-visible {
@@ -216,7 +216,7 @@ select:focus-visible,
 .single-advanced,
 .empty-state {
   border-color: transparent;
-  border-radius: var(--ui-radius-lg);
+  border-radius: var(--ui-radius-xl);
   background: var(--ui-surface-default);
 }
 
@@ -290,26 +290,22 @@ select:focus-visible,
   letter-spacing: 0.15em;
 }
 
-input:not(.ant-input),
+input:not([class*="ant-"]),
 select {
   min-height: 36px;
   padding: 7px 11px;
 }
 
-input:not(.ant-input),
-textarea:not(.ant-input),
-select,
-.gallery-search input:not(.ant-input),
-.gallery-location-query input:not(.ant-input),
-.batch-rename-panel input:not(.ant-input),
-.batch-location-fields input:not(.ant-input) {
+input:not([class*="ant-"]),
+textarea:not([class*="ant-"]),
+select {
   border-color: var(--ui-line-subtle);
   border-radius: 10px;
   background: var(--ui-surface-default);
   font-size: 14px;
 }
 
-textarea:not(.ant-input) {
+textarea:not([class*="ant-"]) {
   min-height: 86px;
   padding: 9px 11px;
   line-height: 1.6;

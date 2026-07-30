@@ -254,6 +254,10 @@
   box-shadow: none;
 }
 
+.gallery-detail-page.gallery-modal-body.is-editing {
+  grid-template-columns: minmax(360px, 0.78fr) minmax(560px, 1.22fr);
+}
+
 .gallery-route-detail-head {
   position: relative;
   top: auto;
@@ -982,19 +986,8 @@
 
 .gallery-history-editor {
   gap: 4px;
-  overflow-x: auto;
-  padding: 0 0 5px;
-  scrollbar-color: var(--gallery-line-strong) transparent;
-  scrollbar-width: thin;
-}
-
-.gallery-history-editor::-webkit-scrollbar {
-  height: 4px;
-}
-
-.gallery-history-editor::-webkit-scrollbar-thumb {
-  border-radius: 999px;
-  background: var(--gallery-line-strong);
+  overflow: visible;
+  padding: 0;
 }
 
 .gallery-history-columns,
@@ -1002,12 +995,11 @@
   display: grid;
   grid-template-columns:
     20px
-    minmax(88px, 0.9fr)
-    minmax(128px, 1.5fr)
-    minmax(82px, 0.9fr)
-    46px
-    22px;
-  min-width: 406px;
+    minmax(120px, 0.9fr)
+    minmax(190px, 1.5fr)
+    minmax(120px, 0.9fr)
+    24px;
+  min-width: 0;
 }
 
 .gallery-history-columns {
@@ -1026,10 +1018,11 @@
 
 .gallery-history-row {
   grid-template-areas:
-    "index museum exhibition period images delete";
-  gap: 4px;
+    "index museum exhibition period delete"
+    ". images images images .";
+  gap: 6px 5px;
   align-items: center;
-  padding: 6px;
+  padding: 7px;
   border: 1px solid var(--gallery-line);
   border-radius: 6px;
   background: color-mix(in oklch, var(--gallery-wash) 55%, transparent);
@@ -1100,10 +1093,21 @@
 
 .gallery-history-meta-item:last-child {
   grid-area: images;
-  position: sticky;
-  right: 26px;
-  z-index: 1;
-  background: var(--ui-surface-default);
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding-top: 5px;
+  border-top: 1px solid var(--gallery-line);
+  background: transparent;
+}
+
+.gallery-history-meta-item:last-child .gallery-history-field-label {
+  display: block;
+  color: var(--ui-text-tertiary);
+  font-size: 0.65625rem;
+  font-weight: 600;
 }
 
 .gallery-history-period {
@@ -1117,51 +1121,32 @@
 }
 
 .gallery-history-images {
-  min-height: 30px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.gallery-history-images::-webkit-scrollbar {
-  display: none;
+  min-height: 24px;
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .gallery-history-image-link {
-  min-width: 25px;
-  min-height: 22px !important;
-  height: 22px;
-  padding-inline: 4px;
+  min-width: 31px;
+  min-height: 24px !important;
+  height: 24px;
+  padding-inline: 6px;
   font-size: 0.65625rem;
 }
 
 .gallery-history-delete.ant-btn {
   grid-area: delete;
-  position: sticky;
-  right: 0;
-  z-index: 1;
   align-self: center;
   width: 24px;
   min-width: 24px;
   min-height: 24px !important;
   height: 24px;
   margin: 0;
-  background: var(--ui-surface-default);
-}
-
-.gallery-history-columns-images,
-.gallery-history-columns-delete {
-  position: sticky;
-  z-index: 2;
-  background: var(--ui-surface-default);
-}
-
-.gallery-history-columns-images {
-  right: 26px;
+  background: transparent;
 }
 
 .gallery-history-columns-delete {
-  right: 0;
+  text-align: center;
 }
 
 .gallery-history-add.ant-btn {
@@ -1298,6 +1283,10 @@
 @media (max-width: 1100px) {
   .gallery-detail-page.gallery-modal-body {
     grid-template-columns: minmax(390px, 1fr) minmax(410px, 1fr);
+  }
+
+  .gallery-detail-page.gallery-modal-body.is-editing {
+    grid-template-columns: minmax(340px, 0.72fr) minmax(560px, 1.28fr);
   }
 
   .gallery-modal-info.is-reading .gallery-camera-grid {
