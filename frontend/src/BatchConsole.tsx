@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react"
-import { AutoComplete, Button, Input, Select, Tag } from "antd"
-import { isMissingValue, needsSelection, normalizeTags, statusClass } from "./lib/batchHelpers"
+import { normalizeTags } from "./lib/batchHelpers"
 import { fetchBatchJson as fetchJson } from "./lib/batchApi"
 import { GooglePhotosConfigModal } from "./components/batch/GooglePhotosConfigModal"
 import { BatchSubmitNotice } from "./components/batch/BatchSubmitNotice"
 import { BatchImportPanel } from "./components/batch/BatchImportPanel"
+import { BatchArtifactCard } from "./components/batch/BatchArtifactCard"
 import {
   enrichPendingItemTags,
   normalizePersistedPendingItem,
-  STATUS_LABEL,
   type BatchScanResponse,
   type EraOption,
   type ExhibitionOption,
@@ -28,8 +27,6 @@ import {
   type VisionAnalyzeResponse,
   type VisionCandidate,
 } from "./lib/batchDomain"
-
-const Textarea = Input.TextArea
 
  export default function BatchConsole({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [items, setItems] = useState<PendingArtifact[]>([])
@@ -646,6 +643,48 @@ const Textarea = Input.TextArea
     )
   }
 
+  function handleSelectExhibition(id: number, value: string) {
+    setExhibitionSuggestions((current) => ({ ...current, [id]: [] }))
+    patchLocal(id, { exhibition_name: value })
+  }
+
+  function handleSelectMuseum(item: PendingArtifact, value: string) {
+    const museum = (museumSuggestions[item.id] ?? []).find((option) => option.name === value)
+    if (!museum) {
+      return
+    }
+    setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
+    patchLocal(item.id, {
+      capture_museum_name: museum.name,
+      exhibition_name:
+        (item.exhibition_name ?? "").trim().startsWith("@") || !(item.exhibition_name ?? "").trim()
+          ? "常设"
+          : item.exhibition_name,
+    })
+  }
+
+  function handleConfirmSameArtifact(item: PendingArtifact, matchedArtifact: ExistingArtifactMatch) {
+    patchLocal(item.id, {
+      museum_name: matchedArtifact.artifact.museum_name,
+      name: matchedArtifact.artifact.name,
+      era: matchedArtifact.artifact.era ?? "",
+      description: matchedArtifact.artifact.description ?? "",
+      tags: normalizeTags(matchedArtifact.artifact.tags),
+      existing_artifact_id: matchedArtifact.artifact.id,
+    })
+    setTagInputs((current) => ({ ...current, [item.id]: "" }))
+    setSameArtifactDecisions((current) => ({ ...current, [item.id]: "yes" }))
+    setMessage(`已确认「${item.file_name}」与「${matchedArtifact.artifact.name}」是同一件`)
+    setError(null)
+  }
+
+  function handleRejectSameArtifact(item: PendingArtifact) {
+    patchLocal(item.id, { existing_artifact_id: null })
+    setSameArtifactDecisions((current) => ({ ...current, [item.id]: "no" }))
+    setMessage(`已标记「${item.file_name}」不是同一件，提交时会新建文物记录`)
+    setError(null)
+  }
+
   async function handleScan(files: FileList | null) {
     if (!files || files.length === 0) {
       setError("请先选择一个包含图片的文件夹")
@@ -973,427 +1012,32 @@ const Textarea = Input.TextArea
               : null
 
           return (
-          <article key={item.id} className="batch-card">
-            <div className="batch-thumb">
-              <img
-                src={item.image_url}
-                alt={item.file_name}
-                loading="lazy"
-              />
-              <span className={`pulse ${statusClass(item.status)}`} />
-            </div>
-
-            <div className="batch-fields">
-              <div className="batch-head">
-                <span className="muted small">{item.file_name}</span>
-                <Tag color={item.status === "submitted" ? "success" : undefined}>
-                  {STATUS_LABEL[item.status] ?? item.status}
-                  {item.confidence != null ? ` · ${Math.round(item.confidence * 100)}%` : ""}
-                </Tag>
-              </div>
-
-              <div className="batch-core-card">
-                <div className="batch-section-head">
-                  <strong>核心信息</strong>
-                  <span>先确认这 4 项，其他字段再补充。</span>
-                </div>
-                <div className="batch-core-grid">
-                  <label className={`field ${isMissingValue(item.museum_name) ? "field-invalid" : ""}`}>
-                    <span>博物馆 / 出土地</span>
-                    <Input
-                      list="batch-museum-options"
-                      value={item.museum_name ?? ""}
-                      onChange={(e) => patchLocal(item.id, { museum_name: e.target.value || null })}
-                      placeholder={hasMuseumOptions ? "输入或选择博物馆 / 出土地" : "加载博物馆选项中…"}
-                    />
-                    {isMissingValue(item.museum_name) ? (
-                      <span className="field-help error">请先确认文物所属博物馆或出土地。</span>
-                    ) : (
-                      <span className="field-help">支持直接输入，也可从联想候选中选择，减少馆名不一致的问题。</span>
-                    )}
-                  </label>
-                  <label className={`field ${isMissingValue(item.name) ? "field-invalid" : ""}`}>
-                    <span>文物名称</span>
-                    <Input
-                      value={item.name ?? ""}
-                      onChange={(e) => patchLocal(item.id, { name: e.target.value })}
-                      placeholder="例如：天王俑"
-                    />
-                    {isMissingValue(item.name) ? (
-                      <span className="field-help error">请填写最终入库名称，不要留空。</span>
-                    ) : (
-                      <span className="field-help">尽量用明确器名，避免“待确认文物”这类占位词。</span>
-                    )}
-                  </label>
-                  <label className={`field ${isMissingValue(item.era) ? "field-soft-missing" : ""}`}>
-                    <span>时代</span>
-                    <Input
-                      list="batch-era-options"
-                      value={item.era ?? ""}
-                      onChange={(e) => patchLocal(item.id, { era: e.target.value || null })}
-                      placeholder={hasEraOptions ? "输入或选择时代" : "加载时代选项中…"}
-                    />
-                    <span className="field-help">
-                      {isMissingValue(item.era)
-                        ? "支持直接输入，也可从参考时代中联想选择，便于后续检索和筛选。"
-                        : "可直接输入或从参考时代列表中联想选择。"}
-                    </span>
-                  </label>
-                  <label
-                    className={`field ${
-                      isMissingValue(item.exhibition_name) || needsSelection(item.exhibition_name)
-                        ? "field-invalid"
-                        : ""
-                    }`}
-                  >
-                    <span>展览</span>
-                    <AutoComplete
-                      value={item.exhibition_name ?? ""}
-                      options={(exhibitionSuggestions[item.id] ?? []).map((exhibition) => ({
-                        key: exhibition.id,
-                        value: exhibition.name,
-                        label: (
-                          <span className="autocomplete-option">
-                            <span>{exhibition.name}</span>
-                            <span className="autocomplete-option-meta">{exhibition.museum_name}</span>
-                          </span>
-                        ),
-                      }))}
-                      filterOption={false}
-                      onChange={(value) => patchLocal(item.id, { exhibition_name: value })}
-                      onSelect={(value) => {
-                        setExhibitionSuggestions((current) => ({ ...current, [item.id]: [] }))
-                        patchLocal(item.id, { exhibition_name: value })
-                      }}
-                      placeholder={
-                        selectedMuseum
-                          ? "默认常设，输入 @ 后联想检索该馆展览"
-                          : "例如：常设 / 大唐遗宝特展"
-                      }
-                    />
-                    {needsSelection(item.exhibition_name) ? (
-                      <span className="field-help error">请输入 `@关键词` 后从联想结果里选择展览。</span>
-                    ) : isMissingValue(item.exhibition_name) ? (
-                      <span className="field-help error">请填写或选择展览名称，常设展可直接填“常设”。</span>
-                    ) : (
-                      <span className="field-help">如果是常设展，可直接保留“常设”。</span>
-                    )}
-                  </label>
-                </div>
-              </div>
-
-              {matchedArtifact ? (
-                <section className="backend-match-card">
-                  <div className="backend-match-head">
-                    <div>
-                      <h3>后端疑似同一件</h3>
-                      <p className="muted">
-                        {matchedArtifact.match_reason} 匹配度 {Math.round(matchedArtifact.match_score * 100)}%
-                      </p>
-                    </div>
-                    <span className="backend-match-count">{matchedArtifact.artifact.images.length} 张历史图片</span>
-                  </div>
-                  <div className="backend-match-meta">
-                    <span>名称：{matchedArtifact.artifact.name}</span>
-                    <span>时代：{matchedArtifact.artifact.era || "待确认"}</span>
-                    <span>馆藏：{matchedArtifact.artifact.museum_name}</span>
-                  </div>
-                  {matchedArtifact.artifact.tags.length > 0 ? (
-                    <div className="tag-row">
-                      {matchedArtifact.artifact.tags.map((tag) => (
-                        <Tag key={`batch-match-tag-${item.id}-${tag}`}>
-                          {tag}
-                        </Tag>
-                      ))}
-                    </div>
-                  ) : null}
-                  {matchedArtifact.artifact.description ? (
-                    <p className="result-desc">{matchedArtifact.artifact.description}</p>
-                  ) : (
-                    <p className="muted small">库中这条记录暂无描述。</p>
-                  )}
-                  {matchedArtifact.artifact.images.length > 0 ? (
-                    <div className="existing-artifact-gallery">
-                      {matchedArtifact.artifact.images.map((image) => (
-                        <a
-                          key={image.id}
-                          href={`${apiBaseUrl}${image.url}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="existing-artifact-thumb"
-                        >
-                          <img src={`${apiBaseUrl}${image.url}`} alt={matchedArtifact.artifact.name} loading="lazy" />
-                        </a>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="backend-match-actions">
-                    <Button
-                      htmlType="button"
-                      type="primary"
-                      size="small"
-                      onClick={() => {
-                        patchLocal(item.id, {
-                          museum_name: matchedArtifact.artifact.museum_name,
-                          name: matchedArtifact.artifact.name,
-                          era: matchedArtifact.artifact.era ?? "",
-                          description: matchedArtifact.artifact.description ?? "",
-                          tags: normalizeTags(matchedArtifact.artifact.tags),
-                          existing_artifact_id: matchedArtifact.artifact.id,
-                        })
-                        setTagInputs((current) => ({ ...current, [item.id]: "" }))
-                        setSameArtifactDecisions((current) => ({ ...current, [item.id]: "yes" }))
-                        setMessage(`已确认「${item.file_name}」与「${matchedArtifact.artifact.name}」是同一件`)
-                        setError(null)
-                      }}
-                    >
-                      是同一件
-                    </Button>
-                    <Button
-                      htmlType="button"
-                      type={sameArtifactDecision === "no" ? "primary" : "text"}
-                      onClick={() => {
-                        patchLocal(item.id, { existing_artifact_id: null })
-                        setSameArtifactDecisions((current) => ({ ...current, [item.id]: "no" }))
-                        setMessage(`已标记「${item.file_name}」不是同一件，提交时会新建文物记录`)
-                        setError(null)
-                      }}
-                    >
-                      不是同一件
-                    </Button>
-                  </div>
-                  {sameArtifactDecision === "yes" ? (
-                    <p className="success-text">提交时会直接更新这条已有文物，并把当前图片作为新图追加。</p>
-                  ) : sameArtifactDecision === "no" ? (
-                    <p className="muted small">已按“不是同一件”处理，提交时会新建文物记录。</p>
-                  ) : (
-                    <p className="muted small">如不手动处理，提交时也会优先合并到这条已有文物，避免重复建档。</p>
-                  )}
-                </section>
-              ) : null}
-
-              <div className="field-row">
-                <label className="field">
-                  <span>标签</span>
-                  <div className="tag-editor">
-                    <div className="tag-editor-chips">
-                      {item.tags.length > 0 ? (
-                        item.tags.map((tag) => (
-                          <Tag key={tag} closable onClose={() => removeTag(item.id, tag)}>
-                            {tag}
-                          </Tag>
-                        ))
-                      ) : (
-                        <span className="tag-editor-placeholder">暂无标签</span>
-                      )}
-                    </div>
-                    <Input
-                      value={tagInputs[item.id] ?? ""}
-                      onChange={(e) =>
-                        setTagInputs((current) => ({ ...current, [item.id]: e.target.value }))
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === "," || event.key === "，") {
-                          event.preventDefault()
-                          addTags(item.id, tagInputs[item.id] ?? "")
-                        }
-                        if (event.key === "Backspace" && !(tagInputs[item.id] ?? "") && item.tags.length > 0) {
-                          removeTag(item.id, item.tags[item.tags.length - 1])
-                        }
-                      }}
-                      onBlur={() => addTags(item.id, tagInputs[item.id] ?? "")}
-                      placeholder="输入后回车或逗号添加"
-                    />
-                  </div>
-                  <span className="field-help">建议保留器型、工艺、题材、地域等检索标签。</span>
-                </label>
-                <label
-                  className={`field ${
-                    isMissingValue(item.capture_museum_name) || needsSelection(item.capture_museum_name)
-                      ? "field-invalid"
-                      : ""
-                  }`}
-                >
-                  <span>拍摄时博物馆</span>
-                  <AutoComplete
-                    value={item.capture_museum_name ?? ""}
-                    options={(museumSuggestions[item.id] ?? []).map((museum) => ({
-                      key: museum.id,
-                      value: museum.name,
-                      label: museum.name,
-                    }))}
-                    filterOption={false}
-                    onChange={(value) => {
-                      patchLocal(item.id, {
-                        capture_museum_name: value || null,
-                        exhibition_name:
-                          value && (!(item.exhibition_name ?? "").trim() || (item.exhibition_name ?? "").trim().startsWith("@"))
-                            ? "常设"
-                          : item.exhibition_name,
-                      })
-                    }}
-                    onSelect={(value) => {
-                      const museum = (museumSuggestions[item.id] ?? []).find((option) => option.name === value)
-                      if (!museum) return
-                      setMuseumSuggestions((current) => ({ ...current, [item.id]: [] }))
-                      patchLocal(item.id, {
-                        capture_museum_name: museum.name,
-                        exhibition_name:
-                          (item.exhibition_name ?? "").trim().startsWith("@") || !(item.exhibition_name ?? "").trim()
-                            ? "常设"
-                            : item.exhibition_name,
-                      })
-                    }}
-                    placeholder={hasMuseumOptions ? "输入 @ 后联想检索，例如：@南博" : "加载博物馆选项中…"}
-                  />
-                  {needsSelection(item.capture_museum_name) ? (
-                    <span className="field-help error">请输入 `@关键词` 后，从下方结果选择拍摄时所在博物馆。</span>
-                  ) : isMissingValue(item.capture_museum_name) ? (
-                    <span className="field-help error">提交前必须确认拍摄时所在博物馆。</span>
-                  ) : (
-                    <span className="field-help">支持直接输入，也可通过 `@关键词` 联想选择标准馆名。</span>
-                  )}
-                </label>
-              </div>
-
-              <label className="field">
-                <span>描述</span>
-                <Textarea
-                  rows={4}
-                  value={item.description ?? ""}
-                  onChange={(e) => patchLocal(item.id, { description: e.target.value })}
-                />
-                <span className="field-help">描述里保留器型、工艺、用途和典型特征，不再重复标签列表。</span>
-              </label>
-
-              <div className="field-row">
-                <label className="field">
-                  <span>机型</span>
-                  <Input
-                    value={item.camera_model ?? ""}
-                    onChange={(e) => patchLocal(item.id, { camera_model: e.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>镜头</span>
-                  <Input
-                    value={item.lens_model ?? ""}
-                    onChange={(e) => patchLocal(item.id, { lens_model: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <div className="field-row">
-                <label className="field">
-                  <span>经度</span>
-                  <Input
-                    value={item.longitude ?? ""}
-                    onChange={(e) =>
-                      patchLocal(item.id, {
-                        longitude: e.target.value.trim() ? Number(e.target.value) : null,
-                      })
-                    }
-                    placeholder="例如：108.9402"
-                  />
-                </label>
-                <label className="field">
-                  <span>纬度</span>
-                  <Input
-                    value={item.latitude ?? ""}
-                    onChange={(e) =>
-                      patchLocal(item.id, {
-                        latitude: e.target.value.trim() ? Number(e.target.value) : null,
-                      })
-                    }
-                    placeholder="例如：34.3416"
-                  />
-                </label>
-              </div>
-
-              <div className="field-row">
-                <label className="field">
-                  <span>拍摄时间</span>
-                  <Input
-                    value={item.captured_at ?? ""}
-                    onChange={(e) => patchLocal(item.id, { captured_at: e.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>修图方式</span>
-                  <Select
-                    allowClear
-                    placeholder="未填写"
-                    value={item.edit_method || undefined}
-                    options={[
-                      { value: "简单调整", label: "简单调整" },
-                      { value: "堆栈合成", label: "堆栈合成" },
-                    ]}
-                    onChange={(value) => patchLocal(item.id, { edit_method: value ?? null })}
-                  />
-                </label>
-              </div>
-
-              <div className="field-row">
-                <label className="field">
-                  <span>快门</span>
-                  <Input
-                    value={item.shutter_speed ?? ""}
-                    onChange={(e) => patchLocal(item.id, { shutter_speed: e.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>光圈</span>
-                  <Input
-                    value={item.aperture ?? ""}
-                    onChange={(e) => patchLocal(item.id, { aperture: e.target.value })}
-                  />
-                </label>
-              </div>
-
-              <div className="field-row">
-                <label className="field">
-                  <span>感光度</span>
-                  <Input
-                    value={item.iso ?? ""}
-                    onChange={(e) =>
-                      patchLocal(item.id, {
-                        iso: e.target.value.trim() ? Number(e.target.value) : null,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-
-              {item.error ? <p className="error-text">{item.error}</p> : null}
-              {item.analysis ? <p className="muted">{item.analysis}</p> : null}
-
-              <div className="batch-actions">
-                <Button
-                  htmlType="button"
-                  type="text"
-                  onClick={() => void handleSave(item)}
-                >
-                  保存
-                </Button>
-                <Button
-                  htmlType="button"
-                  type="primary"
-                  size="small"
-                  onClick={() => void handleSubmit(item)}
-                  disabled={item.status === "submitting" || item.status === "submitted"}
-                >
-                  {item.status === "submitted"
-                    ? "已入库"
-                    : matchedArtifact && sameArtifactDecision !== "no"
-                      ? "更新已有文物并上传图片"
-                      : "提交云端"}
-                </Button>
-                <Button htmlType="button" type="text" danger onClick={() => void handleDelete(item.id)}>
-                  删除
-                </Button>
-              </div>
-            </div>
-          </article>
+            <BatchArtifactCard
+              key={item.id}
+              apiBaseUrl={apiBaseUrl}
+              item={item}
+              tagInput={tagInputs[item.id] ?? ""}
+              hasMuseumOptions={hasMuseumOptions}
+              hasEraOptions={hasEraOptions}
+              selectedMuseum={selectedMuseum}
+              museumSuggestions={museumSuggestions[item.id] ?? []}
+              exhibitionSuggestions={exhibitionSuggestions[item.id] ?? []}
+              matchedArtifact={matchedArtifact}
+              sameArtifactDecision={sameArtifactDecision}
+              museumOptionsListId="batch-museum-options"
+              eraOptionsListId="batch-era-options"
+              onPatch={patchLocal}
+              onSave={handleSave}
+              onSubmit={handleSubmit}
+              onDelete={handleDelete}
+              onAddTags={addTags}
+              onRemoveTag={removeTag}
+              onTagInputChange={(id, value) => setTagInputs((current) => ({ ...current, [id]: value }))}
+              onSelectExhibition={handleSelectExhibition}
+              onSelectMuseum={handleSelectMuseum}
+              onConfirmSameArtifact={handleConfirmSameArtifact}
+              onRejectSameArtifact={handleRejectSameArtifact}
+            />
           )
         })}
       </div>
