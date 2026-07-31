@@ -4,8 +4,8 @@ import { App as AntApp, ConfigProvider } from "antd"
 import zhCN from "antd/locale/zh_CN"
 import "antd/dist/reset.css"
 import "./index.css"
-import App from "./App.tsx"
-import { OperationHistoryProvider } from "./OperationHistory.tsx"
+import App from "./App"
+import { OperationHistoryProvider } from "./OperationHistory"
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

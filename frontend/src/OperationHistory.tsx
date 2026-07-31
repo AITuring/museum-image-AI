@@ -10,6 +10,7 @@ import {
 } from "react"
 import { Button, Modal, Popover, Tooltip } from "antd"
 import { FilePenLine, History, Landmark, MapPin, Redo2, Sparkles, Trash2, Undo2 } from "lucide-react"
+import "./OperationHistory.css"
 
 const HISTORY_LIMIT = 80
 const HISTORY_MERGE_WINDOW_MS = 1_200

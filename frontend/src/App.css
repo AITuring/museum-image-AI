@@ -1,11 +1,4 @@
-@import "./styles/app-foundation.css";
-@import "./styles/app-workbench.css";
-@import "./styles/app-artifact-review.css";
-@import "./styles/app-exif-queue.css";
-@import "./styles/app-exif-editor.css";
-@import "./styles/app-exif-research.css";
-@import "./styles/app-museum-workspace.css";
-@import "./styles/app-operation-history.css";
-@import "./styles/app-workspace-polish.css";
-@import "./styles/app-responsive.css";
-@import "./styles/app-exif-sidebar.css";
+@import "./App.foundation.css";
+@import "./App.workbench.css";
+@import "./App.workspace-polish.css";
+@import "./App.responsive.css";

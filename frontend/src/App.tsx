@@ -5,12 +5,12 @@ import { Camera, Check, ChevronRight, CloudUpload, ImagePlus, RefreshCw, ScanSea
 import "./App.css"
 import { OperationHistoryControls, useOperationHistory } from "./OperationHistory"
 
-const BatchConsole = lazy(() => import("./BatchConsole"))
-const ExifConsole = lazy(() => import("./ExifConsole"))
-const Gallery = lazy(() => import("./Gallery"))
-const MuseumBrowser = lazy(() => import("./MuseumBrowser"))
-const ExhibitionCatalog = lazy(() => import("./ExhibitionCatalog"))
-const EraBrowser = lazy(() => import("./EraBrowser"))
+const BatchConsole = lazy(() => import("./features/batch/BatchConsole"))
+const ExifConsole = lazy(() => import("./features/exif/ExifConsole"))
+const Gallery = lazy(() => import("./features/gallery/Gallery"))
+const MuseumBrowser = lazy(() => import("./features/museum/MuseumBrowser"))
+const ExhibitionCatalog = lazy(() => import("./features/museum/ExhibitionCatalog"))
+const EraBrowser = lazy(() => import("./features/era/EraBrowser"))
 
 type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>
 
