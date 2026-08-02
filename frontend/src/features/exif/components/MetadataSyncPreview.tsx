@@ -1,5 +1,7 @@
-import { Button, Checkbox, Space, Tag } from "antd"
+import { useMemo } from "react"
+import { Button, Checkbox, Space, Tag, Tooltip } from "antd"
 import { ArrowRight } from "lucide-react"
+import { distinctiveFileNames } from "../lib/exifDisplay"
 import {
   METADATA_SYNC_FIELD_COUNT,
   MetadataSyncFieldControls,
@@ -7,7 +9,6 @@ import {
   type MetadataSyncSelection,
 } from "./MetadataSyncFieldControls"
 import { WorkbenchModal } from "./WorkbenchModal"
-import { indexedFileName } from "../lib/exifDisplay"
 
 export type MetadataSyncTargetMode = "current" | "selected" | "others"
 
@@ -36,7 +37,6 @@ type MetadataSyncPreviewProps = {
   selectedFieldCount: number
   changedCount: number
   diffs: Array<{ target: MetadataSyncPreviewItem; rows: MetadataSyncDiffRow[] }>
-  itemIndex: (id: string) => number
   onCancel: () => void
   onApply: () => void
   onTargetIdsChange: (ids: string[]) => void
@@ -55,13 +55,17 @@ export function MetadataSyncPreview({
   selectedFieldCount,
   changedCount,
   diffs,
-  itemIndex,
   onCancel,
   onApply,
   onTargetIdsChange,
   onSelectionChange,
   onPreset,
 }: MetadataSyncPreviewProps) {
+  const availableTargetNames = useMemo(
+    () => distinctiveFileNames(availableTargets.map((item) => item.fileName)),
+    [availableTargets],
+  )
+
   const toggleTarget = (id: string, checked: boolean) => {
     onTargetIdsChange(checked ? Array.from(new Set([...targetIds, id])) : targetIds.filter((targetId) => targetId !== id))
   }
@@ -88,15 +92,15 @@ export function MetadataSyncPreview({
           </Space.Compact>
         </div>
         <div className="metadata-sync-target-list">
-          {availableTargets.map((item) => <Checkbox
+          {availableTargets.map((item, index) => <Checkbox
             key={item.id}
             className="metadata-sync-target-option"
             checked={targetIds.includes(item.id)}
             onChange={(event) => toggleTarget(item.id, event.target.checked)}
           >
             <span className="metadata-sync-target-option-content">
-              <img src={item.previewUrl} alt="" loading="lazy" decoding="async" />
-              <span title={item.fileName}>{indexedFileName(item.fileName, itemIndex(item.id))}</span>
+              <img src={item.previewUrl} alt="" width="40" height="40" loading="lazy" decoding="async" />
+              <Tooltip title={item.fileName} mouseEnterDelay={0.4} placement="topLeft"><span>{availableTargetNames[index]}</span></Tooltip>
             </span>
           </Checkbox>)}
         </div>

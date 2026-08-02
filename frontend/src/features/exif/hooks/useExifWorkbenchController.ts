@@ -17,6 +17,7 @@ import {
   changedParts,
   ensureCandidates,
   fileBaseName,
+  hasExifMetadata,
   hasValidGpsCoordinates,
   normalizedFileName,
   toNullableNumber,
@@ -285,10 +286,12 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
     const gpsCount = items.filter((item) =>
       hasValidGpsCoordinates(String(item.form.latitude ?? ""), String(item.form.longitude ?? "")),
     ).length
+    const missingExifCount = items.filter((item) => !hasExifMetadata(item.form)).length
     return {
       itemCount: items.length,
       submittedCount,
       gpsCount,
+      missingExifCount,
     }
   }, [items])
 

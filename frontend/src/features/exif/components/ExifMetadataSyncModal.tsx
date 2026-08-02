@@ -2,7 +2,6 @@ import type { MetadataSyncFieldKey, MetadataSyncSelection } from "./MetadataSync
 import { MetadataSyncPreview, type MetadataSyncDiffRow, type MetadataSyncPreviewItem, type MetadataSyncTargetMode } from "./MetadataSyncPreview"
 
 type ExifMetadataSyncModalProps = {
-  items: Array<{ id: string }>
   metadataSync: {
     previewOpen: boolean
     source: MetadataSyncPreviewItem | null
@@ -22,9 +21,7 @@ type ExifMetadataSyncModalProps = {
   }
 }
 
-export function ExifMetadataSyncModal({ items, metadataSync }: ExifMetadataSyncModalProps) {
-  const itemIndex = (id: string) => items.findIndex((item) => item.id === id)
-
+export function ExifMetadataSyncModal({ metadataSync }: ExifMetadataSyncModalProps) {
   const handleSelectionChange = (field: MetadataSyncFieldKey, checked: boolean) => {
     metadataSync.setSelection((current) => ({ ...current, [field]: checked }))
   }
@@ -40,7 +37,6 @@ export function ExifMetadataSyncModal({ items, metadataSync }: ExifMetadataSyncM
     selectedFieldCount={metadataSync.selectedFieldCount}
     changedCount={metadataSync.changedCount}
     diffs={metadataSync.diffs}
-    itemIndex={itemIndex}
     onCancel={() => metadataSync.setPreviewOpen(false)}
     onApply={metadataSync.apply}
     onTargetIdsChange={metadataSync.setTargetIds}

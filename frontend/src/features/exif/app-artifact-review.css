@@ -306,6 +306,28 @@
   background: var(--app-muted);
 }
 
+@media (max-width: 960px) {
+  .exif-layout,
+  .exif-layout-wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .exif-sidebar {
+    min-height: 420px;
+    max-height: 62dvh;
+  }
+
+  .exif-main {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .exif-sidebar {
+    max-height: none;
+  }
+}
+
 .artifact-match-review {
   display: grid;
   gap: 14px;
@@ -338,4 +360,3 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-

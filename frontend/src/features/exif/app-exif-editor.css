@@ -27,6 +27,68 @@
   margin-top: 4px;
 }
 
+.exif-editor-form .exif-form-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 18px;
+  min-height: 64px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--app-border);
+  background: var(--app-card);
+}
+
+.exif-form-footer-copy {
+  min-width: 0;
+}
+
+.exif-form-footer-copy > p {
+  margin: 0;
+  font-size: var(--ui-type-caption);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.exif-form-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.exif-form-footer-actions .ant-btn {
+  min-width: 112px;
+}
+
+@media (max-width: 1120px) {
+  .exif-editor-form .exif-form-footer {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .exif-form-footer-actions {
+    justify-content: stretch;
+  }
+
+  .exif-form-footer-actions .ant-btn {
+    flex: 1 1 0;
+  }
+}
+
+@media (max-width: 680px) {
+  .exif-form-footer-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .exif-form-footer-actions .ant-btn {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
 .batch-thumb,
 .gallery-thumb,
 .museum-summary-photo-stack,
@@ -305,4 +367,3 @@
   width: min(100%, 1240px);
   margin-inline: auto;
 }
-

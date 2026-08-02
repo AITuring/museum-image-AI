@@ -12,6 +12,43 @@ export function compactFileName(value: string, maxLength = 38) {
   return `${characters.slice(0, headLength).join("")}…${characters.slice(-tailLength).join("")}`
 }
 
-export function indexedFileName(value: string, index: number) {
-  return `${String(Math.max(index, 0) + 1).padStart(2, "0")} · ${compactFileName(value)}`
+export function distinctiveFileNames(values: string[], maxLength = 42) {
+  if (values.length < 2) return values.map((value) => compactFileName(value, maxLength))
+
+  const characterLists = values.map((value) => Array.from(value))
+  const sortedEntries = values
+    .map((value, index) => ({ index, value }))
+    .sort((left, right) => left.value.localeCompare(right.value, "zh-CN"))
+  const sharedPrefixLengths = values.map(() => 0)
+
+  const commonPrefixLength = (left: string[], right: string[]) => {
+    const limit = Math.min(left.length, right.length)
+    let length = 0
+    while (length < limit && left[length] === right[length]) length += 1
+    return length
+  }
+
+  sortedEntries.forEach((entry, sortedIndex) => {
+    const adjacentEntries = [sortedEntries[sortedIndex - 1], sortedEntries[sortedIndex + 1]].filter(Boolean)
+    sharedPrefixLengths[entry.index] = adjacentEntries.reduce(
+      (longest, adjacent) => Math.max(longest, commonPrefixLength(characterLists[entry.index], characterLists[adjacent.index])),
+      0,
+    )
+  })
+
+  return characterLists.map((characters, index) => {
+    const sharedPrefixLength = sharedPrefixLengths[index]
+    if (sharedPrefixLength < 8) return compactFileName(values[index], maxLength)
+    const contextStart = Math.max(0, sharedPrefixLength - 10)
+    if (contextStart === 0) return compactFileName(values[index], maxLength)
+    const distinctiveCharacters = characters.slice(contextStart)
+    const availableLength = Math.max(18, maxLength - 1)
+    if (distinctiveCharacters.length <= availableLength) {
+      return `…${distinctiveCharacters.join("")}`
+    }
+
+    const tailLength = Math.max(14, Math.floor((availableLength - 1) * 0.58))
+    const headLength = Math.max(8, availableLength - tailLength - 1)
+    return `…${distinctiveCharacters.slice(0, headLength).join("")}…${distinctiveCharacters.slice(-tailLength).join("")}`
+  })
 }

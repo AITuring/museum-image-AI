@@ -1,6 +1,5 @@
 import { Button, Dropdown, Space, Tooltip } from "antd"
 import { Check, CloudUpload, FolderOpen, ImagePlus, Loader2, Trash2 } from "lucide-react"
-import { indexedFileName } from "../lib/exifDisplay"
 import { changedParts, ensureCandidates } from "../lib/exifFormDomain"
 import { BatchLocationPanel } from "./BatchLocationPanel"
 import { ExifQueueList } from "./ExifQueueList"
@@ -25,6 +24,7 @@ type ExifSidebarQueueState = {
     itemCount: number
     submittedCount: number
     gpsCount: number
+    missingExifCount: number
   }
   needsDirectoryAuthorization: boolean
   allItemsSubmitted: boolean
@@ -138,6 +138,7 @@ export function ExifSidebarSection({
           {queueState.stats.submittedCount} 已入库
           <span>·</span>
           {queueState.stats.gpsCount} 带坐标
+          {queueState.stats.missingExifCount > 0 ? <><span>·</span><em>{queueState.stats.missingExifCount} 缺 EXIF</em></> : null}
         </p>
       ) : null}
       <div className="exif-sidebar-scroll">
@@ -151,7 +152,6 @@ export function ExifSidebarSection({
             selection={syncPanel.selection}
             selectedFieldCount={syncPanel.selectedFieldCount}
             changedCount={syncPanel.changedCount}
-            indexedFileName={indexedFileName}
             onSourceChange={syncPanel.setSourceId}
             onTargetModeChange={syncPanel.setTargetMode}
             onSelectionChange={syncPanel.setSelection}

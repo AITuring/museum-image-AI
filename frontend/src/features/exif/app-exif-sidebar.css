@@ -106,6 +106,12 @@
   color: var(--ui-line-strong);
 }
 
+.exif-queue-panel .exif-sidebar-summary > em {
+  color: var(--ui-warning);
+  font-style: normal;
+  font-weight: 560;
+}
+
 /* ---------- 滚动区与工具区 ---------- */
 
 /* 侧栏宽度固定，网格轨道一律用 minmax(0, 1fr)：默认的 auto 轨道会按 max-content
@@ -367,7 +373,23 @@
   white-space: nowrap;
 }
 
-.exif-queue-copy .queue-change-summary {
+.queue-item-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.queue-item-meta > :first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exif-queue-copy .queue-change-summary,
+.queue-info-complete,
+.queue-missing-info {
   overflow: hidden;
   color: var(--ui-text-tertiary);
   font-size: var(--ui-type-caption);
@@ -375,6 +397,22 @@
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.queue-missing-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ui-warning);
+  font-weight: 540;
+}
+
+.queue-missing-info svg {
+  flex: 0 0 auto;
+}
+
+.queue-info-complete {
+  color: var(--ui-success);
 }
 
 .exif-queue-copy .queue-upload {
@@ -405,9 +443,11 @@
 /* 状态是辅助信息：与文件名同级字号，但更轻的字重与更低的对比度。 */
 .queue-state-tags {
   display: inline-flex;
+  flex: 0 0 auto;
   min-width: max-content;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  margin-inline-start: auto;
 }
 
 .queue-state-tags .ant-tag {
@@ -461,6 +501,7 @@
 .exif-queue-item-actions {
   position: static;
   flex: 0 0 auto;
+  align-self: center;
   transform: none;
 }
 
@@ -549,5 +590,16 @@
 @media (prefers-reduced-motion: reduce) {
   .exif-sidebar-tools > details[open] > :not(summary) {
     animation: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .exif-queue-panel {
+    --queue-action-size: 44px;
+    --queue-row-action-size: 44px;
+  }
+
+  .exif-sidebar-tools > details > summary {
+    min-height: 44px;
   }
 }

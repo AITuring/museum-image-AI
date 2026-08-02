@@ -132,7 +132,6 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
         onAuthorize={uploadPermission.authorize}
       />
       <ExifMetadataSyncModal
-        items={queue.items}
         metadataSync={metadataSync}
       />
     </section>

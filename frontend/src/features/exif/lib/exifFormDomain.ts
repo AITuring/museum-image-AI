@@ -141,6 +141,36 @@ export function hasValidGpsCoordinates(latitude: string, longitude: string) {
     && Math.abs(lng) <= 180
 }
 
+export function hasExifMetadata(form: FormState) {
+  return Boolean(
+    form.cameraModel.trim()
+      || form.lensModel.trim()
+      || form.capturedAt.trim()
+      || form.shutterSpeed.trim()
+      || form.aperture.trim()
+      || form.iso.trim(),
+  )
+}
+
+export function missingQuickEntryInfo(form: FormState) {
+  const missing: string[] = []
+  if (!form.name.trim()) missing.push("名称")
+  if (!form.museumName.trim()) missing.push("馆藏")
+
+  const hasExif = hasExifMetadata(form)
+  if (!hasExif) {
+    missing.push("EXIF")
+  } else {
+    if (!form.capturedAt.trim()) missing.push("拍摄时间")
+    if (!form.cameraModel.trim() && !form.lensModel.trim()) missing.push("相机信息")
+    if (!form.shutterSpeed.trim() && !form.aperture.trim() && !form.iso.trim()) missing.push("曝光参数")
+  }
+
+  if (!hasValidGpsCoordinates(form.latitude, form.longitude)) missing.push("GPS")
+  if (!form.displayLocationName.trim()) missing.push("展出地点")
+  return missing
+}
+
 export function exposureSeconds(value: string | null | undefined) {
   const text = (value ?? "").trim().toLowerCase().replace(/s$/, "")
   if (!text) return null
