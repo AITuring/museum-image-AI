@@ -343,6 +343,26 @@
   gap: 12px;
 }
 
+@media (max-width: 680px) {
+  /* Keep the environment switch beside the horizontally scrollable tabs. */
+  .topbar .topbar-actions {
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: nowrap;
+  }
+
+  .topbar .topbar-nav {
+    flex: 1 1 0;
+    width: 0;
+    overflow-x: auto;
+  }
+
+  .topbar .topbar-nav .app-tabs {
+    width: max-content;
+    min-width: max-content;
+  }
+}
+
 .operation-history-controls {
   display: inline-flex;
   align-items: center;
@@ -501,4 +521,3 @@
     0 0 0 1px var(--ui-text-tertiary),
     0 0 0 4px var(--ui-surface-default);
 }
-

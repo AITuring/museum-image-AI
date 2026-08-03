@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
 import { App as AntApp } from "antd"
 import "./gallery.css"
 import {
@@ -17,17 +17,65 @@ import { useGallerySaveArtifact } from "./hooks/useGallerySaveArtifact"
 export type { GalleryArtifact, GalleryImage } from "./lib/galleryTypes"
 
 export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
-  const { message } = AntApp.useApp()
+  const { message, modal } = AntApp.useApp()
   const editingRef = useRef(false)
+  const routeExitRef = useRef<(() => void) | null>(null)
 
-  const pageState = useGalleryPageState({ apiBaseUrl, editingRef })
+  const pageState = useGalleryPageState({ apiBaseUrl, editingRef, routeExitRef })
   const editingActions = useGalleryEditingActions({
     apiBaseUrl,
     active: pageState.active,
     activeImageIndex: pageState.activeImageIndex,
     noticeApi: message,
   })
-  editingRef.current = editingActions.editing
+  useLayoutEffect(() => {
+    editingRef.current = editingActions.editing
+  }, [editingActions.editing])
+
+  const { editing, handleCancelEdit, hasUnsavedChanges } = editingActions
+
+  const requestExitEditing = useCallback(
+    (afterExit?: () => void) => {
+      if (!editing) {
+        afterExit?.()
+        return
+      }
+      const discard = () => {
+        handleCancelEdit()
+        afterExit?.()
+      }
+      if (!hasUnsavedChanges) {
+        discard()
+        return
+      }
+      modal.confirm({
+        title: "放弃未保存的修改？",
+        content: "当前编辑内容尚未保存，离开后这些修改会丢失。",
+        okText: "放弃修改",
+        cancelText: "继续编辑",
+        okButtonProps: { danger: true },
+        onOk: discard,
+      })
+    },
+    [editing, handleCancelEdit, hasUnsavedChanges, modal],
+  )
+
+  useLayoutEffect(() => {
+    routeExitRef.current = () => requestExitEditing(pageState.navigateToGallery)
+    return () => {
+      routeExitRef.current = null
+    }
+  }, [pageState.navigateToGallery, requestExitEditing])
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ""
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
+  }, [hasUnsavedChanges])
 
   const saveArtifact = useGallerySaveArtifact({
     apiBaseUrl,
@@ -52,9 +100,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
   return (
     <section
       className={`gallery-workbench${active ? " has-detail-route" : ""}`}
-      aria-labelledby="gallery-page-title"
+      aria-labelledby={active ? `gallery-detail-title-${active.id}` : "gallery-page-title"}
     >
-      {!active ? (
+      {!active && pageState.artifactRouteId === null ? (
         <GalleryBrowseView
           apiBaseUrl={apiBaseUrl}
           items={pageState.items}
@@ -66,6 +114,12 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
           onSearch={pageState.handleSearch}
           onSelectArtifact={pageState.navigateToArtifact}
         />
+      ) : null}
+
+      {!active && pageState.artifactRouteId !== null ? (
+        <div className="gallery-route-loading-state" role="status" aria-live="polite" aria-busy="true">
+          {pageState.routeLoading ? "正在打开文物资料…" : pageState.error ?? "文物资料暂时无法打开。"}
+        </div>
       ) : null}
 
       {active ? (
@@ -82,9 +136,9 @@ export default function Gallery({ apiBaseUrl }: { apiBaseUrl: string }) {
             editFormId={editFormId}
             returnLabel={getGalleryReturnTarget().label}
             thumbnailStripRef={pageState.thumbnailStripRef}
-            onBack={pageState.navigateToGallery}
+            onBack={() => requestExitEditing(pageState.navigateToGallery)}
             onStartEdit={editingActions.handleStartEdit}
-            onCancelEdit={editingActions.handleCancelEdit}
+            onCancelEdit={() => requestExitEditing()}
             onOpenPreview={(index) => {
               pageState.setPreviewImageIndex(index)
               pageState.setImagePreviewOpen(true)

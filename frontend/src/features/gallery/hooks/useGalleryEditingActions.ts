@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { buildEditForm, buildHistoricalExhibitionDrafts, normalizeTags } from "../lib/galleryPageHelpers"
 import type { GalleryEditFormState, HistoricalExhibitionDraft } from "../lib/galleryEditorTypes"
 import type { GalleryArtifact } from "../lib/galleryTypes"
@@ -42,6 +42,13 @@ export function useGalleryEditingActions({
   const [descriptionProgress, setDescriptionProgress] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
+  const [initialDraft, setInitialDraft] = useState<string | null>(null)
+
+  const currentDraft = useMemo(
+    () => (editForm ? JSON.stringify({ editForm, historicalExhibitions }) : null),
+    [editForm, historicalExhibitions],
+  )
+  const hasUnsavedChanges = editing && Boolean(initialDraft && currentDraft !== initialDraft)
 
   const clearFeedback = useCallback((options?: { keepNotice?: boolean }) => {
     setSaveError(null)
@@ -52,6 +59,7 @@ export function useGalleryEditingActions({
   }, [])
 
   const resetEditingState = useCallback(() => {
+    setInitialDraft(null)
     setEditing(false)
     setEditForm(null)
     setHistoricalExhibitions([])
@@ -67,6 +75,7 @@ export function useGalleryEditingActions({
   }, [])
 
   const startEditingSession = useCallback((nextForm: GalleryEditFormState, nextHistory: HistoricalExhibitionDraft[]) => {
+    setInitialDraft(JSON.stringify({ editForm: nextForm, historicalExhibitions: nextHistory }))
     setEditForm(nextForm)
     setHistoricalExhibitions(nextHistory)
     setTagInput("")
@@ -96,6 +105,7 @@ export function useGalleryEditingActions({
   )
 
   const handleCancelEdit = useCallback(() => {
+    setInitialDraft(null)
     setEditing(false)
     setEditForm(null)
     setAdvancedEditingOpen(false)
@@ -276,6 +286,7 @@ export function useGalleryEditingActions({
     setSaveNotice,
     handleStartEdit,
     handleCancelEdit,
+    hasUnsavedChanges,
     handleAddHistoricalExhibition,
     handleGenerateDescription,
     addTags,

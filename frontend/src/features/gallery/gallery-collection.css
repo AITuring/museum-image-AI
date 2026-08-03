@@ -9,12 +9,12 @@
 /* Collection browsing surface */
 
 .gallery-workbench {
-  width: min(1760px, calc(100% - 28px));
-  max-width: 1760px;
+  width: min(2880px, calc(100% - clamp(24px, 4vw, 96px)));
+  max-width: 2880px;
   height: auto;
-  min-height: calc(100dvh - 96px);
-  margin: 10px auto 32px;
-  padding: 0 clamp(2px, 0.8vw, 12px) 20px;
+  min-height: calc(100dvh - 64px);
+  margin: 0 auto 40px;
+  padding: 16px clamp(2px, 0.6vw, 12px) 28px;
   overflow: visible;
 }
 
@@ -136,4 +136,3 @@
 .gallery-card-context {
   font-size: 0.72rem;
 }
-

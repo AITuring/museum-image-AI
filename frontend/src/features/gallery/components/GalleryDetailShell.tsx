@@ -1,6 +1,6 @@
 import { Button } from "antd"
 import { ArrowLeft, ChevronLeft, ChevronRight, Maximize2 } from "lucide-react"
-import { type ReactNode } from "react"
+import { useEffect, useRef, type ReactNode } from "react"
 import { getBackendImageVariantUrl, toAbsoluteUrl } from "../lib/galleryArtifactIdentity"
 import type { GalleryArtifact, GalleryImage } from "../lib/galleryTypes"
 import { FallbackImage } from "./FallbackImage"
@@ -44,6 +44,13 @@ export function GalleryDetailShell({
   onSelectImage,
   children,
 }: Props) {
+  const headingRef = useRef<HTMLHeadingElement | null>(null)
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => headingRef.current?.focus({ preventScroll: true }))
+    return () => window.cancelAnimationFrame(frame)
+  }, [artifact.id])
+
   return (
     <article
       className={`gallery-detail-page gallery-modal-body ${editing ? "is-editing" : "is-reading"}`}
@@ -62,9 +69,14 @@ export function GalleryDetailShell({
         </Button>
         <div className="gallery-detail-heading">
           {editing ? <span className="gallery-edit-kicker">编辑文物资料</span> : null}
-          <h3 id={`gallery-detail-title-${artifact.id}`} className="gallery-detail-title">
+          <h2
+            ref={headingRef}
+            id={`gallery-detail-title-${artifact.id}`}
+            className="gallery-detail-title"
+            tabIndex={-1}
+          >
             {artifact.name}
-          </h3>
+          </h2>
         </div>
         <div className="gallery-actions" onClick={(event) => event.stopPropagation()}>
           {editing ? (
@@ -108,10 +120,13 @@ export function GalleryDetailShell({
                   key={currentImage.id}
                   className="gallery-modal-main-img"
                   src={getBackendImageVariantUrl(apiBaseUrl, currentImage.url, 1280)}
+                  srcSet={`${getBackendImageVariantUrl(apiBaseUrl, currentImage.url, 640)} 640w, ${getBackendImageVariantUrl(apiBaseUrl, currentImage.url, 1280)} 1280w`}
+                  sizes="(max-width: 920px) 100vw, 44vw"
                   fallbackSrc={toAbsoluteUrl(apiBaseUrl, currentImage.url)}
                   alt={artifact.name}
                   width={1280}
                   height={960}
+                  decoding="async"
                 />
               </button>
               <span className="gallery-media-image-name">{currentImageName}</span>
@@ -173,10 +188,13 @@ export function GalleryDetailShell({
                       >
                         <FallbackImage
                           src={getBackendImageVariantUrl(apiBaseUrl, image.url, 160)}
-                          alt={artifact.name}
+                          srcSet={`${getBackendImageVariantUrl(apiBaseUrl, image.url, 160)} 160w, ${getBackendImageVariantUrl(apiBaseUrl, image.url, 320)} 320w`}
+                          sizes="(max-width: 680px) 18vw, 160px"
+                          alt=""
                           width={160}
                           height={160}
                           loading={artifact.images.length > 20 ? "lazy" : "eager"}
+                          decoding="async"
                         />
                       </button>
                     ))}

@@ -127,6 +127,27 @@
 
   .topbar-actions {
     gap: 8px;
+    flex-wrap: nowrap;
+  }
+
+  .topbar-nav {
+    flex: 1 1 auto;
+    width: auto;
+    max-width: none;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+    touch-action: pan-x;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .topbar-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar-nav .app-tabs {
+    width: 100%;
+    min-width: 0;
   }
 
   .backend-target-select-wrap {

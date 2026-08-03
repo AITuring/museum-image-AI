@@ -220,6 +220,21 @@ select:focus-visible,
   background: var(--ui-surface-default);
 }
 
+.module-loading-state {
+  display: grid;
+  min-height: 220px;
+  place-content: center;
+  gap: 6px;
+  padding: 32px 20px;
+  color: var(--ui-text-secondary);
+  text-align: center;
+}
+
+.module-loading-state h2,
+.module-loading-state p {
+  margin: 0;
+}
+
 .section-heading,
 .single-panel-head,
 .single-workbench-head,
@@ -395,4 +410,3 @@ textarea:not([class*="ant-"]) {
 .exif-form-card .ant-card-body {
   padding: 4px 14px 16px;
 }
-

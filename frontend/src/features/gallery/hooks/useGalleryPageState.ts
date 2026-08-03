@@ -3,6 +3,7 @@ import { getBackendImageVariantUrl } from "../lib/galleryArtifactIdentity"
 import { normalizeMuseumOptions } from "../lib/galleryEditorHelpers"
 import type { EraOption, MuseumOption } from "../lib/galleryEditorTypes"
 import {
+  fetchGalleryArtifact,
   fetchGalleryArtifacts,
   getGalleryArtifactIdFromLocation,
   getGalleryReturnTarget,
@@ -12,22 +13,26 @@ import type { GalleryArtifact } from "../lib/galleryTypes"
 type Params = {
   apiBaseUrl: string
   editingRef: { current: boolean }
+  routeExitRef: { current: (() => void) | null }
 }
 
-export function useGalleryPageState({ apiBaseUrl, editingRef }: Params) {
-  const [query, setQuery] = useState("")
-  const [submittedQuery, setSubmittedQuery] = useState("")
+export function useGalleryPageState({ apiBaseUrl, editingRef, routeExitRef }: Params) {
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get("q") ?? "")
+  const [submittedQuery, setSubmittedQuery] = useState(() => new URLSearchParams(window.location.search).get("q") ?? "")
   const [items, setItems] = useState<GalleryArtifact[]>([])
   const [museumOptions, setMuseumOptions] = useState<MuseumOption[]>([])
   const [eraOptions, setEraOptions] = useState<EraOption[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState<GalleryArtifact | null>(null)
+  const [routeLoading, setRouteLoading] = useState(() => getGalleryArtifactIdFromLocation() !== null)
   const [artifactRouteId, setArtifactRouteId] = useState<number | null>(getGalleryArtifactIdFromLocation)
   const [activeImageIndex, setActiveImageIndex] = useState(0)
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false)
   const [previewImageIndex, setPreviewImageIndex] = useState(0)
   const thumbnailStripRef = useRef<HTMLDivElement | null>(null)
+  const browseScrollYRef = useRef(0)
+  const browseFocusIdRef = useRef<number | null>(null)
 
   const resetMediaState = useCallback(() => {
     setImagePreviewOpen(false)
@@ -69,7 +74,7 @@ export function useGalleryPageState({ apiBaseUrl, editingRef }: Params) {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void load("")
+      void load(new URLSearchParams(window.location.search).get("q") ?? "")
     }, 0)
     return () => window.clearTimeout(timer)
   }, [load])
@@ -77,26 +82,57 @@ export function useGalleryPageState({ apiBaseUrl, editingRef }: Params) {
   useEffect(() => {
     const syncRoute = () => {
       const routeId = getGalleryArtifactIdFromLocation()
+      if (routeId !== artifactRouteId && editingRef.current && artifactRouteId !== null) {
+        const query = window.location.search
+        window.history.pushState({}, "", `/gallery/${artifactRouteId}${query}`)
+        routeExitRef.current?.()
+        return
+      }
       setArtifactRouteId(routeId)
       if (routeId === null) {
+        setRouteLoading(false)
         resetMediaState()
         setActive(null)
       }
     }
     window.addEventListener("popstate", syncRoute)
     return () => window.removeEventListener("popstate", syncRoute)
-  }, [resetMediaState])
+  }, [artifactRouteId, editingRef, resetMediaState, routeExitRef])
 
   useEffect(() => {
     if (artifactRouteId === null) return
+    let cancelled = false
     const requestedArtifact = items.find((item) => item.id === artifactRouteId)
-    if (!requestedArtifact) return
-    const timer = window.setTimeout(() => {
-      resetMediaState()
-      setActive(requestedArtifact)
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [artifactRouteId, items, resetMediaState])
+    if (requestedArtifact) {
+      const timer = window.setTimeout(() => {
+        if (cancelled) return
+        setRouteLoading(false)
+        resetMediaState()
+        setActive(requestedArtifact)
+      }, 0)
+      return () => {
+        cancelled = true
+        window.clearTimeout(timer)
+      }
+    }
+    const loadingTimer = window.setTimeout(() => setRouteLoading(true), 0)
+    void fetchGalleryArtifact(apiBaseUrl, artifactRouteId)
+      .then((requestedArtifact) => {
+        if (cancelled) return
+        setRouteLoading(false)
+        resetMediaState()
+        setActive(requestedArtifact)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setRouteLoading(false)
+        setError(err instanceof Error ? err.message : "文物加载失败")
+      })
+    return () => {
+      cancelled = true
+      window.clearTimeout(loadingTimer)
+    }
+  }, [apiBaseUrl, artifactRouteId, items, resetMediaState])
 
   useEffect(() => {
     void (async () => {
@@ -115,12 +151,19 @@ export function useGalleryPageState({ apiBaseUrl, editingRef }: Params) {
 
   const navigateToGallery = useCallback(() => {
     const returnTarget = getGalleryReturnTarget()
-    if (window.location.pathname !== returnTarget.path || window.location.search) {
+    const currentPath = `${window.location.pathname}${window.location.search}`
+    if (currentPath !== returnTarget.path) {
       window.history.pushState({}, "", returnTarget.path)
     }
     setArtifactRouteId(null)
     resetMediaState()
     setActive(null)
+    window.setTimeout(() => {
+      window.scrollTo(0, browseScrollYRef.current)
+      if (browseFocusIdRef.current !== null) {
+        document.querySelector<HTMLElement>(`[data-gallery-card-id="${browseFocusIdRef.current}"]`)?.focus()
+      }
+    }, 0)
   }, [resetMediaState])
 
   useEffect(() => {
@@ -190,17 +233,27 @@ export function useGalleryPageState({ apiBaseUrl, editingRef }: Params) {
     (event: { preventDefault(): void }) => {
       event.preventDefault()
       setSubmittedQuery(query)
+      const params = new URLSearchParams(window.location.search)
+      if (query.trim()) params.set("q", query.trim())
+      else params.delete("q")
+      const nextSearch = params.toString()
+      window.history.replaceState({}, "", `/gallery${nextSearch ? `?${nextSearch}` : ""}`)
       void load(query)
     },
     [load, query],
   )
 
   const navigateToArtifact = useCallback((artifact: GalleryArtifact) => {
-    const nextPath = `/gallery/${artifact.id}`
-    if (window.location.pathname !== nextPath) {
+    browseScrollYRef.current = window.scrollY
+    browseFocusIdRef.current = artifact.id
+    const params = new URLSearchParams(window.location.search)
+    const querySuffix = params.toString() ? `?${params.toString()}` : ""
+    const nextPath = `/gallery/${artifact.id}${querySuffix}`
+    if (window.location.pathname !== nextPath || window.location.search !== querySuffix) {
       window.history.pushState({}, "", nextPath)
     }
     setArtifactRouteId(artifact.id)
+    setRouteLoading(false)
     resetMediaState()
     setActive(artifact)
     window.scrollTo(0, 0)
@@ -226,6 +279,8 @@ export function useGalleryPageState({ apiBaseUrl, editingRef }: Params) {
     previewImageIndex,
     setPreviewImageIndex,
     thumbnailStripRef,
+    routeLoading,
+    artifactRouteId,
     handleSearch,
     navigateToArtifact,
     navigateToGallery,

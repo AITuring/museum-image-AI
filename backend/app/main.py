@@ -5536,6 +5536,47 @@ def list_artifacts(
     )
 
 
+@app.get(f"{settings.api_prefix}/artifacts/match", response_model=ArtifactMatchRead | None)
+def match_artifact_route(
+    name: str = Query(..., min_length=1),
+    museum_name: str | None = Query(default=None),
+    era: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> ArtifactMatchRead | None:
+    # Keep this static path ahead of /artifacts/{artifact_id}; FastAPI matches
+    # routes in declaration order, and the detail route must not shadow it.
+    return match_artifact(name=name, museum_name=museum_name, era=era, db=db)
+
+
+@app.get(f"{settings.api_prefix}/artifacts/{{artifact_id}}", response_model=ArtifactRead)
+def get_artifact(artifact_id: int, db: Session = Depends(get_db)) -> ArtifactRead:
+    if should_proxy_artifact_queries_to_cloud():
+        base = settings.cloud_api_base_url.rstrip("/")
+        try:
+            with httpx.Client(timeout=30, follow_redirects=True) as client:
+                response = client.get(f"{base}{settings.api_prefix}/artifacts/{artifact_id}")
+                response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {404, 405}:
+                try:
+                    payload = fetch_cloud_artifact_payload()
+                except Exception as fallback_exc:  # noqa: BLE001 - retain the upstream failure context
+                    raise HTTPException(status_code=502, detail=f"查询云端文物失败：{fallback_exc}") from fallback_exc
+                matched = next((item for item in payload if int(item.get("id", 0)) == artifact_id), None)
+                if matched is None:
+                    raise HTTPException(status_code=404, detail="文物不存在。") from exc
+                return ArtifactRead.model_validate(matched)
+            raise HTTPException(status_code=502, detail=f"查询云端文物失败：{exc}") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"查询云端文物失败：{exc}") from exc
+        return ArtifactRead.model_validate(response.json())
+
+    artifact = db.scalar(artifact_detail_query().where(Artifact.id == artifact_id))
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="文物不存在。")
+    return ArtifactRead.model_validate(enrich_artifact_catalog_links([artifact])[0])
+
+
 @app.patch(f"{settings.api_prefix}/artifacts/{{artifact_id}}", response_model=ArtifactRead)
 def update_artifact(
     artifact_id: int,

@@ -1223,7 +1223,7 @@ function App() {
   }
 
   const lazyViewFallback = (
-    <section className="panel empty-state">
+    <section className="module-loading-state" aria-busy="true" role="status">
       <h2>页面加载中</h2>
       <p className="muted">正在按需加载当前模块…</p>
     </section>

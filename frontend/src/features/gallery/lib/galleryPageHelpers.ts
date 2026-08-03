@@ -150,6 +150,11 @@ export async function fetchGalleryArtifacts(apiBaseUrl: string, query = "") {
   return mergeGalleryArtifacts(payload.map(normalizeArtifact))
 }
 
+export async function fetchGalleryArtifact(apiBaseUrl: string, artifactId: number) {
+  const payload = await readJson<RawGalleryArtifact>(await fetch(`${apiBaseUrl}/api/artifacts/${artifactId}`))
+  return normalizeArtifact(payload)
+}
+
 export function normalizeArtifact(item: RawGalleryArtifact): GalleryArtifact {
   return {
     ...item,
@@ -171,7 +176,9 @@ export function getGalleryArtifactIdFromLocation() {
 
 export function getGalleryReturnTarget() {
   const params = new URLSearchParams(window.location.search)
-  if (params.get("from") !== "eras") return { path: "/gallery", label: "图库" }
+  const query = params.get("q")?.trim()
+  const querySuffix = query ? `?${new URLSearchParams({ q: query }).toString()}` : ""
+  if (params.get("from") !== "eras") return { path: `/gallery${querySuffix}`, label: "图库" }
   const era = params.get("era")?.trim()
   const eraQuery = era ? `?${new URLSearchParams({ era }).toString()}` : ""
   return { path: `/eras${eraQuery}`, label: "时代" }
@@ -179,8 +186,22 @@ export function getGalleryReturnTarget() {
 
 export function formatMetaDate(value?: string | null) {
   if (!value) return ""
-  const normalized = value.replace("T", " ")
-  return normalized.length >= 19 ? normalized.slice(0, 19) : normalized
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    const normalized = value.replace("T", " ")
+    return normalized.length >= 19 ? normalized.slice(0, 19) : normalized
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  })
+    .format(parsed)
+    .replaceAll("/", "-")
 }
 
 export function formatMetaValue(value?: string | number | null) {
