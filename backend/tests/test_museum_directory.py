@@ -271,6 +271,8 @@ class MuseumDirectoryTests(unittest.TestCase):
         museum = directory[0]
         self.assertEqual(museum.name, "山西青铜博物馆")
         self.assertEqual(museum.location, address)
+        self.assertEqual(museum.latitude, 37.805219)
+        self.assertEqual(museum.longitude, 112.533475)
         self.assertEqual(museum.catalog_museum_name, "山西青铜博物馆")
         self.assertEqual(museum.catalog_address, address)
         self.assertEqual(museum.catalog_exhibition_count, 3)

@@ -1,32 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ImgHTMLAttributes } from "react"
 import { Button, Input, Segmented } from "antd"
+import { geocodeLocationName, reverseGeocodeCoordinates } from "../exif/components/GpsMapPicker"
 import "./museum.css"
 
 const AMAP_SCRIPT_ID = "museum-console-amap-script"
 const AMAP_SECURITY_CODE = "3ba01835420271d5405dccba5e089b46"
 const AMAP_SCRIPT_SRC =
-  "https://webapi.amap.com/maps?v=1.4.15&key=7a9513e700e06c00890363af1bd2d926&plugin=AMap.ToolBar"
-
-// #region debug-point A:reporter
-const MAP_DEBUG_URL = "http://127.0.0.1:7777/event"
-const MAP_DEBUG_SESSION = "museum-map-load"
-function reportMapDebug(hypothesisId: "A" | "B" | "C" | "D", msg: string, data: Record<string, unknown>) {
-  fetch(MAP_DEBUG_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      sessionId: MAP_DEBUG_SESSION,
-      runId: "pre-fix",
-      hypothesisId,
-      location: "MuseumBrowser.tsx",
-      msg: `[DEBUG] ${msg}`,
-      data,
-      ts: Date.now(),
-    }),
-  }).catch(() => {})
-}
-// #endregion
+  "https://webapi.amap.com/maps?v=2.0&key=7a9513e700e06c00890363af1bd2d926&plugin=AMap.ToolBar"
+const AMAP_RASTER_TILE_PATH = "/api/map-tiles/[z]/[x]/[y].png"
+const MAP_REGION_GEOCODE_LIMIT = 24
+const MAP_GEOCODE_CONCURRENCY = 4
 
 type MuseumExhibition = {
   id: number
@@ -140,6 +124,25 @@ type RawMuseumArtifact = Omit<MuseumArtifact, "images" | "exhibitions"> & {
 
 type MuseumMode = "cards" | "map"
 const MUSEUM_CARD_PAGE_SIZE = 60
+
+type MapCoordinate = {
+  latitude: number
+  longitude: number
+}
+
+type MapLocationState = {
+  status: "idle" | "loading" | "success" | "error"
+  message: string
+}
+
+type MapViewport = {
+  centerLatitude: number
+  centerLongitude: number
+  zoom: number
+}
+
+const museumGeocodeCache = new Map<string, Promise<MapCoordinate | null>>()
+const GENERIC_REGION_NAMES = new Set(["中国", "中国大陆", "大陆", "全国"])
 
 type FolderEntry = {
   artifactId: number
@@ -293,6 +296,175 @@ function museumMatchesQuery(museum: MuseumRecord, query: string) {
     .some((value) => value!.toLowerCase().includes(normalized))
 }
 
+function normalizedMapText(value: string) {
+  return value.normalize("NFKC").replace(/[\s·,，。()（）/\\-]+/g, "").toLowerCase()
+}
+
+function museumGeocodeQueries(museum: MuseumRecord) {
+  const location = museum.catalog_address?.trim() || museum.location?.trim() || ""
+  const city = museum.catalog_city?.trim() || ""
+  const candidates = [
+    location,
+    [city, museum.name].filter(Boolean).join(""),
+    museum.name,
+  ]
+  return Array.from(new Set(candidates.map((value) => value.trim()).filter(Boolean)))
+}
+
+function museumGeocodeKey(museum: MuseumRecord) {
+  return normalizedMapText(museumGeocodeQueries(museum).join("|"))
+}
+
+async function geocodeMuseumCoordinate(museum: MuseumRecord, force = false): Promise<MapCoordinate | null> {
+  const key = museumGeocodeKey(museum)
+  const storageKey = `museum-map-geocode:v1:${key}`
+  if (force) {
+    museumGeocodeCache.delete(key)
+    try {
+      window.localStorage.removeItem(storageKey)
+    } catch {
+      // Private browsing or storage policies must not block live geocoding.
+    }
+  } else {
+    try {
+      const stored = window.localStorage.getItem(storageKey)
+      if (stored) {
+        const coordinate = JSON.parse(stored) as Partial<MapCoordinate>
+        if (
+          Number.isFinite(coordinate.latitude)
+          && Number.isFinite(coordinate.longitude)
+          && Math.abs(Number(coordinate.latitude)) <= 90
+          && Math.abs(Number(coordinate.longitude)) <= 180
+        ) {
+          return {
+            latitude: Number(coordinate.latitude),
+            longitude: Number(coordinate.longitude),
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed or unavailable local cache entries.
+    }
+  }
+
+  const cached = museumGeocodeCache.get(key)
+  if (cached) return cached
+
+  const request = (async () => {
+    for (const query of museumGeocodeQueries(museum)) {
+      try {
+        const coordinate = await geocodeLocationName(query)
+        if (
+          coordinate
+          && Number.isFinite(coordinate.latitude)
+          && Number.isFinite(coordinate.longitude)
+          && Math.abs(coordinate.latitude) <= 90
+          && Math.abs(coordinate.longitude) <= 180
+        ) {
+          try {
+            window.localStorage.setItem(storageKey, JSON.stringify(coordinate))
+          } catch {
+            // A successful coordinate remains usable without persistent cache.
+          }
+          return coordinate
+        }
+      } catch {
+        // Try the next, less specific query before reporting a location failure.
+      }
+    }
+    return null
+  })()
+
+  museumGeocodeCache.set(key, request)
+  return request
+}
+
+function museumRegionKeys(museum: MuseumRecord) {
+  const keys = new Set<string>()
+  const add = (value: string | null) => {
+    if (!value) return
+    const normalized = normalizedMapText(value)
+      .replace(/(?:特别行政区|维吾尔自治区|壮族自治区|回族自治区|自治区|省|市)$/u, "")
+    if (normalized.length >= 2 && !GENERIC_REGION_NAMES.has(normalized)) keys.add(normalized)
+  }
+
+  add(museum.catalog_city)
+  add(museum.catalog_region)
+  for (const match of museum.location?.matchAll(/([\u3400-\u9fff]{2,10}(?:特别行政区|自治区|省|市))/gu) ?? []) {
+    add(match[1])
+  }
+  return Array.from(keys)
+}
+
+function museumIsInMapAddress(museum: MuseumRecord, mapAddress: string) {
+  const normalizedAddress = normalizedMapText(mapAddress)
+  return museumRegionKeys(museum).some((key) => normalizedAddress.includes(key))
+}
+
+function museumIsNearMapCenter(museum: MuseumRecord, latitude: number, longitude: number) {
+  if (museum.latitude == null || museum.longitude == null) return false
+  const latitudeKm = (museum.latitude - latitude) * 111
+  const longitudeKm = (museum.longitude - longitude) * 111 * Math.cos(latitude * Math.PI / 180)
+  return Math.hypot(latitudeKm, longitudeKm) <= 120
+}
+
+function latitudeToMercatorY(latitude: number) {
+  const boundedLatitude = Math.max(-85.05112878, Math.min(85.05112878, latitude))
+  const radians = boundedLatitude * Math.PI / 180
+  return (1 - Math.asinh(Math.tan(radians)) / Math.PI) / 2
+}
+
+function mapTileUrl(apiBaseUrl: string, zoom: number, x: number, y: number) {
+  return `${apiBaseUrl.replace(/\/$/, "")}${AMAP_RASTER_TILE_PATH}`
+    .replace("[z]", String(zoom))
+    .replace("[x]", String(x))
+    .replace("[y]", String(y))
+}
+
+function mapViewportTiles(apiBaseUrl: string, viewport: MapViewport) {
+  const tileCount = 1 << viewport.zoom
+  const centerX = (viewport.centerLongitude + 180) / 360 * tileCount
+  const centerY = latitudeToMercatorY(viewport.centerLatitude) * tileCount
+  const baseX = Math.floor(centerX)
+  const baseY = Math.floor(centerY)
+  const tiles: Array<{ key: string; url: string; left: number; top: number }> = []
+
+  for (let yOffset = -2; yOffset <= 2; yOffset += 1) {
+    for (let xOffset = -2; xOffset <= 2; xOffset += 1) {
+      const rawX = baseX + xOffset
+      const rawY = baseY + yOffset
+      if (rawY < 0 || rawY >= tileCount) continue
+      const x = ((rawX % tileCount) + tileCount) % tileCount
+      tiles.push({
+        key: `${viewport.zoom}/${rawX}/${rawY}`,
+        url: mapTileUrl(apiBaseUrl, viewport.zoom, x, rawY),
+        left: (rawX - centerX) * 256,
+        top: (rawY - centerY) * 256,
+      })
+    }
+  }
+  return tiles
+}
+
+async function geocodeMuseumBatch(museums: MuseumRecord[]) {
+  const results = new Map<number, MapCoordinate>()
+  let nextIndex = 0
+  const workerCount = Math.min(MAP_GEOCODE_CONCURRENCY, museums.length)
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < museums.length) {
+        const museum = museums[nextIndex]
+        nextIndex += 1
+        const coordinate = await geocodeMuseumCoordinate(museum)
+        if (coordinate) results.set(museum.id, coordinate)
+      }
+    }),
+  )
+
+  return results
+}
+
 function buildMuseumFolders(apiBaseUrl: string, artifacts: MuseumArtifact[]) {
   const folderMap = new Map<
     string,
@@ -399,12 +571,25 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [mapLoading, setMapLoading] = useState(false)
   const [mapError, setMapError] = useState<string | null>(null)
   const [mapReady, setMapReady] = useState(false)
+  const [mapLocationState, setMapLocationState] = useState<MapLocationState>({
+    status: "idle",
+    message: "拖动地图后，将自动补充当前区域的场馆定位。",
+  })
+  const [mapViewport, setMapViewport] = useState<MapViewport>({
+    centerLatitude: 39.90923,
+    centerLongitude: 116.397428,
+    zoom: 5,
+  })
   const [visibleMuseumCount, setVisibleMuseumCount] = useState(MUSEUM_CARD_PAGE_SIZE)
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any>(null)
   const markersRef = useRef<any[]>([])
   const infoWindowRef = useRef<any | null>(null)
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  const itemsRef = useRef<MuseumRecord[]>([])
+  const viewportRequestRef = useRef(0)
+  const locationRequestRef = useRef(0)
+  const viewportAttemptedIdsRef = useRef(new Set<number>())
 
   const filteredMuseums = useMemo(() => items.filter((museum) => museumMatchesQuery(museum, query)), [items, query])
   const visibleMuseums = useMemo(
@@ -465,6 +650,14 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     () => filteredMuseums.filter((museum) => museum.latitude != null && museum.longitude != null),
     [filteredMuseums],
   )
+  const mapTiles = useMemo(
+    () => mapViewportTiles(apiBaseUrl, mapViewport),
+    [apiBaseUrl, mapViewport],
+  )
+
+  useEffect(() => {
+    itemsRef.current = items
+  }, [items])
 
   const loadMuseums = useCallback(async () => {
     setLoading(true)
@@ -497,6 +690,8 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           derived_from_catalog: derivedFromCatalog,
         })
       })
+      viewportAttemptedIdsRef.current.clear()
+      itemsRef.current = payload
       setItems(payload)
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载博物馆失败")
@@ -661,6 +856,111 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     setActiveFolderKey((current) => (current && folders.some((folder) => folder.key === current) ? current : folders[0].key))
   }, [folders])
 
+  const updateMuseumCoordinates = useCallback((coordinates: Map<number, MapCoordinate>) => {
+    if (coordinates.size === 0) return
+    setItems((current) => {
+      let changed = false
+      const next = current.map((museum) => {
+        const coordinate = coordinates.get(museum.id)
+        if (!coordinate) return museum
+        if (museum.latitude === coordinate.latitude && museum.longitude === coordinate.longitude) return museum
+        changed = true
+        return {
+          ...museum,
+          latitude: coordinate.latitude,
+          longitude: coordinate.longitude,
+        }
+      })
+      if (changed) itemsRef.current = next
+      return changed ? next : current
+    })
+  }, [])
+
+  const locateMuseumOnMap = useCallback(async (museum: MuseumRecord, force = false) => {
+    const requestId = locationRequestRef.current + 1
+    locationRequestRef.current = requestId
+    viewportRequestRef.current += 1
+    setMapLocationState({ status: "loading", message: `正在定位${museum.name}…` })
+
+    const coordinate = await geocodeMuseumCoordinate(museum, force)
+    if (requestId !== locationRequestRef.current) return
+    if (!coordinate) {
+      setMapLocationState({
+        status: "error",
+        message: `暂未找到${museum.name}的可靠坐标，可点击重试。`,
+      })
+      return
+    }
+
+    updateMuseumCoordinates(new Map([[museum.id, coordinate]]))
+    mapRef.current?.setZoomAndCenter?.(13, [coordinate.longitude, coordinate.latitude])
+    setMapLocationState({ status: "success", message: `已定位到${museum.name}。` })
+  }, [updateMuseumCoordinates])
+
+  const loadMuseumsInMapViewport = useCallback(async () => {
+    const map = mapRef.current
+    const center = map?.getCenter?.()
+    const longitude = center?.getLng?.() ?? center?.lng
+    const latitude = center?.getLat?.() ?? center?.lat
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return
+
+    const requestId = viewportRequestRef.current + 1
+    viewportRequestRef.current = requestId
+    setMapLocationState({ status: "loading", message: "正在识别当前地图区域…" })
+
+    try {
+      const mapAddress = await reverseGeocodeCoordinates(Number(latitude), Number(longitude))
+      if (requestId !== viewportRequestRef.current) return
+      if (!mapAddress) {
+        const locatedCount = itemsRef.current.filter((museum) => (
+          museumIsNearMapCenter(museum, Number(latitude), Number(longitude))
+        )).length
+        setMapLocationState({
+          status: "success",
+          message: locatedCount > 0
+            ? `当前视野已加载 ${locatedCount} 个有坐标的场馆；区域名称服务暂不可用。`
+            : "当前视野已加载；区域名称服务暂不可用，继续拖动仍会刷新地图。",
+        })
+        return
+      }
+
+      const candidates = itemsRef.current
+        .filter(
+          (museum) => museum.latitude == null
+            && museum.longitude == null
+            && !viewportAttemptedIdsRef.current.has(museum.id)
+            && museumIsInMapAddress(museum, mapAddress),
+        )
+        .slice(0, MAP_REGION_GEOCODE_LIMIT)
+
+      if (candidates.length === 0) {
+        setMapLocationState({ status: "success", message: "当前区域的场馆定位已加载。" })
+        return
+      }
+
+      candidates.forEach((museum) => viewportAttemptedIdsRef.current.add(museum.id))
+      setMapLocationState({
+        status: "loading",
+        message: `正在补充当前区域的 ${candidates.length} 个场馆定位…`,
+      })
+      const coordinates = await geocodeMuseumBatch(candidates)
+      updateMuseumCoordinates(coordinates)
+      if (requestId !== viewportRequestRef.current) return
+
+      const failedCount = candidates.length - coordinates.size
+      setMapLocationState({
+        status: "success",
+        message: failedCount > 0
+          ? `当前区域新增 ${coordinates.size} 个定位，${failedCount} 个暂未找到可靠坐标。`
+          : `当前区域新增 ${coordinates.size} 个场馆定位。`,
+      })
+    } catch {
+      if (requestId === viewportRequestRef.current) {
+        setMapLocationState({ status: "error", message: "当前区域场馆定位加载失败，请稍后重试。" })
+      }
+    }
+  }, [updateMuseumCoordinates])
+
   useEffect(() => {
     if (mode !== "map") return
 
@@ -669,14 +969,10 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
     let onWinResize: (() => void) | null = null
 
     const initializeMap = () => {
-      // #region debug-point C:init-entry
-      reportMapDebug("C", "initializeMap entry", {
-        hasContainer: Boolean(mapContainerRef.current),
-        hasAMap: Boolean((window as any).AMap),
-        hasMapInstance: Boolean(mapRef.current),
-        mode,
-      })
-      // #endregion
+      // React StrictMode mounts, cleans up, and mounts effects again in
+      // development. A stale script callback must never create the shared map
+      // instance after its effect has already been disposed.
+      if (disposed) return
       if (!mapContainerRef.current) {
         window.setTimeout(() => {
           if (!disposed && mapContainerRef.current && (window as any).AMap && !mapRef.current) {
@@ -690,19 +986,10 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       if (!mapWindow.AMap || mapRef.current) return
 
       try {
-        // #region debug-point B:amap-shape
-        reportMapDebug("B", "AMap shape before map creation", {
-          hasPlugin: typeof mapWindow.AMap?.plugin === "function",
-          hasToolBar: typeof mapWindow.AMap?.ToolBar,
-          hasMapCtor: typeof mapWindow.AMap?.Map,
-          containerWidth: mapContainerRef.current?.clientWidth ?? null,
-          containerHeight: mapContainerRef.current?.clientHeight ?? null,
-        })
-        // #endregion
         const map = new mapWindow.AMap.Map(mapContainerRef.current, {
           zoom: 5,
           center: [116.397428, 39.90923],
-          mapStyle: "amap://styles/whitesmoke",
+          layers: [],
         })
 
         const safeResize = () => {
@@ -716,7 +1003,29 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
               map.setZoom(zoom)
               map.setCenter(center)
             }
-          } catch {}
+          } catch {
+            // A transient resize failure should not unmount an otherwise usable map.
+          }
+        }
+
+        const syncViewport = () => {
+          const center = map.getCenter?.()
+          const centerLongitude = center?.getLng?.() ?? center?.lng
+          const centerLatitude = center?.getLat?.() ?? center?.lat
+          const zoom = Math.max(3, Math.min(20, Math.round(Number(map.getZoom?.() ?? 5))))
+          if (!Number.isFinite(centerLatitude) || !Number.isFinite(centerLongitude)) return
+          setMapViewport((current) => {
+            const next = {
+              centerLatitude: Number(centerLatitude),
+              centerLongitude: Number(centerLongitude),
+              zoom,
+            }
+            return Math.abs(current.centerLatitude - next.centerLatitude) < 0.000001
+              && Math.abs(current.centerLongitude - next.centerLongitude) < 0.000001
+              && current.zoom === next.zoom
+              ? current
+              : next
+          })
         }
 
         mapRef.current = map
@@ -724,12 +1033,6 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           offset: new mapWindow.AMap.Pixel(0, -18),
           closeWhenClickMap: true,
         })
-        // #region debug-point C:map-created
-        reportMapDebug("C", "map instance created", {
-          hasInfoWindow: Boolean(infoWindowRef.current),
-          mapType: typeof map,
-        })
-        // #endregion
 
         let finalized = false
         const finalizeMap = () => {
@@ -741,38 +1044,23 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
             safeResize()
             setMapReady(true)
             setMapLoading(false)
-            // #region debug-point C:map-finalized
-            reportMapDebug("C", "map finalized", {
-              zoom: map.getZoom?.() ?? null,
-              center: map.getCenter?.()?.toString?.() ?? null,
-            })
-            // #endregion
           }, 0)
         }
 
         map.on("complete", finalizeMap)
         map.on("tilesloaded", finalizeMap)
+        map.on("moveend", syncViewport)
+        map.on("zoomend", syncViewport)
 
-        // ToolBar 在不同地图脚本加载顺序下可能不存在，缺失时不应阻断地图主流程。
         mapWindow.AMap.plugin?.(["AMap.ToolBar"], () => {
           const ToolBar = mapWindow.AMap?.ToolBar
-          // #region debug-point B:toolbar-plugin-callback
-          reportMapDebug("B", "toolbar plugin callback", {
-            hasPlugin: typeof mapWindow.AMap?.plugin === "function",
-            hasToolBar: typeof ToolBar,
-          })
-          // #endregion
           if (typeof ToolBar === "function") {
             map.addControl?.(new ToolBar())
-            // #region debug-point B:toolbar-added
-            reportMapDebug("B", "toolbar added", { added: true })
-            // #endregion
-          } else {
-            // #region debug-point B:toolbar-missing
-            reportMapDebug("B", "toolbar missing after plugin load", { added: false })
-            // #endregion
           }
         })
+        // Location services are optional and must not hold back the toolbar or
+        // the raster base map when their network endpoint is unavailable.
+        mapWindow.AMap.plugin?.(["AMap.Geocoder", "AMap.PlaceSearch"], () => {})
 
         onWinResize = () => safeResize()
         window.addEventListener("resize", onWinResize)
@@ -786,11 +1074,6 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
         finalizeTimer = window.setTimeout(finalizeMap, 1200)
       } catch (err) {
-        // #region debug-point D:init-catch
-        reportMapDebug("D", "map initialization catch", {
-          error: err instanceof Error ? err.message : String(err),
-        })
-        // #endregion
         if (disposed) return
         setMapLoading(false)
         setMapError(err instanceof Error ? err.message : "地图初始化失败")
@@ -801,20 +1084,8 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       const mapWindow = window as any
       setMapLoading(true)
       setMapError(null)
-      // #region debug-point A:mount-timer
-      reportMapDebug("A", "map mount timer fired", {
-        hasExistingAMap: Boolean(mapWindow.AMap),
-        scriptSrc: AMAP_SCRIPT_SRC,
-      })
-      // #endregion
 
       if (mapWindow.AMap) {
-        // #region debug-point A:reuse-existing-amap
-        reportMapDebug("A", "reuse existing AMap global", {
-          hasPlugin: typeof mapWindow.AMap?.plugin === "function",
-          hasToolBar: typeof mapWindow.AMap?.ToolBar,
-        })
-        // #endregion
         initializeMap()
         return
       }
@@ -823,20 +1094,10 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       const existing = document.getElementById(AMAP_SCRIPT_ID) as HTMLScriptElement | null
       if (existing) {
-        // #region debug-point A:reuse-script-tag
-        reportMapDebug("A", "reuse existing script tag", {
-          existingSrc: existing.src,
-        })
-        // #endregion
         existing.addEventListener("load", initializeMap, { once: true })
         existing.addEventListener(
           "error",
           () => {
-            // #region debug-point D:script-error-existing
-            reportMapDebug("D", "existing script tag load error", {
-              existingSrc: existing.src,
-            })
-            // #endregion
             setMapLoading(false)
             setMapError("高德地图加载失败")
           },
@@ -849,21 +1110,8 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       script.id = AMAP_SCRIPT_ID
       script.src = AMAP_SCRIPT_SRC
       script.async = true
-      script.onload = () => {
-        // #region debug-point A:new-script-loaded
-        reportMapDebug("A", "new map script loaded", {
-          scriptSrc: script.src,
-          hasAMap: Boolean((window as any).AMap),
-        })
-        // #endregion
-        initializeMap()
-      }
+      script.onload = initializeMap
       script.onerror = () => {
-        // #region debug-point D:new-script-error
-        reportMapDebug("D", "new map script load error", {
-          scriptSrc: script.src,
-        })
-        // #endregion
         setMapLoading(false)
         setMapError("高德地图加载失败")
       }
@@ -883,6 +1131,8 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       markersRef.current = []
       mapRef.current?.destroy?.()
       mapRef.current = null
+      viewportRequestRef.current += 1
+      locationRequestRef.current += 1
       setMapReady(false)
     }
   }, [mode])
@@ -933,12 +1183,49 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   }, [mapReady, mode, renderMarkers])
 
   useEffect(() => {
+    if (mode !== "map" || !mapReady || !activeMuseum) return
+    if (activeMuseum.latitude != null && activeMuseum.longitude != null) return
+    void locateMuseumOnMap(activeMuseum)
+  }, [activeMuseum, locateMuseumOnMap, mapReady, mode])
+
+  useEffect(() => {
+    if (mode !== "map" || !mapReady) return
+    const map = mapRef.current
+    if (!map) return
+
+    let moveTimer: number | null = null
+    let userDragged = false
+    const scheduleViewportLoad = () => {
+      if (!userDragged) return
+      userDragged = false
+      if (moveTimer !== null) window.clearTimeout(moveTimer)
+      moveTimer = window.setTimeout(() => {
+        void loadMuseumsInMapViewport()
+      }, 260)
+    }
+    const cancelPendingActiveLocation = () => {
+      userDragged = true
+      locationRequestRef.current += 1
+    }
+
+    map.on?.("moveend", scheduleViewportLoad)
+    map.on?.("dragstart", cancelPendingActiveLocation)
+
+    return () => {
+      if (moveTimer !== null) window.clearTimeout(moveTimer)
+      viewportRequestRef.current += 1
+      map.off?.("moveend", scheduleViewportLoad)
+      map.off?.("dragstart", cancelPendingActiveLocation)
+    }
+  }, [loadMuseumsInMapViewport, mapReady, mode])
+
+  useEffect(() => {
     if (mode !== "map" || !mapReady) return
     const map = mapRef.current
     if (!map) return
 
     if (activeMuseum?.latitude != null && activeMuseum.longitude != null) {
-      map.setZoomAndCenter?.(11, [activeMuseum.longitude, activeMuseum.latitude])
+      map.setZoomAndCenter?.(13, [activeMuseum.longitude, activeMuseum.latitude])
       infoWindowRef.current?.setContent?.(buildMarkerInfoHtml(activeMuseum))
       infoWindowRef.current?.open?.(map, [activeMuseum.longitude, activeMuseum.latitude])
       return
@@ -1364,19 +1651,69 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
             <div className="museum-map-panel-head">
               <div>
                 <h3>按坐标浏览博物馆</h3>
-                <p className="muted">悬停看简介，点击进入详情。</p>
+                <p className="muted">拖动地图自动加载当前区域；悬停看简介，点击进入详情。</p>
               </div>
+              <Button
+                className="museum-map-locate-button"
+                size="small"
+                disabled={!mapReady || !activeMuseum}
+                loading={mapLocationState.status === "loading" && mapLocationState.message.includes(activeMuseum?.name ?? "")}
+                onClick={() => {
+                  if (!activeMuseum) return
+                  if (activeMuseum.latitude != null && activeMuseum.longitude != null) {
+                    mapRef.current?.setZoomAndCenter?.(13, [activeMuseum.longitude, activeMuseum.latitude])
+                    setMapLocationState({ status: "success", message: `已回到${activeMuseum.name}。` })
+                    return
+                  }
+                  void locateMuseumOnMap(activeMuseum, mapLocationState.status === "error")
+                }}
+              >
+                {activeMuseum?.latitude != null && activeMuseum.longitude != null
+                  ? "回到当前场馆"
+                  : mapLocationState.status === "error"
+                    ? "重新定位"
+                    : "定位当前场馆"}
+              </Button>
             </div>
 
+            <p
+              className={`museum-map-location-status ${mapLocationState.status}`}
+              role={mapLocationState.status === "error" ? "alert" : "status"}
+              aria-live="polite"
+            >
+              {mapLocationState.message}
+            </p>
+
             <div className="museum-map-frame">
-              <div ref={mapContainerRef} className="museum-map-canvas" />
+              <div className="museum-map-raster-fallback" aria-hidden="true">
+                <div className="museum-map-raster-grid">
+                  {mapTiles.map((tile) => (
+                    <img
+                      alt=""
+                      decoding="async"
+                      draggable={false}
+                      key={tile.key}
+                      loading="eager"
+                      src={tile.url}
+                      style={{ left: tile.left, top: tile.top }}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div
+                ref={mapContainerRef}
+                className="museum-map-canvas"
+                role="region"
+                aria-label="博物馆地图，可拖动查看并加载其他地区的场馆"
+                tabIndex={0}
+              />
               {mapLoading ? (
-                <div className="museum-map-overlay">
+                <div className="museum-map-overlay" role="status" aria-live="polite">
                   <span className="muted">地图加载中...</span>
                 </div>
               ) : null}
               {mapError ? (
-                <div className="museum-map-overlay error">
+                <div className="museum-map-overlay error" role="alert">
                   <span>{mapError}</span>
                 </div>
               ) : null}

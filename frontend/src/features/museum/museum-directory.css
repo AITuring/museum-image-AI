@@ -467,6 +467,43 @@
   gap: 10px;
 }
 
+.museum-map-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.museum-map-panel-head h3,
+.museum-map-panel-head p,
+.museum-map-location-status {
+  margin: 0;
+}
+
+.museum-map-locate-button {
+  flex: 0 0 auto;
+  min-height: 36px;
+}
+
+.museum-map-location-status {
+  min-height: 1.45em;
+  color: var(--ui-text-tertiary);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.museum-map-location-status.loading {
+  color: var(--ui-text-secondary);
+}
+
+.museum-map-location-status.success {
+  color: var(--ui-success, #58755b);
+}
+
+.museum-map-location-status.error {
+  color: var(--ui-danger);
+}
+
 .museum-map-frame {
   position: relative;
   overflow: hidden;
@@ -476,10 +513,49 @@
   box-shadow: inset 0 0 0 1px rgba(136, 104, 76, 0.06);
 }
 
+.museum-map-raster-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  background: #f2efe9;
+  pointer-events: none;
+}
+
+.museum-map-raster-grid {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+
+.museum-map-raster-grid img {
+  position: absolute;
+  width: 256px;
+  height: 256px;
+  max-width: none;
+  user-select: none;
+}
+
 .museum-map-canvas {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   min-height: 620px;
+  background: transparent !important;
+}
+
+.museum-map-canvas .amap-maps,
+.museum-map-canvas .amap-layers,
+.museum-map-canvas .amap-layer {
+  background: transparent !important;
+}
+
+.museum-map-canvas:focus-visible {
+  outline: 3px solid rgba(151, 102, 63, 0.46);
+  outline-offset: -3px;
 }
 
 .museum-map-overlay {
@@ -569,5 +645,20 @@
   .museum-image-panel-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .museum-map-panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .museum-map-locate-button {
+    min-height: 44px;
+    width: 100%;
+  }
+
+  .museum-map-frame,
+  .museum-map-canvas {
+    min-height: 480px;
   }
 }

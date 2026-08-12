@@ -3,7 +3,9 @@ from datetime import date
 
 from app.exhibition_source import (
     institution_name_from_permanent_title,
+    institution_name_from_room_label,
     is_probable_room_label,
+    museum_name_from_source_fields,
     parse_city_regions,
     parse_date_range,
     parse_exhibition_detail,
@@ -15,8 +17,38 @@ class ExhibitionSourceTests(unittest.TestCase):
     def test_room_labels_are_not_treated_as_museums(self) -> None:
         self.assertTrue(is_probable_room_label("二层临展厅"))
         self.assertTrue(is_probable_room_label("1933老场坊1号楼3楼"))
+        self.assertTrue(is_probable_room_label("6、7号馆"))
+        self.assertTrue(is_probable_room_label("A馆"))
         self.assertFalse(is_probable_room_label("山西青铜博物馆"))
         self.assertFalse(is_probable_room_label("北京展览馆"))
+        self.assertIsNone(
+            museum_name_from_source_fields(None, "二层临展厅")
+        )
+        self.assertEqual(
+            museum_name_from_source_fields("二层临展厅", "山西青铜博物馆"),
+            "山西青铜博物馆",
+        )
+
+    def test_composite_room_labels_recover_only_the_institution(self) -> None:
+        self.assertEqual(
+            institution_name_from_room_label("上海图书馆第一展厅"),
+            "上海图书馆",
+        )
+        self.assertEqual(
+            institution_name_from_room_label("上海图书馆徐家汇藏书楼一楼"),
+            "上海图书馆徐家汇藏书楼",
+        )
+        self.assertEqual(
+            museum_name_from_source_fields(None, "嘉德艺术中心（一层展厅）"),
+            "嘉德艺术中心",
+        )
+        self.assertIsNone(
+            institution_name_from_room_label("故宫博物院（北院区）")
+        )
+        self.assertEqual(
+            museum_name_from_source_fields(None, "故宫博物院（北院区）"),
+            "故宫博物院（北院区）",
+        )
 
     def test_permanent_title_can_recover_a_legacy_missing_institution(self) -> None:
         self.assertEqual(

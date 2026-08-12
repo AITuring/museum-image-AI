@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time as time_module
 import unicodedata
+from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
@@ -46,7 +47,9 @@ from app.exhibition_models import (
 )
 from app.exhibition_source import (
     institution_name_from_permanent_title,
+    institution_name_from_room_label,
     is_probable_room_label,
+    museum_name_from_source_fields,
 )
 from app.exhibition_schemas import (
     ExhibitionArtifactSummaryRead,
@@ -218,6 +221,9 @@ IMAGE_VARIANT_LOCKS: dict[str, asyncio.Lock] = {}
 IMAGE_VARIANT_WORK_SEMAPHORE = asyncio.Semaphore(
     max(1, settings.image_variant_concurrency)
 )
+MAP_TILE_CACHE_MAX_ITEMS = 512
+MAP_TILE_CACHE: OrderedDict[tuple[int, int, int], bytes] = OrderedDict()
+MAP_TILE_FETCH_SEMAPHORE = asyncio.Semaphore(8)
 
 
 def report_debug_event(
@@ -829,9 +835,7 @@ def ensure_museum(db: Session, museum_name: str) -> Museum:
     # is not part of the institution name. Normalize at the write boundary so
     # quick entry cannot create a second Museum row that the directory later
     # has to merge back together.
-    name = normalize_museum_segment(museum_name)
-    if not name:
-        raise HTTPException(status_code=400, detail="馆藏单位不能为空。")
+    name = normalize_museum_name_for_write(museum_name, "馆藏单位")
     museum = db.scalar(select(Museum).where(Museum.name == name))
     if museum is not None:
         return museum
@@ -1219,6 +1223,28 @@ def normalize_museum_segment(value: str) -> str:
     return segment
 
 
+def normalize_museum_name_for_write(value: str, field_label: str = "博物馆") -> str:
+    """Normalize a museum write and reject room/floor identities.
+
+    Composite legacy labels retain useful context, so
+    ``上海图书馆第一展厅`` becomes ``上海图书馆``. A bare room such as
+    ``二层临展厅`` has no defensible parent institution and must be corrected by
+    the caller or recovered from a selected catalog exhibition.
+    """
+    name = normalize_museum_segment(value)
+    recovered = institution_name_from_room_label(name)
+    if recovered:
+        name = normalize_museum_segment(recovered)
+    if not name:
+        raise HTTPException(status_code=400, detail=f"{field_label}不能为空。")
+    if is_probable_room_label(name):
+        raise HTTPException(
+            status_code=422,
+            detail=f"“{name}”是展厅、展区或楼层，不是博物馆；请选择真实场馆。",
+        )
+    return name
+
+
 def normalize_museum_directory_key(value: str | None) -> str:
     if not value:
         return ""
@@ -1248,6 +1274,14 @@ _MUSEUM_BRANCH_GPS_RULES = {
     ),
 }
 
+# Verified physical venue pins used when catalog-only museums do not yet have
+# uploaded-image GPS. Keep this deliberately small and source-backed; live
+# geocoding remains the general fallback in the map UI.
+_MUSEUM_MAP_COORDINATES = {
+    # AMap POI B0FFKY2TQI, verified 2026-08-13.
+    normalize_museum_directory_key("山西青铜博物馆"): (37.805219, 112.533475),
+}
+
 
 def has_valid_coordinates(latitude: float | None, longitude: float | None) -> bool:
     return (
@@ -1255,6 +1289,19 @@ def has_valid_coordinates(latitude: float | None, longitude: float | None) -> bo
         and longitude is not None
         and -90 <= latitude <= 90
         and -180 <= longitude <= 180
+    )
+
+
+def museum_map_coordinates(
+    museum_name: str,
+    latitude: float | None,
+    longitude: float | None,
+) -> tuple[float | None, float | None]:
+    if has_valid_coordinates(latitude, longitude):
+        return latitude, longitude
+    return _MUSEUM_MAP_COORDINATES.get(
+        normalize_museum_directory_key(museum_name),
+        (latitude, longitude),
     )
 
 
@@ -1311,16 +1358,18 @@ def canonical_catalog_museum_name(
     address: str | None = None,
 ) -> str | None:
     """Resolve legacy Shanghai Museum catalog labels to a physical venue."""
-    normalized_name = normalize_museum_directory_key(museum_name)
-    if normalized_name == normalize_museum_directory_key("上海博物馆"):
-        return "上海博物馆人民广场馆"
-    if re.fullmatch(r"[负-]?\d+楼", (museum_name or "").strip()):
+    raw_name = optional_text(museum_name)
+    if re.fullmatch(r"[负-]?\d+楼", raw_name or ""):
         normalized_address = normalize_museum_directory_key(address)
         if normalize_museum_directory_key("世纪大道1952号") in normalized_address:
             return "上海博物馆东馆"
         if normalize_museum_directory_key("人民大道201号") in normalized_address:
             return "上海博物馆人民广场馆"
-    return optional_text(museum_name)
+    safe_name = museum_name_from_source_fields(raw_name, None)
+    normalized_name = normalize_museum_directory_key(safe_name)
+    if normalized_name == normalize_museum_directory_key("上海博物馆"):
+        return "上海博物馆人民广场馆"
+    return safe_name
 
 
 def museum_name_matches_catalog_museum(
@@ -1440,6 +1489,7 @@ def resolve_capture_context(
     catalog_exhibition_id: int | None = None,
 ) -> tuple[Museum | None, Exhibition | None]:
     catalog_item: CatalogExhibition | None = None
+    catalog_museum_name: str | None = None
     normalized_source_id = optional_text(catalog_exhibition_source_id)
     if normalized_source_id or catalog_exhibition_id is not None:
         try:
@@ -1452,20 +1502,53 @@ def resolve_capture_context(
                     )
                 elif catalog_exhibition_id is not None:
                     catalog_item = catalog_db.get(CatalogExhibition, catalog_exhibition_id)
+                if catalog_item is not None:
+                    catalog_museum_name = canonical_catalog_museum_name(
+                        catalog_item.museum_name,
+                        catalog_item.address,
+                    )
+                    if catalog_museum_name is None and optional_text(
+                        catalog_item.address
+                    ):
+                        summaries = catalog_museum_directory_summaries(
+                            catalog_db,
+                            catalog_item.address,
+                        )
+                        exact_address = normalize_museum_directory_key(
+                            catalog_item.address
+                        )
+                        exact_city = normalize_museum_directory_key(catalog_item.city)
+                        matches = [
+                            summary
+                            for summary in summaries
+                            if normalize_museum_directory_key(summary.address)
+                            == exact_address
+                            and (
+                                not exact_city
+                                or normalize_museum_directory_key(summary.city)
+                                == exact_city
+                            )
+                        ]
+                        if len(matches) == 1:
+                            catalog_museum_name = matches[0].name
         except Exception:
             logger.warning("resolve catalog exhibition failed", exc_info=True)
 
-    # The operator's chosen shooting museum is authoritative. Catalog metadata
-    # describes the exhibition and may contain a hall/floor or an older venue
-    # name, so it must never overwrite an explicit museum selection.
-    resolved_capture_museum_name = optional_text(capture_museum_name) or (
-        optional_text(catalog_item.museum_name) if catalog_item is not None else None
-    )
-    if resolved_capture_museum_name is None and catalog_item is not None:
-        resolved_capture_museum_name = (
-            optional_text(catalog_item.venue)
-            or optional_text(catalog_item.city)
-        )
+    # A valid operator-selected museum remains authoritative. If an older UI
+    # submitted a room label together with a catalog exhibition, recover the
+    # parent institution from that catalog/address. Never fall back to
+    # ``venue`` or ``city``: neither field is a museum identity.
+    explicit_capture_name = optional_text(capture_museum_name)
+    resolved_capture_museum_name = catalog_museum_name
+    if explicit_capture_name is not None:
+        try:
+            resolved_capture_museum_name = normalize_museum_name_for_write(
+                explicit_capture_name,
+                "展出地点",
+            )
+        except HTTPException:
+            if catalog_museum_name is None:
+                raise
     capture_museum = (
         ensure_museum(db, resolved_capture_museum_name)
         if resolved_capture_museum_name
@@ -2417,8 +2500,14 @@ def build_uploaded_museum_directory(
         # museum. Cloud imports may have created a separate Museum row before
         # filename parsing was fixed, so group by the canonical display name
         # instead of the database row id.
-        museum_name = resolve_museum_branch_from_image_gps(
+        source_museum_name = museum_name_from_source_fields(
             artifact.museum_name,
+            None,
+        )
+        if source_museum_name is None:
+            continue
+        museum_name = resolve_museum_branch_from_image_gps(
+            source_museum_name,
             artifact.images,
         )
         if not museum_name:
@@ -2495,6 +2584,11 @@ def build_uploaded_museum_directory(
         )
         latitude = dominant_coordinate[1] / dominant_coordinate[0] if dominant_coordinate else None
         longitude = dominant_coordinate[2] / dominant_coordinate[0] if dominant_coordinate else None
+        latitude, longitude = museum_map_coordinates(
+            str(group["name"]),
+            latitude,
+            longitude,
+        )
         directory.append(
             MuseumDirectoryRead(
                 id=int(group["id"]),
@@ -2796,6 +2890,11 @@ def attach_catalog_metadata_to_uploaded_museum_directory(
             )
 
         if matched_item is None:
+            latitude, longitude = museum_map_coordinates(
+                summary.name,
+                None,
+                None,
+            )
             matched_item = MuseumDirectoryRead(
                 id=catalog_museum_directory_id(summary.name, summary.city),
                 museum_id=None,
@@ -2808,8 +2907,8 @@ def attach_catalog_metadata_to_uploaded_museum_directory(
                     if value
                 )
                 or None,
-                latitude=None,
-                longitude=None,
+                latitude=latitude,
+                longitude=longitude,
                 description=None,
                 artifact_count=0,
                 exhibition_count=summary.exhibition_count,
@@ -2848,6 +2947,11 @@ def attach_catalog_metadata_to_uploaded_museum_directory(
         matched_item.catalog_venue = summary.name
         matched_item.catalog_city = summary.city
         matched_item.catalog_region = summary.region
+        matched_item.latitude, matched_item.longitude = museum_map_coordinates(
+            summary.name,
+            matched_item.latitude,
+            matched_item.longitude,
+        )
         has_only_parent_location = (
             matched_item.name != "上海博物馆"
             and normalize_museum_directory_key(matched_item.location)
@@ -3203,6 +3307,96 @@ async def fetch_cloud_artifact_match(
 @app.get(f"{settings.api_prefix}/health", response_model=HealthRead)
 def healthcheck() -> HealthRead:
     return HealthRead(status="ok", environment=settings.app_env, database="connected")
+
+
+@app.get(f"{settings.api_prefix}/map-tiles/{{zoom}}/{{x}}/{{y}}.png", include_in_schema=False)
+async def map_tile(zoom: int, x: int, y: int) -> Response:
+    """Proxy a bounded official AMap raster tile when direct tile hosts fail.
+
+    Some local browser/network combinations can load the JavaScript SDK but
+    not its separate tile hosts, leaving a movable yet blank map. This keeps
+    the same map provider and serves only numeric XYZ coordinates through the
+    already trusted local backend. A small in-memory LRU and browser caching
+    prevent ordinary dragging from repeatedly hitting the upstream service.
+    """
+    if zoom < 3 or zoom > 20:
+        raise HTTPException(status_code=404, detail="Map tile not found")
+    tile_count = 1 << zoom
+    if y < 0 or y >= tile_count:
+        raise HTTPException(status_code=404, detail="Map tile not found")
+    normalized_x = x % tile_count
+    cache_key = (zoom, normalized_x, y)
+    cached = MAP_TILE_CACHE.get(cache_key)
+    if cached is not None:
+        MAP_TILE_CACHE.move_to_end(cache_key)
+        return Response(
+            content=cached,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=604800, immutable"},
+        )
+
+    params = {
+        "x": normalized_x,
+        "y": y,
+        "z": zoom,
+        "size": 1,
+        "scl": 1,
+        "style": 7,
+    }
+    first_host_number = (normalized_x + y + zoom) % 4 + 1
+    content: bytes | None = None
+    last_error: Exception | None = None
+    # AMap exposes four equivalent raster hosts. One node occasionally closes
+    # a response early under a 25-tile viewport burst, so rotate through the
+    # remaining official hosts before exposing a blank tile to the browser.
+    for host_offset in range(4):
+        host_number = (first_host_number + host_offset - 1) % 4 + 1
+        upstream_url = f"https://wprd0{host_number}.is.autonavi.com/appmaptile"
+        try:
+            async with MAP_TILE_FETCH_SEMAPHORE:
+                if cloud_http_client is not None:
+                    upstream = await cloud_http_client.get(
+                        upstream_url,
+                        params=params,
+                        timeout=6,
+                    )
+                else:
+                    async with httpx.AsyncClient(timeout=6) as client:
+                        upstream = await client.get(upstream_url, params=params)
+            upstream.raise_for_status()
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            last_error = exc
+            continue
+
+        candidate = upstream.content
+        if len(candidate) > 512 * 1024 or not candidate.startswith(b"\x89PNG\r\n\x1a\n"):
+            last_error = ValueError("invalid map tile response")
+            continue
+        content = candidate
+        break
+
+    if content is None:
+        logger.warning(
+            "map tile fetch failed across all hosts for %s/%s/%s: %s",
+            zoom,
+            normalized_x,
+            y,
+            last_error,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Map tile is temporarily unavailable",
+        ) from last_error
+
+    MAP_TILE_CACHE[cache_key] = content
+    MAP_TILE_CACHE.move_to_end(cache_key)
+    while len(MAP_TILE_CACHE) > MAP_TILE_CACHE_MAX_ITEMS:
+        MAP_TILE_CACHE.popitem(last=False)
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
 
 
 @app.get(f"{settings.api_prefix}/web-bridge/status", response_model=WebBridgeStatusRead)
@@ -5405,6 +5599,7 @@ def list_museum_directory(
             .order_by(Museum.name.asc())
         )
     )
+    museums = [museum for museum in museums if not is_probable_room_label(museum.name)]
     catalog_rows = list(
         catalog_db.execute(
             select(
@@ -5560,6 +5755,11 @@ def list_museum_directory(
                 matched_group = fallback_group
 
         catalog_count = int(matched_group["count"]) if matched_group else 0
+        latitude, longitude = museum_map_coordinates(
+            museum.name,
+            museum.latitude,
+            museum.longitude,
+        )
         directory.append(
             MuseumDirectoryRead(
                 id=museum.id,
@@ -5583,8 +5783,8 @@ def list_museum_directory(
                     if matched_group
                     else None
                 ),
-                latitude=museum.latitude,
-                longitude=museum.longitude,
+                latitude=latitude,
+                longitude=longitude,
                 description=museum.description,
                 artifact_count=museum.artifact_count,
                 exhibition_count=max(museum.exhibition_count, catalog_count),
@@ -5674,7 +5874,12 @@ def list_museums(
     if q and q.strip():
         like = f"%{q.strip()}%"
         query = query.where(Museum.name.ilike(like))
-    return list(db.scalars(query.limit(limit)))
+    museums = list(db.scalars(query.limit(min(1000, limit * 2))))
+    return [
+        museum
+        for museum in museums
+        if not is_probable_room_label(museum.name)
+    ][:limit]
 
 
 @app.get(f"{settings.api_prefix}/era-options", response_model=list[EraOptionRead])
@@ -5762,11 +5967,15 @@ def get_era_timeline(
 
 @app.post(f"{settings.api_prefix}/museums", response_model=MuseumRead, status_code=201)
 def create_museum(payload: MuseumCreate, db: Session = Depends(get_db)) -> Museum:
-    existing = db.scalar(select(Museum).where(Museum.name == payload.name))
+    name = normalize_museum_name_for_write(payload.name)
+    existing = db.scalar(select(Museum).where(Museum.name == name))
     if existing is not None:
         raise HTTPException(status_code=400, detail="Museum already exists")
 
-    museum = Museum(**payload.model_dump())
+    museum = Museum(
+        **payload.model_dump(exclude={"name"}),
+        name=name,
+    )
     db.add(museum)
     db.commit()
     db.refresh(museum)
@@ -5783,9 +5992,7 @@ def update_museum(
     if museum is None:
         raise HTTPException(status_code=404, detail="Museum not found")
 
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Museum name is required")
+    name = normalize_museum_name_for_write(payload.name)
 
     existing = db.scalar(select(Museum).where(Museum.name == name, Museum.id != museum_id))
     if existing is not None:

@@ -2,6 +2,7 @@ import unittest
 from datetime import date, datetime, timezone
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -109,6 +110,61 @@ class ExhibitionLinkingTests(unittest.TestCase):
         self.assertEqual(from_artifact_provenance.id, canonical.id)
         self.assertEqual(from_artifact_provenance.name, "河北博物院")
 
+    def test_museum_write_rejects_rooms_and_normalizes_composite_labels(self) -> None:
+        with self.assertRaises(HTTPException) as raised:
+            ensure_museum(self.artifact_db, "二层临展厅")
+        self.assertEqual(raised.exception.status_code, 422)
+
+        museum = ensure_museum(self.artifact_db, "上海图书馆第一展厅")
+        self.assertEqual(museum.name, "上海图书馆")
+
+    def test_legacy_room_selection_recovers_catalog_parent_by_address(self) -> None:
+        address = "太原市万柏林区广经路13号"
+        with self.catalog_session_factory() as catalog_db:
+            catalog_db.add_all(
+                [
+                    CatalogExhibition(
+                        source_id="shanxi-permanent",
+                        source_url="https://example.com/shanxi-permanent",
+                        title="「吉金光华」山西青铜博物馆常设展",
+                        region="中国大陆",
+                        city="太原",
+                        city_slug="taiyuan",
+                        museum_name=None,
+                        venue=None,
+                        address=address,
+                        is_permanent=True,
+                    ),
+                    CatalogExhibition(
+                        source_id="shanxi-special",
+                        source_url="https://example.com/shanxi-special",
+                        title="致和：春秋时期的晋与吴",
+                        region="中国大陆",
+                        city="太原",
+                        city_slug="taiyuan",
+                        museum_name="二层临展厅",
+                        venue="二层临展厅",
+                        address=address,
+                        is_permanent=False,
+                    ),
+                ]
+            )
+            catalog_db.commit()
+
+        with patch("app.main.ExhibitionSessionLocal", self.catalog_session_factory):
+            museum, exhibition = resolve_capture_context(
+                self.artifact_db,
+                "二层临展厅",
+                "致和：春秋时期的晋与吴",
+                "shanxi-special",
+                None,
+            )
+
+        self.assertIsNotNone(museum)
+        self.assertIsNotNone(exhibition)
+        self.assertEqual(museum.name, "山西青铜博物馆")
+        self.assertEqual(exhibition.museum_name, "山西青铜博物馆")
+
     def test_legacy_shanghai_catalog_labels_resolve_to_physical_venues(self) -> None:
         self.assertEqual(
             canonical_catalog_museum_name("上海博物馆", "上海市黄浦区人民大道201号"),
@@ -122,6 +178,7 @@ class ExhibitionLinkingTests(unittest.TestCase):
             canonical_catalog_museum_name("2楼", "上海市浦东新区世纪大道1952号"),
             "上海博物馆东馆",
         )
+        self.assertIsNone(canonical_catalog_museum_name("二层临展厅"))
 
     def test_gallery_read_merges_old_venue_and_museum_duplicates(self) -> None:
         with self.catalog_session_factory() as catalog_db:

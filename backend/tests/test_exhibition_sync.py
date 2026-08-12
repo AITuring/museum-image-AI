@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.exhibition_db import ExhibitionCatalogBase
+from app.exhibition_db import ExhibitionCatalogBase, _repair_legacy_museum_names
 from app.exhibition_models import CatalogExhibition
 from app.exhibition_service import (
     ExhibitionSyncCoordinator,
@@ -115,6 +115,47 @@ class ExhibitionSyncCandidateTests(unittest.TestCase):
         )
 
         self.assertIn(current.source_url, candidates)
+
+    def test_startup_repair_never_promotes_rooms_to_museums(self) -> None:
+        address = "太原市万柏林区广经路13号"
+        permanent = exhibition(
+            "shanxi-permanent",
+            description="已有详情",
+            end_date=None,
+            museum_name=None,
+        )
+        permanent.title = "「吉金光华」山西青铜博物馆常设展"
+        permanent.address = address
+        permanent.city = "太原"
+        room = exhibition(
+            "shanxi-room",
+            description="已有详情",
+            end_date=date.today(),
+            museum_name="二层临展厅",
+        )
+        room.venue = "二层临展厅"
+        room.address = address
+        room.city = "太原"
+        composite = exhibition(
+            "library-room",
+            description="已有详情",
+            end_date=date.today(),
+            museum_name="上海图书馆第一展厅",
+        )
+        composite.venue = "上海图书馆第一展厅"
+        composite.address = "上海市淮海中路1555号"
+        composite.city = "上海"
+        self.db.add_all([permanent, room, composite])
+        self.db.commit()
+
+        with self.engine.begin() as connection:
+            repaired = _repair_legacy_museum_names(connection)
+        self.db.expire_all()
+
+        self.assertEqual(repaired, 3)
+        self.assertEqual(permanent.museum_name, "山西青铜博物馆")
+        self.assertEqual(room.museum_name, "山西青铜博物馆")
+        self.assertEqual(composite.museum_name, "上海图书馆")
 
 
 class ExhibitionSyncCoordinatorTests(unittest.IsolatedAsyncioTestCase):

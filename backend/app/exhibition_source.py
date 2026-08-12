@@ -15,15 +15,43 @@ CHINESE_DATE_PATTERN = re.compile(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日")
 ISO_DATE_PATTERN = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
 SPACE_PATTERN = re.compile(r"\s+")
 VENUE_DETAIL_SUFFIX_PATTERN = re.compile(r"[（(].*?[）)]")
+INSTITUTION_SUFFIXES = (
+    "博物馆",
+    "博物院",
+    "美术馆",
+    "艺术馆",
+    "纪念馆",
+    "科技馆",
+    "展览馆",
+    "陈列馆",
+    "文化馆",
+    "图书馆",
+    "档案馆",
+    "藏书楼",
+    "展览中心",
+    "艺术中心",
+    "文化中心",
+    "科技中心",
+    "艺术宫",
+    "文化宫",
+    "画院",
+    "书院",
+)
+INSTITUTION_SUFFIX_ALTERNATION = "|".join(
+    re.escape(suffix) for suffix in INSTITUTION_SUFFIXES
+)
 INSTITUTION_SUFFIX_PATTERN = re.compile(
-    r"(博物馆|博物院|美术馆|艺术馆|纪念馆|科技馆|展览馆|陈列馆|文化馆|图书馆)$"
+    rf"(?:{INSTITUTION_SUFFIX_ALTERNATION})$"
+)
+INSTITUTION_TOKEN_PATTERN = re.compile(
+    rf"(?:{INSTITUTION_SUFFIX_ALTERNATION})"
 )
 QUOTED_TITLE_PREFIX_PATTERN = re.compile(
     r"^(?:[「『《〈“][^」』》〉”]+[」』》〉”]\s*)+"
 )
 PERMANENT_TITLE_INSTITUTION_PATTERN = re.compile(
     r"(?P<name>[\w\u3400-\u9fff·•・（）()\-\s]{2,80}?"
-    r"(?:博物馆|博物院|美术馆|艺术馆|纪念馆|科技馆|展览馆|陈列馆|文化馆|图书馆))"
+    rf"(?:{INSTITUTION_SUFFIX_ALTERNATION}))"
     r"(?:常设展|常设陈列|基本陈列)$"
 )
 
@@ -167,17 +195,24 @@ def museum_name_from_source_fields(
     museum_name: str | None,
     venue: str | None,
 ) -> str | None:
-    """Return the parent museum, using a lone venue as the source fallback."""
+    """Return an institution without ever promoting a room or floor."""
     primary = (museum_name or "").strip()
     if primary:
-        return primary
+        recovered = institution_name_from_room_label(primary)
+        if recovered:
+            return recovered
+        if not is_probable_room_label(primary):
+            return primary
     fallback = (venue or "").strip()
     if not fallback:
         return None
     # A lone venue such as “嘉德艺术中心（一层展厅）” names both the
     # institution and its room. The catalog needs the institution as its
     # museum label; retain the unmodified value in `venue` separately.
-    return VENUE_DETAIL_SUFFIX_PATTERN.sub("", fallback).strip() or fallback
+    recovered = institution_name_from_room_label(fallback)
+    if recovered:
+        return recovered
+    return None if is_probable_room_label(fallback) else fallback
 
 
 def is_probable_room_label(value: str | None) -> bool:
@@ -197,10 +232,63 @@ def is_probable_room_label(value: str | None) -> bool:
         )
         or re.search(r"(?:展览厅|展厅|展区|展廊)$", compact)
         or re.fullmatch(
-            r"(?:第)?(?:\d+|[一二三四五六七八九十]+)(?:号)?展馆",
+            r"(?:第)?(?:[A-Za-z]?\d+|[一二三四五六七八九十]+)"
+            r"(?:(?:[、,，/和及~-])(?:[A-Za-z]?\d+|[一二三四五六七八九十]+))*"
+            r"(?:号)?(?:展)?馆",
             compact,
+            flags=re.IGNORECASE,
         )
+        or re.fullmatch(r"(?:[A-Za-z]|东|西|南|北|主|新|旧)(?:馆|院区)", compact)
     )
+
+
+def institution_name_from_room_label(value: str | None) -> str | None:
+    """Recover an explicit institution prefix from a composite room label.
+
+    Examples such as ``上海图书馆第一展厅`` and
+    ``嘉德艺术中心（一层展厅）`` preserve a reliable institution name. A bare
+    ``二层临展厅`` does not, and therefore remains unresolved instead of being
+    promoted to a museum.
+    """
+    label = SPACE_PATTERN.sub(" ", (value or "").strip())
+    if not label:
+        return None
+
+    def is_explicit_room_detail(detail: str) -> bool:
+        """Only split suffixes that unambiguously describe an interior room.
+
+        A standalone ``A馆`` or ``北院区`` is suspicious enough to reject as a
+        museum write, but the same token after an institution may name a real
+        branch.  Requiring a floor or exhibition-room word avoids collapsing
+        identities such as ``上海博物馆东馆`` and ``故宫博物院（北院区）``.
+        """
+        compact_detail = SPACE_PATTERN.sub("", detail)
+        return bool(
+            re.search(r"(?:展览厅|展厅|展区|展廊)$", compact_detail)
+            or re.search(
+                r"(?:[负B]?\d+|[一二三四五六七八九十]+)(?:F|楼|层)$",
+                compact_detail,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    parenthetical_details = re.findall(r"[（(]([^）)]*)[）)]", label)
+    without_parenthetical = VENUE_DETAIL_SUFFIX_PATTERN.sub("", label).strip()
+    if (
+        without_parenthetical != label
+        and parenthetical_details
+        and all(is_explicit_room_detail(detail) for detail in parenthetical_details)
+        and not is_probable_room_label(without_parenthetical)
+    ):
+        return without_parenthetical or None
+
+    matches = list(INSTITUTION_TOKEN_PATTERN.finditer(label))
+    for match in reversed(matches):
+        institution = label[: match.end()].strip(" ·•・:：,，、-/")
+        detail = label[match.end() :].strip(" ·•・:：,，、-/")
+        if institution and detail and is_explicit_room_detail(detail):
+            return institution
+    return None
 
 
 def institution_name_from_permanent_title(value: str | None) -> str | None:

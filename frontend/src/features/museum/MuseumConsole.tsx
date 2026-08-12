@@ -4,7 +4,7 @@ import { Button, Input } from "antd"
 const AMAP_SCRIPT_ID = "museum-console-amap-script"
 const AMAP_SECURITY_CODE = "3ba01835420271d5405dccba5e089b46"
 const AMAP_SCRIPT_SRC =
-  "https://webapi.amap.com/maps?v=1.4.15&key=7a9513e700e06c00890363af1bd2d926&plugin=AMap.PlaceSearch,AMap.Geocoder"
+  "https://webapi.amap.com/maps?v=2.0&key=7a9513e700e06c00890363af1bd2d926&plugin=AMap.PlaceSearch,AMap.Geocoder"
 
 const { TextArea } = Input
 type FormSubmitHandler = NonNullable<ComponentProps<"form">["onSubmit"]>

@@ -9,6 +9,7 @@ type AMapSdk = {
   Map: new (element: HTMLDivElement, options: Record<string, unknown>) => AMapInstance
   Marker: new (options: Record<string, unknown>) => { on: (event: string, handler: (event: AMapEvent) => void) => void }
   Geocoder?: new (options: Record<string, unknown>) => { getAddress: (position: [number, number], callback: (status: string, result: { regeocode?: { formattedAddress?: string } }) => void) => void; getLocation: (address: string, callback: (status: string, result: { geocodes?: Array<{ location?: AMapGeocodeLocation }> }) => void) => void }
+  PlaceSearch?: new (options: Record<string, unknown>) => { search: (keyword: string, callback: (status: string, result: { poiList?: { pois?: Array<{ location?: AMapGeocodeLocation }> } }) => void) => void }
   plugin?: (plugins: string | string[], callback: () => void) => void
 }
 
@@ -24,7 +25,7 @@ function loadAmap(): Promise<AMapSdk> {
   if (!scriptSrc) return Promise.reject(new Error("未配置高德地图脚本"))
   if (securityCode) window._AMapSecurityConfig = { securityJsCode: securityCode }
   const ensureGeocoder = (sdk: AMapSdk) => {
-    if (sdk.Geocoder) return Promise.resolve(sdk)
+    if (sdk.Geocoder && sdk.PlaceSearch) return Promise.resolve(sdk)
     if (!sdk.plugin) return Promise.reject(new Error("高德地图地理编码插件不可用"))
     return new Promise<AMapSdk>((resolve, reject) => sdk.plugin?.(["AMap.Geocoder", "AMap.PlaceSearch"], () => sdk.Geocoder ? resolve(sdk) : reject(new Error("高德地图地理编码插件加载失败"))))
   }
@@ -41,19 +42,50 @@ function loadAmap(): Promise<AMapSdk> {
 }
 
 export async function geocodeLocationName(name: string): Promise<{ latitude: number; longitude: number } | null> {
-  const Geocoder = (await loadAmap()).Geocoder
-  if (!Geocoder) return null
-  return new Promise((resolve) => new Geocoder({ city: "全国" }).getLocation(name, (status, result) => {
-    const location = status === "complete" ? result.geocodes?.[0]?.location : undefined
+  const sdk = await loadAmap()
+  const coordinateFromLocation = (location?: AMapGeocodeLocation) => {
     const longitude = location?.getLng?.() ?? location?.lng; const latitude = location?.getLat?.() ?? location?.lat
-    resolve(Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude: Number(latitude), longitude: Number(longitude) } : null)
-  }))
+    return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude: Number(latitude), longitude: Number(longitude) } : null
+  }
+  const withTimeout = <T,>(register: (finish: (value: T) => void) => void, fallback: T) => new Promise<T>((resolve) => {
+    let settled = false
+    const timer = window.setTimeout(() => { if (!settled) { settled = true; resolve(fallback) } }, 8000)
+    register((value) => { if (settled) return; settled = true; window.clearTimeout(timer); resolve(value) })
+  })
+
+  if (sdk.Geocoder) {
+    const Geocoder = sdk.Geocoder
+    const coordinate = await withTimeout<{ latitude: number; longitude: number } | null>((finish) => {
+      new Geocoder({ city: "全国" }).getLocation(name, (status, result) => {
+        finish(status === "complete" ? coordinateFromLocation(result.geocodes?.[0]?.location) : null)
+      })
+    }, null)
+    if (coordinate) return coordinate
+  }
+
+  if (!sdk.PlaceSearch) return null
+  const PlaceSearch = sdk.PlaceSearch
+  return withTimeout<{ latitude: number; longitude: number } | null>((finish) => {
+    new PlaceSearch({ city: "全国", citylimit: false, pageSize: 10 }).search(name, (status, result) => {
+      const location = status === "complete" ? result.poiList?.pois?.[0]?.location : undefined
+      finish(coordinateFromLocation(location))
+    })
+  }, null)
 }
 
 export async function reverseGeocodeCoordinates(latitude: number, longitude: number): Promise<string> {
   const Geocoder = (await loadAmap()).Geocoder
   if (!Geocoder) return ""
-  return new Promise((resolve) => new Geocoder({}).getAddress([longitude, latitude], (status, result) => resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")))
+  return new Promise((resolve) => {
+    let settled = false
+    const timer = window.setTimeout(() => { if (!settled) { settled = true; resolve("") } }, 8000)
+    new Geocoder({}).getAddress([longitude, latitude], (status, result) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")
+    })
+  })
 }
 
 export function GpsMapPicker({ latitude, longitude, onPick }: { latitude: string; longitude: string; onPick: (latitude: string, longitude: string, locationName?: string) => void }) {

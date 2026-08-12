@@ -1,3 +1,5 @@
+import re
+import unicodedata
 from collections.abc import Generator
 
 from sqlalchemy import create_engine, inspect, text
@@ -28,6 +30,90 @@ def get_exhibition_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def _catalog_identity_key(value: object) -> str:
+    normalized = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return re.sub(r"[\s·•・,，。．()（）\[\]【】<>《》\-—–_/]+", "", normalized)
+
+
+def _repair_legacy_museum_names(connection) -> int:
+    """Repair unsafe venue-as-museum rows without discarding venue detail.
+
+    An earlier migration copied every non-empty ``venue`` into
+    ``museum_name``. This made labels such as ``二层临展厅`` reappear at every
+    startup. Recovery is deliberately conservative: use an explicit
+    institution, a composite institution-plus-room label, an explicit
+    permanent-display title, or one unique institution at the exact same
+    address/city/region. Ambiguous room-only rows are reset to NULL for the
+    sync worker instead of being presented as museums.
+    """
+    from app.exhibition_source import (
+        institution_name_from_permanent_title,
+        museum_name_from_source_fields,
+    )
+
+    rows = list(
+        connection.execute(
+            text(
+                "SELECT id, museum_name, venue, title, address, city, region "
+                "FROM catalog_exhibitions"
+            )
+        ).mappings()
+    )
+
+    def address_key(row) -> tuple[str, str, str] | None:
+        address = _catalog_identity_key(row["address"])
+        if not address:
+            return None
+        return (
+            address,
+            _catalog_identity_key(row["city"]),
+            _catalog_identity_key(row["region"]),
+        )
+
+    direct_names: dict[int, str | None] = {}
+    address_candidates: dict[tuple[str, str, str], dict[str, str]] = {}
+    for row in rows:
+        direct_name = museum_name_from_source_fields(
+            row["museum_name"],
+            row["venue"],
+        )
+        title_name = institution_name_from_permanent_title(row["title"])
+        direct_names[int(row["id"])] = direct_name or title_name
+        key = address_key(row)
+        if key is None:
+            continue
+        for candidate in (direct_name, title_name):
+            candidate_key = _catalog_identity_key(candidate)
+            if candidate and candidate_key:
+                address_candidates.setdefault(key, {})[candidate_key] = candidate
+
+    address_institutions = {
+        key: next(iter(candidates.values()))
+        for key, candidates in address_candidates.items()
+        if len(candidates) == 1
+    }
+
+    repaired = 0
+    update_statement = text(
+        "UPDATE catalog_exhibitions SET museum_name = :museum_name WHERE id = :id"
+    )
+    for row in rows:
+        row_id = int(row["id"])
+        desired = direct_names[row_id]
+        key = address_key(row)
+        if desired is None and key is not None:
+            desired = address_institutions.get(key)
+        current = str(row["museum_name"] or "").strip() or None
+        if current == desired:
+            continue
+        connection.execute(
+            update_statement,
+            {"id": row_id, "museum_name": desired},
+        )
+        repaired += 1
+    return repaired
 
 
 def initialize_exhibition_database() -> None:
@@ -87,30 +173,4 @@ def initialize_exhibition_database() -> None:
                         "ADD COLUMN image_urls JSON NOT NULL DEFAULT '[]'"
                     )
                 )
-        # Earlier imports left `museum_name` empty when iMuseum supplied only
-        # `展厅`. On those pages the sole location is the institution itself;
-        # preserve `venue` as source detail while filling the canonical museum
-        # field used by the catalog, timeline and recommendations.
-        venue_as_museum_sql = (
-            "TRIM(SPLIT_PART(venue, '（', 1))"
-            if connection.dialect.name == "postgresql"
-            else "TRIM(CASE WHEN INSTR(venue, '（') > 0 "
-            "THEN SUBSTR(venue, 1, INSTR(venue, '（') - 1) ELSE venue END)"
-        )
-        connection.execute(
-            text(
-                "UPDATE catalog_exhibitions "
-                f"SET museum_name = {venue_as_museum_sql} "
-                "WHERE (museum_name IS NULL OR TRIM(museum_name) = '') "
-                "AND venue IS NOT NULL AND TRIM(venue) <> ''"
-            )
-        )
-        # Apply the same normalization to records repaired by an earlier
-        # version of this migration, where the fallback was copied verbatim.
-        connection.execute(
-            text(
-                "UPDATE catalog_exhibitions "
-                f"SET museum_name = {venue_as_museum_sql} "
-                "WHERE museum_name = venue AND venue LIKE '%（%'"
-            )
-        )
+        _repair_legacy_museum_names(connection)
