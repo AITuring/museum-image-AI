@@ -11,7 +11,7 @@ import threading
 import time as time_module
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
 from uuid import uuid4
 from contextlib import asynccontextmanager
@@ -43,6 +43,10 @@ from app.exhibition_models import (
     CatalogExhibition,
     ExhibitionSyncRun,
     ExhibitionSyncWorkerState,
+)
+from app.exhibition_source import (
+    institution_name_from_permanent_title,
+    is_probable_room_label,
 )
 from app.exhibition_schemas import (
     ExhibitionArtifactSummaryRead,
@@ -665,7 +669,11 @@ async def lifespan(_: FastAPI):
             catalog_total = exhibition_catalog_count(exhibition_db)
             latest_run = latest_sync_run(exhibition_db)
             discovered_total = latest_run.discovered if latest_run is not None else 0
-            if catalog_total == 0 or catalog_total < discovered_total:
+            backfill_remaining = exhibition_backfill_remaining(
+                exhibition_db,
+                discovered_total,
+            )
+            if catalog_total == 0 or backfill_remaining > 0:
                 exhibition_sync_coordinator.start(
                     mode="incremental",
                     trigger="bootstrap",
@@ -1216,6 +1224,18 @@ def normalize_museum_directory_key(value: str | None) -> str:
         return ""
     normalized = unicodedata.normalize("NFKC", value).casefold()
     return re.sub(r"[\s·•・,，。．()（）\[\]【】<>《》\-—–_/]+", "", normalized)
+
+
+def is_catalog_room_label(value: str | None) -> bool:
+    """Reject legacy room/floor values that were once stored as museums."""
+    return is_probable_room_label(value)
+
+
+def catalog_museum_directory_id(name: str, city: str | None) -> int:
+    """Return a stable negative route id without colliding with database ids."""
+    identity = f"{normalize_museum_directory_key(name)}\0{normalize_museum_directory_key(city)}"
+    digest = hashlib.blake2b(identity.encode("utf-8"), digest_size=8).digest()
+    return -(int.from_bytes(digest, "big") % 2_000_000_000 + 1)
 
 
 _MUSEUM_BRANCH_GPS_RULES = {
@@ -2270,6 +2290,7 @@ def fetch_cloud_artifact_payload(
 CLOUD_MUSEUM_DIRECTORY_CACHE_TTL_SECONDS = 45
 CLOUD_MUSEUM_DIRECTORY_CACHE_STALE_SECONDS = 10 * 60
 CLOUD_MUSEUM_DIRECTORY_CACHE_LOCK = threading.Lock()
+CLOUD_MUSEUM_DIRECTORY_REFRESH_LOCK = threading.Lock()
 CLOUD_MUSEUM_DIRECTORY_CACHE: tuple[float, list[ArtifactRead]] | None = None
 CLOUD_MUSEUM_DIRECTORY_CACHE_PATH = DATA_DIR / "museum-directory-cloud-cache.json"
 
@@ -2320,6 +2341,12 @@ def get_cloud_museum_directory_artifacts() -> list[ArtifactRead]:
         cached = CLOUD_MUSEUM_DIRECTORY_CACHE
         if cached is not None and now - cached[0] < CLOUD_MUSEUM_DIRECTORY_CACHE_TTL_SECONDS:
             return cached[1]
+
+    if not CLOUD_MUSEUM_DIRECTORY_REFRESH_LOCK.acquire(blocking=False):
+        return cached[1] if cached is not None else (
+            load_persisted_cloud_museum_directory_artifacts() or []
+        )
+    try:
         try:
             artifacts = enrich_artifact_catalog_links(
                 merge_duplicate_artifact_reads(fetch_cloud_artifact_payload())
@@ -2331,12 +2358,43 @@ def get_cloud_museum_directory_artifacts() -> list[ArtifactRead]:
             persisted = load_persisted_cloud_museum_directory_artifacts()
             if persisted is not None:
                 logger.warning("云端图库刷新失败，继续使用磁盘中的场馆目录缓存")
-                CLOUD_MUSEUM_DIRECTORY_CACHE = (now, persisted)
+                with CLOUD_MUSEUM_DIRECTORY_CACHE_LOCK:
+                    CLOUD_MUSEUM_DIRECTORY_CACHE = (now, persisted)
                 return persisted
             raise
-        CLOUD_MUSEUM_DIRECTORY_CACHE = (now, artifacts)
+        with CLOUD_MUSEUM_DIRECTORY_CACHE_LOCK:
+            CLOUD_MUSEUM_DIRECTORY_CACHE = (now, artifacts)
         persist_cloud_museum_directory_artifacts(artifacts)
         return artifacts
+    finally:
+        CLOUD_MUSEUM_DIRECTORY_REFRESH_LOCK.release()
+
+
+def get_cached_cloud_museum_directory_artifacts() -> list[ArtifactRead]:
+    """Return the last known Gallery snapshot without blocking autocomplete."""
+    global CLOUD_MUSEUM_DIRECTORY_CACHE
+    with CLOUD_MUSEUM_DIRECTORY_CACHE_LOCK:
+        cached = CLOUD_MUSEUM_DIRECTORY_CACHE
+        if cached is not None:
+            return cached[1]
+        persisted = load_persisted_cloud_museum_directory_artifacts()
+        if persisted is None:
+            return []
+        # Keep the disk snapshot available to keyword searches, but mark it as
+        # stale so the next full directory request still refreshes from cloud.
+        CLOUD_MUSEUM_DIRECTORY_CACHE = (
+            time_module.monotonic() - CLOUD_MUSEUM_DIRECTORY_CACHE_TTL_SECONDS,
+            persisted,
+        )
+        return persisted
+
+
+def refresh_cloud_museum_directory_artifacts() -> None:
+    """Refresh Gallery cache without surfacing post-response failures."""
+    try:
+        get_cloud_museum_directory_artifacts()
+    except Exception:  # noqa: BLE001 - the catalog-only response already succeeded
+        logger.warning("云端图库后台刷新失败，继续使用本地场馆目录", exc_info=True)
 
 
 def build_uploaded_museum_directory(
@@ -2467,64 +2525,365 @@ def build_uploaded_museum_directory(
     return directory[:limit]
 
 
+@dataclass(frozen=True)
+class CatalogMuseumDirectorySummary:
+    name: str
+    raw_names: frozenset[str]
+    region: str | None
+    city: str | None
+    address: str | None
+    exhibition_count: int
+    first_year: int | None
+    last_year: int | None
+    cover_url: str | None
+    uses_address_fallback: bool
+
+
+def catalog_museum_directory_summaries(
+    catalog_db: Session,
+    q: str | None = None,
+) -> list[CatalogMuseumDirectorySummary]:
+    """Aggregate exhibition rows into real institutions, excluding rooms."""
+    query = select(
+        CatalogExhibition.museum_name,
+        CatalogExhibition.title,
+        CatalogExhibition.region,
+        CatalogExhibition.city,
+        CatalogExhibition.address,
+        CatalogExhibition.start_year,
+        CatalogExhibition.end_year,
+        CatalogExhibition.cover_url,
+    )
+    keyword = optional_text(q)
+    if keyword:
+        like = f"%{keyword}%"
+        keyword_match = or_(
+            CatalogExhibition.title.ilike(like),
+            CatalogExhibition.museum_name.ilike(like),
+            CatalogExhibition.address.ilike(like),
+            CatalogExhibition.city.ilike(like),
+            CatalogExhibition.region.ilike(like),
+        )
+        matching_addresses = select(CatalogExhibition.address).where(
+            CatalogExhibition.address.is_not(None),
+            func.trim(CatalogExhibition.address) != "",
+            keyword_match,
+        )
+        query = query.where(
+            or_(keyword_match, CatalogExhibition.address.in_(matching_addresses))
+        )
+
+    rows = list(catalog_db.execute(query))
+    address_candidates: dict[tuple[str, str, str], set[str]] = {}
+    for row in rows:
+        raw_name = optional_text(row[0])
+        title = optional_text(row[1])
+        address = optional_text(row[4])
+        if not address:
+            continue
+        candidates: list[str] = []
+        explicit_name = canonical_catalog_museum_name(raw_name, address)
+        if explicit_name is not None and not is_catalog_room_label(explicit_name):
+            candidates.append(explicit_name)
+        title_name = institution_name_from_permanent_title(title)
+        title_name = canonical_catalog_museum_name(title_name, address)
+        if title_name is not None and not is_catalog_room_label(title_name):
+            candidates.append(title_name)
+        if candidates:
+            address_candidates.setdefault(
+                (
+                    normalize_museum_directory_key(address),
+                    normalize_museum_directory_key(row[3]),
+                    normalize_museum_directory_key(row[2]),
+                ),
+                set(),
+            ).update(candidates)
+    address_institutions = {
+        address_key: next(iter(candidates))
+        for address_key, candidates in address_candidates.items()
+        if len(candidates) == 1
+    }
+
+    groups: dict[tuple[str, str], dict[str, object]] = {}
+    for row in rows:
+        raw_name = optional_text(row[0])
+        title = optional_text(row[1])
+        address = optional_text(row[4])
+        museum_name = canonical_catalog_museum_name(raw_name, address)
+        uses_address_fallback = False
+        if museum_name is None or is_catalog_room_label(museum_name):
+            museum_name = address_institutions.get(
+                (
+                    normalize_museum_directory_key(address),
+                    normalize_museum_directory_key(row[3]),
+                    normalize_museum_directory_key(row[2]),
+                )
+            )
+            uses_address_fallback = museum_name is not None
+            if museum_name is None:
+                museum_name = institution_name_from_permanent_title(title)
+        if museum_name is None or is_catalog_room_label(museum_name):
+            continue
+        region = optional_text(row[2])
+        city = optional_text(row[3])
+        key = (
+            normalize_museum_directory_key(museum_name),
+            normalize_museum_directory_key(city),
+        )
+        group = groups.setdefault(
+            key,
+            {
+                "name": museum_name,
+                "raw_names": set(),
+                "region": region,
+                "city": city,
+                "address_counts": {},
+                "exhibition_count": 0,
+                "first_year": None,
+                "last_year": None,
+                "cover_url": None,
+                "uses_address_fallback": False,
+            },
+        )
+        raw_names = group["raw_names"]
+        address_counts = group["address_counts"]
+        assert isinstance(raw_names, set)
+        assert isinstance(address_counts, dict)
+        if raw_name:
+            raw_names.add(raw_name)
+        if address:
+            address_counts[address] = int(address_counts.get(address, 0)) + 1
+        group["uses_address_fallback"] = bool(
+            group["uses_address_fallback"] or uses_address_fallback
+        )
+        group["exhibition_count"] = int(group["exhibition_count"]) + 1
+        for year in (row[5], row[6] or row[5]):
+            if year is None:
+                continue
+            group["first_year"] = (
+                year
+                if group["first_year"] is None
+                else min(int(group["first_year"]), year)
+            )
+            group["last_year"] = (
+                year
+                if group["last_year"] is None
+                else max(int(group["last_year"]), year)
+            )
+        if group["cover_url"] is None and row[7]:
+            group["cover_url"] = str(row[7])
+
+    summaries: list[CatalogMuseumDirectorySummary] = []
+    for group in groups.values():
+        raw_names = group["raw_names"]
+        address_counts = group["address_counts"]
+        assert isinstance(raw_names, set)
+        assert isinstance(address_counts, dict)
+        dominant_address = (
+            min(
+                address_counts,
+                key=lambda address: (-int(address_counts[address]), address),
+            )
+            if address_counts
+            else None
+        )
+        summaries.append(
+            CatalogMuseumDirectorySummary(
+                name=str(group["name"]),
+                raw_names=frozenset(str(name) for name in raw_names),
+                region=optional_text(str(group["region"])) if group["region"] else None,
+                city=optional_text(str(group["city"])) if group["city"] else None,
+                address=dominant_address,
+                exhibition_count=int(group["exhibition_count"]),
+                first_year=(
+                    int(group["first_year"])
+                    if group["first_year"] is not None
+                    else None
+                ),
+                last_year=(
+                    int(group["last_year"])
+                    if group["last_year"] is not None
+                    else None
+                ),
+                cover_url=(
+                    str(group["cover_url"])
+                    if group["cover_url"]
+                    else None
+                ),
+                uses_address_fallback=bool(group["uses_address_fallback"]),
+            )
+        )
+    return summaries
+
+
 def attach_catalog_metadata_to_uploaded_museum_directory(
     directory: list[MuseumDirectoryRead],
     catalog_db: Session,
+    *,
+    q: str | None = None,
+    limit: int = 5000,
+    attach_existing: bool = True,
 ) -> list[MuseumDirectoryRead]:
-    """Connect Gallery-derived museum cards to local exhibition catalog rows."""
-    if not directory:
-        return directory
+    """Merge iMuseum institutions into Gallery-derived museum cards."""
+    summaries = catalog_museum_directory_summaries(catalog_db, q)
+    summary_name_counts: dict[str, int] = {}
+    for summary in summaries:
+        key = normalize_museum_directory_key(summary.name)
+        summary_name_counts[key] = summary_name_counts.get(key, 0) + 1
 
-    by_name = {
-        normalize_museum_directory_key(item.name): item
-        for item in directory
-    }
-    matches: dict[str, list[CatalogExhibition]] = {}
-    catalog_rows = catalog_db.scalars(
-        select(CatalogExhibition).where(
-            CatalogExhibition.museum_name.is_not(None),
-            func.trim(CatalogExhibition.museum_name) != "",
-        )
-    )
-    for row in catalog_rows:
-        matched_item = next(
-            (
-                item
-                for item in directory
-                if museum_name_matches_catalog_museum(item.name, row.museum_name)
-            ),
+    directory_by_name: dict[str, list[MuseumDirectoryRead]] = {}
+    directory_by_catalog_label: dict[str, list[MuseumDirectoryRead]] = {}
+
+    def register_directory_item(item: MuseumDirectoryRead) -> None:
+        name_key = normalize_museum_directory_key(item.name)
+        directory_by_name.setdefault(name_key, []).append(item)
+        for label in catalog_museum_names_for_directory_name(item.name):
+            directory_by_catalog_label.setdefault(label.strip(), []).append(item)
+
+    def matches_summary_city(
+        item: MuseumDirectoryRead,
+        summary: CatalogMuseumDirectorySummary,
+    ) -> bool:
+        name_key = normalize_museum_directory_key(summary.name)
+        city_key = normalize_museum_directory_key(summary.city)
+        item_city_key = normalize_museum_directory_key(item.catalog_city)
+        if item_city_key:
+            return item_city_key == city_key
+        location_key = normalize_museum_directory_key(item.location)
+        if city_key and location_key:
+            if city_key in location_key:
+                return True
+            generic_locations = {
+                normalize_museum_directory_key(item.name),
+                normalize_museum_directory_key("上海博物馆"),
+            }
+            if location_key not in generic_locations:
+                return False
+        return summary_name_counts.get(name_key, 0) <= 1
+
+    def first_matching_candidate(
+        candidates: list[MuseumDirectoryRead],
+        summary: CatalogMuseumDirectorySummary,
+    ) -> MuseumDirectoryRead | None:
+        return next(
+            (item for item in candidates if matches_summary_city(item, summary)),
             None,
         )
-        if matched_item is not None:
-            key = normalize_museum_directory_key(matched_item.name)
-            matches.setdefault(key, []).append(row)
 
-    for key, rows in matches.items():
-        item = by_name[key]
-        years = [
-            year
-            for row in rows
-            for year in (row.start_year, row.end_year or row.start_year)
-            if year is not None
-        ]
-        item.catalog_exhibition_count = len(rows)
-        item.exhibition_count = max(item.exhibition_count, len(rows))
-        item.first_year = min(years) if years else None
-        item.last_year = max(years) if years else None
-        item.cover_url = item.cover_url or next((row.cover_url for row in rows if row.cover_url), None)
-        item.catalog_museum_name = catalog_museum_query_name(item.name)
-        item.catalog_address = None
-        item.catalog_venue = item.name
-        item.catalog_city = next((optional_text(row.city) for row in rows if optional_text(row.city)), None)
-        item.catalog_region = next((optional_text(row.region) for row in rows if optional_text(row.region)), None)
+    for item in directory:
+        register_directory_item(item)
+
+    for summary in summaries:
+        matched_item = first_matching_candidate(
+            directory_by_name.get(
+                normalize_museum_directory_key(summary.name),
+                [],
+            ),
+            summary,
+        )
+        if matched_item is None:
+            matched_item = next(
+                (
+                    candidate
+                    for raw_name in summary.raw_names
+                    for candidate in directory_by_catalog_label.get(
+                        raw_name.strip(),
+                        [],
+                    )
+                    if matches_summary_city(candidate, summary)
+                ),
+                None,
+            )
+
+        if matched_item is None:
+            matched_item = MuseumDirectoryRead(
+                id=catalog_museum_directory_id(summary.name, summary.city),
+                museum_id=None,
+                museum_ids=[],
+                name=summary.name,
+                location=summary.address
+                or " · ".join(
+                    value
+                    for value in (summary.city, summary.region)
+                    if value
+                )
+                or None,
+                latitude=None,
+                longitude=None,
+                description=None,
+                artifact_count=0,
+                exhibition_count=summary.exhibition_count,
+                catalog_exhibition_count=summary.exhibition_count,
+                first_year=summary.first_year,
+                last_year=summary.last_year,
+                cover_url=summary.cover_url,
+                catalog_museum_name=catalog_museum_query_name(summary.name),
+                catalog_address=(
+                    summary.address if summary.uses_address_fallback else None
+                ),
+                catalog_venue=summary.name,
+                catalog_city=summary.city,
+                catalog_region=summary.region,
+                derived_from_catalog=True,
+                exhibitions=[],
+            )
+            directory.append(matched_item)
+            register_directory_item(matched_item)
+            continue
+
+        if not attach_existing:
+            continue
+        matched_item.catalog_exhibition_count = summary.exhibition_count
+        matched_item.exhibition_count = max(
+            matched_item.exhibition_count,
+            summary.exhibition_count,
+        )
+        matched_item.first_year = summary.first_year
+        matched_item.last_year = summary.last_year
+        matched_item.cover_url = matched_item.cover_url or summary.cover_url
+        matched_item.catalog_museum_name = catalog_museum_query_name(summary.name)
+        matched_item.catalog_address = (
+            summary.address if summary.uses_address_fallback else None
+        )
+        matched_item.catalog_venue = summary.name
+        matched_item.catalog_city = summary.city
+        matched_item.catalog_region = summary.region
         has_only_parent_location = (
-            item.name != "上海博物馆"
-            and normalize_museum_directory_key(item.location)
+            matched_item.name != "上海博物馆"
+            and normalize_museum_directory_key(matched_item.location)
             == normalize_museum_directory_key("上海博物馆")
         )
-        if not item.location or has_only_parent_location:
-            item.location = next((optional_text(row.address) for row in rows if optional_text(row.address)), None)
-    return directory
+        if not matched_item.location or has_only_parent_location:
+            matched_item.location = summary.address
+
+    search_text = normalize_museum_directory_key(q)
+    if search_text:
+        directory = [
+            item
+            for item in directory
+            if search_text
+            in normalize_museum_directory_key(
+                " ".join(
+                    value
+                    for value in (
+                        item.name,
+                        item.location,
+                        item.description,
+                        item.catalog_city,
+                        item.catalog_region,
+                    )
+                    if value
+                )
+            )
+        ]
+    directory.sort(
+        key=lambda item: (
+            normalize_museum_directory_key(item.name),
+            normalize_museum_directory_key(item.catalog_city),
+            item.id,
+        )
+    )
+    return directory[:limit]
 
 
 def build_artifact_match_read(match: ArtifactMatchCandidate) -> ArtifactMatchRead:
@@ -4788,13 +5147,16 @@ def get_exhibition_sync_live_status(
     rate_per_minute = None
     eta_seconds = None
     if run is not None:
-        discovered_total = max(catalog_total, run.discovered)
+        discovered_total = max(
+            catalog_total,
+            *(recent_run.discovered for recent_run in recent_runs),
+        )
         processed = min(
             run.attempted,
             run.created + run.updated + run.failed,
         )
-        if run.discovered:
-            backfill_remaining = exhibition_backfill_remaining(db, run.discovered)
+        if discovered_total:
+            backfill_remaining = exhibition_backfill_remaining(db, discovered_total)
 
         now = datetime.now(timezone.utc)
         created_total = 0
@@ -4820,28 +5182,45 @@ def get_exhibition_sync_live_status(
                     math.ceil(backfill_remaining / rate_per_minute * 60)
                 )
 
+    completed_total = max(
+        0,
+        discovered_total - (backfill_remaining or 0),
+    )
     overall_progress = (
-        min(100.0, catalog_total / discovered_total * 100)
+        min(100.0, completed_total / discovered_total * 100)
         if discovered_total
         else 0
     )
     worker_state = db.get(ExhibitionSyncWorkerState, 1)
     worker_read = None
     if worker_state is not None:
+        now = datetime.now(timezone.utc)
         heartbeat_at = worker_state.heartbeat_at
         normalized_heartbeat = (
             heartbeat_at
             if heartbeat_at.tzinfo is not None
             else heartbeat_at.replace(tzinfo=timezone.utc)
         )
+        next_run_at = worker_state.next_run_at
+        normalized_next_run = (
+            next_run_at
+            if next_run_at is None or next_run_at.tzinfo is not None
+            else next_run_at.replace(tzinfo=timezone.utc)
+        )
+        scheduled_workflow_healthy = bool(
+            worker_state.status == "waiting_schedule"
+            and normalized_next_run is not None
+            and now <= normalized_next_run + timedelta(hours=2)
+        )
         worker_read = ExhibitionSyncWorkerRead(
             status=worker_state.status,
             message=worker_state.message,
             heartbeat_at=heartbeat_at,
-            next_run_at=worker_state.next_run_at,
+            next_run_at=next_run_at,
             online=(
-                datetime.now(timezone.utc) - normalized_heartbeat
+                now - normalized_heartbeat
             ).total_seconds() <= 45,
+            scheduled=scheduled_workflow_healthy,
         )
     return ExhibitionSyncStatusRead(
         catalog_total=catalog_total,
@@ -4987,19 +5366,31 @@ def get_exhibition_catalog_detail(
     response_model=list[MuseumDirectoryRead],
 )
 def list_museum_directory(
+    background_tasks: BackgroundTasks,
     q: str | None = Query(default=None),
     limit: int = Query(default=1000, ge=1, le=5000),
     db: Session = Depends(get_db),
     catalog_db: Session = Depends(get_exhibition_db),
 ) -> list[MuseumDirectoryRead]:
     if should_proxy_artifact_queries_to_cloud():
-        try:
-            cloud_artifacts = get_cloud_museum_directory_artifacts()
-        except Exception as exc:  # noqa: BLE001 - keep the local directory page available
-            logger.error("查询云端图库失败，场馆目录暂时返回空列表：%s", exc)
-            return []
-        directory = build_uploaded_museum_directory(cloud_artifacts, q, limit)
-        return attach_catalog_metadata_to_uploaded_museum_directory(directory, catalog_db)
+        # Autocomplete and the full browser both render from the most recent
+        # successful Gallery snapshot. Refreshing the cloud Gallery happens
+        # after the response, so a slow or unavailable deployment cannot add
+        # 10+ seconds to museum search. The refresh lock collapses concurrent
+        # keystrokes into one upstream request.
+        cloud_artifacts = get_cached_cloud_museum_directory_artifacts()
+        background_tasks.add_task(refresh_cloud_museum_directory_artifacts)
+        directory = build_uploaded_museum_directory(
+            cloud_artifacts,
+            q=None,
+            limit=5000,
+        )
+        return attach_catalog_metadata_to_uploaded_museum_directory(
+            directory,
+            catalog_db,
+            q=q,
+            limit=limit,
+        )
 
     museums = list(
         db.scalars(
@@ -5260,13 +5651,13 @@ def list_museum_directory(
                 )
             )
         ]
-    directory.sort(
-        key=lambda item: (
-            normalize_museum_directory_key(item.name),
-            item.id,
-        )
+    return attach_catalog_metadata_to_uploaded_museum_directory(
+        directory,
+        catalog_db,
+        q=q,
+        limit=limit,
+        attach_existing=False,
     )
-    return directory[:limit]
 
 
 @app.get(f"{settings.api_prefix}/museums", response_model=list[MuseumRead])

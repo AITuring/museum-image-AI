@@ -1,0 +1,56 @@
+name: Sync Cloud Exhibitions
+
+on:
+  schedule:
+    # 03:20 Asia/Shanghai (UTC+8)
+    - cron: "20 19 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloud-production
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+    permissions:
+      contents: read
+    steps:
+      - name: Run bounded exhibition sync on server
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.SERVER_APP_PATH }}
+          COMPOSE_FILE: docker-compose.cloud.yml
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          command_timeout: 40m
+          script_stop: true
+          envs: DEPLOY_PATH,COMPOSE_FILE
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_PATH"
+
+            if [ ! -f .deploy/current_release.env ]; then
+              echo "Missing .deploy/current_release.env; deploy the backend first." >&2
+              exit 1
+            fi
+
+            # shellcheck disable=SC1091
+            source .deploy/current_release.env
+            export BACKEND_IMAGE="${RELEASE_IMAGE:?RELEASE_IMAGE is required}"
+
+            if [ -n "$(docker ps -q --filter 'label=com.docker.compose.service=exhibition-sync-worker')" ]; then
+              echo "An exhibition sync worker is already running; it owns this schedule."
+              exit 0
+            fi
+
+            docker compose -f "$COMPOSE_FILE" up -d --wait exhibitions-postgres
+            docker compose -f "$COMPOSE_FILE" --profile exhibition-sync run --rm --no-deps \
+              exhibition-sync-worker \
+              python scripts/sync_exhibitions.py --mode incremental

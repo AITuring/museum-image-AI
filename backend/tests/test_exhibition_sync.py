@@ -4,13 +4,18 @@ from datetime import date, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, patch
 
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.exhibition_db import ExhibitionCatalogBase
 from app.exhibition_models import CatalogExhibition
-from app.exhibition_service import ExhibitionSyncCoordinator, _candidate_urls
+from app.exhibition_service import (
+    ExhibitionSyncCoordinator,
+    _candidate_urls,
+    _fetch_source_document,
+)
 
 
 def exhibition(
@@ -65,12 +70,19 @@ class ExhibitionSyncCandidateTests(unittest.TestCase):
             end_date=date.today() - timedelta(days=30),
             museum_name=None,
         )
-        self.db.add_all([current, missing_detail, missing_museum])
+        room_as_museum = exhibition(
+            "room-as-museum",
+            description="已有详情",
+            end_date=date.today() - timedelta(days=30),
+            museum_name="二层临展厅",
+        )
+        self.db.add_all([current, missing_detail, missing_museum, room_as_museum])
         self.db.commit()
         discovered = [
             current.source_url,
             missing_detail.source_url,
             missing_museum.source_url,
+            room_as_museum.source_url,
             "https://art.icity.ly/events/new",
         ]
 
@@ -84,6 +96,7 @@ class ExhibitionSyncCandidateTests(unittest.TestCase):
         self.assertNotIn(current.source_url, candidates)
         self.assertIn(missing_detail.source_url, candidates)
         self.assertIn(missing_museum.source_url, candidates)
+        self.assertIn(room_as_museum.source_url, candidates)
         self.assertIn("https://art.icity.ly/events/new", candidates)
 
     def test_first_incremental_run_refreshes_current_exhibitions(self) -> None:
@@ -105,6 +118,33 @@ class ExhibitionSyncCandidateTests(unittest.TestCase):
 
 
 class ExhibitionSyncCoordinatorTests(unittest.IsolatedAsyncioTestCase):
+    async def test_discovery_document_retries_transient_tls_failure(self) -> None:
+        response = httpx.Response(
+            200,
+            request=httpx.Request("GET", "https://art.icity.ly"),
+        )
+        client = SimpleNamespace(
+            get=AsyncMock(
+                side_effect=[
+                    httpx.ConnectError("temporary TLS failure"),
+                    response,
+                ]
+            )
+        )
+
+        with patch(
+            "app.exhibition_service.asyncio.sleep",
+            new=AsyncMock(),
+        ) as sleep:
+            result = await _fetch_source_document(
+                client,
+                "https://art.icity.ly",
+            )
+
+        self.assertIs(result, response)
+        self.assertEqual(client.get.await_count, 2)
+        sleep.assert_awaited_once_with(1)
+
     async def test_continuous_backfill_runs_until_catalog_catches_up(self) -> None:
         runs = [
             SimpleNamespace(

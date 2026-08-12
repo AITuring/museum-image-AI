@@ -2,6 +2,8 @@ import unittest
 from datetime import date
 
 from app.exhibition_source import (
+    institution_name_from_permanent_title,
+    is_probable_room_label,
     parse_city_regions,
     parse_date_range,
     parse_exhibition_detail,
@@ -10,6 +12,23 @@ from app.exhibition_source import (
 
 
 class ExhibitionSourceTests(unittest.TestCase):
+    def test_room_labels_are_not_treated_as_museums(self) -> None:
+        self.assertTrue(is_probable_room_label("二层临展厅"))
+        self.assertTrue(is_probable_room_label("1933老场坊1号楼3楼"))
+        self.assertFalse(is_probable_room_label("山西青铜博物馆"))
+        self.assertFalse(is_probable_room_label("北京展览馆"))
+
+    def test_permanent_title_can_recover_a_legacy_missing_institution(self) -> None:
+        self.assertEqual(
+            institution_name_from_permanent_title(
+                "「吉金光华」山西青铜博物馆常设展"
+            ),
+            "山西青铜博物馆",
+        )
+        self.assertIsNone(
+            institution_name_from_permanent_title("故宫博物院藏器物特展")
+        )
+
     def test_parse_cross_year_chinese_date_range(self) -> None:
         parsed = parse_date_range("2025年12月20日 - 2月8日 10:00 - 18:00")
         self.assertEqual(parsed.start_date, date(2025, 12, 20))

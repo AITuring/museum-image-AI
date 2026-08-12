@@ -2,6 +2,7 @@ import unittest
 from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
+from fastapi import BackgroundTasks
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
@@ -87,7 +88,7 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.main_db.commit()
         return museum
 
-    def test_directory_merges_known_museum_and_adds_catalog_venues(self) -> None:
+    def test_directory_merges_uploaded_and_catalog_only_museums(self) -> None:
         self.add_uploaded_museum("山东博物馆", location="济南")
         self.catalog_db.add_all(
             [
@@ -117,13 +118,14 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.catalog_db.commit()
 
         directory = list_museum_directory(
+            background_tasks=BackgroundTasks(),
             q=None,
             limit=100,
             db=self.main_db,
             catalog_db=self.catalog_db,
         )
 
-        self.assertEqual(len(directory), 1)
+        self.assertEqual(len(directory), 2)
         shandong = next(item for item in directory if item.name == "山东博物馆")
         self.assertGreater(shandong.id, 0)
         self.assertEqual(shandong.catalog_exhibition_count, 2)
@@ -131,7 +133,12 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.assertEqual(shandong.last_year, 2026)
         self.assertFalse(shandong.derived_from_catalog)
 
-        self.assertNotIn("孔子博物馆", [item.name for item in directory])
+        confucius = next(item for item in directory if item.name == "孔子博物馆")
+        self.assertLess(confucius.id, 0)
+        self.assertIsNone(confucius.museum_id)
+        self.assertEqual(confucius.museum_ids, [])
+        self.assertEqual(confucius.catalog_exhibition_count, 1)
+        self.assertTrue(confucius.derived_from_catalog)
 
     def test_catalog_can_filter_an_exact_museum_venue(self) -> None:
         self.catalog_db.add_all(
@@ -172,7 +179,7 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.assertEqual(result.total, 1)
         self.assertEqual(result.items[0].title, "山东展览")
 
-    def test_directory_only_contains_museums_with_uploaded_images(self) -> None:
+    def test_directory_does_not_promote_rooms_or_floors_to_museums(self) -> None:
         self.add_uploaded_museum("上海博物馆")
         self.catalog_db.add_all(
             [
@@ -203,6 +210,7 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.catalog_db.commit()
 
         directory = list_museum_directory(
+            background_tasks=BackgroundTasks(),
             q=None,
             limit=100,
             db=self.main_db,
@@ -210,6 +218,179 @@ class MuseumDirectoryTests(unittest.TestCase):
         )
 
         self.assertEqual([item.name for item in directory], ["上海博物馆"])
+
+    def test_catalog_only_imuseum_museum_is_searchable(self) -> None:
+        address = "太原市万柏林区广经路13号"
+        permanent = catalog_exhibition(
+            "shanxi-bronze-permanent",
+            venue="山西青铜博物馆",
+            city="太原",
+            title="「吉金光华」山西青铜博物馆常设展",
+            start_date=date(2019, 7, 27),
+            address=address,
+        )
+        # This mirrors the production rows created before the source parser
+        # had a separate parent-museum field: the permanent display has no
+        # museum and temporary exhibitions contain only their room.
+        permanent.museum_name = None
+        permanent.is_permanent = True
+        self.catalog_db.add_all(
+            [
+                permanent,
+                catalog_exhibition(
+                    "vv6ay6t",
+                    venue="二层临展厅",
+                    museum_name="二层临展厅",
+                    city="太原",
+                    title="致和：春秋时期的晋与吴",
+                    start_date=date(2026, 6, 5),
+                    address=address,
+                ),
+                catalog_exhibition(
+                    "shanxi-bronze-room",
+                    venue="一层临展厅",
+                    museum_name="一层临展厅",
+                    city="太原",
+                    title="晋国霸业",
+                    start_date=date(2024, 10, 1),
+                    address=address,
+                ),
+            ]
+        )
+        self.catalog_db.commit()
+
+        directory = list_museum_directory(
+            background_tasks=BackgroundTasks(),
+            q="山西青铜",
+            limit=8,
+            db=self.main_db,
+            catalog_db=self.catalog_db,
+        )
+
+        self.assertEqual(len(directory), 1)
+        museum = directory[0]
+        self.assertEqual(museum.name, "山西青铜博物馆")
+        self.assertEqual(museum.location, address)
+        self.assertEqual(museum.catalog_museum_name, "山西青铜博物馆")
+        self.assertEqual(museum.catalog_address, address)
+        self.assertEqual(museum.catalog_exhibition_count, 3)
+        self.assertTrue(museum.derived_from_catalog)
+
+        history = list_exhibition_catalog(
+            q=None,
+            year=None,
+            region=None,
+            city="太原",
+            museum_name=None,
+            address=museum.catalog_address,
+            venue=None,
+            status=None,
+            include_facets=False,
+            page=1,
+            page_size=100,
+            db=self.catalog_db,
+        )
+        self.assertEqual(history.total, 3)
+        self.assertIn(
+            "致和：春秋时期的晋与吴",
+            [item.title for item in history.items],
+        )
+
+    def test_catalog_keeps_same_named_museums_in_different_cities_separate(self) -> None:
+        self.add_uploaded_museum("龙美术馆", location="上海")
+        self.catalog_db.add_all(
+            [
+                catalog_exhibition(
+                    "dragon-shanghai",
+                    venue="龙美术馆",
+                    museum_name="龙美术馆",
+                    city="上海",
+                    title="上海展览",
+                    start_date=date(2026, 1, 1),
+                    address="上海市徐汇区龙腾大道3399号",
+                ),
+                catalog_exhibition(
+                    "dragon-chongqing",
+                    venue="龙美术馆",
+                    museum_name="龙美术馆",
+                    city="重庆",
+                    title="重庆展览",
+                    start_date=date(2026, 2, 1),
+                    address="重庆市江北区北滨一路",
+                ),
+            ]
+        )
+        self.catalog_db.commit()
+
+        directory = list_museum_directory(
+            background_tasks=BackgroundTasks(),
+            q=None,
+            limit=100,
+            db=self.main_db,
+            catalog_db=self.catalog_db,
+        )
+
+        dragon_museums = [item for item in directory if item.name == "龙美术馆"]
+        self.assertEqual(len(dragon_museums), 2)
+        self.assertEqual(
+            {item.catalog_city for item in dragon_museums},
+            {"上海", "重庆"},
+        )
+        self.assertEqual(len({item.id for item in dragon_museums}), 2)
+        shanghai = next(item for item in dragon_museums if item.catalog_city == "上海")
+        chongqing = next(item for item in dragon_museums if item.catalog_city == "重庆")
+        self.assertGreater(shanghai.id, 0)
+        self.assertLess(chongqing.id, 0)
+
+        chongqing_search = list_museum_directory(
+            background_tasks=BackgroundTasks(),
+            q="重庆",
+            limit=100,
+            db=self.main_db,
+            catalog_db=self.catalog_db,
+        )
+        self.assertEqual(
+            [(item.name, item.catalog_city) for item in chongqing_search],
+            [("龙美术馆", "重庆")],
+        )
+
+    def test_cloud_proxy_responds_from_cache_and_schedules_refresh(self) -> None:
+        self.catalog_db.add(
+            catalog_exhibition(
+                "vv6ay6t",
+                venue="二层临展厅",
+                museum_name="山西青铜博物馆",
+                city="太原",
+                title="致和：春秋时期的晋与吴",
+                start_date=date(2026, 6, 5),
+            )
+        )
+        self.catalog_db.commit()
+        background_tasks = BackgroundTasks()
+
+        with (
+            patch(
+                "app.main.should_proxy_artifact_queries_to_cloud",
+                return_value=True,
+            ),
+            patch(
+                "app.main.get_cached_cloud_museum_directory_artifacts",
+                return_value=[],
+            ) as cached,
+            patch("app.main.get_cloud_museum_directory_artifacts") as refresh,
+        ):
+            directory = list_museum_directory(
+                background_tasks=background_tasks,
+                q="山西青铜",
+                limit=8,
+                db=self.main_db,
+                catalog_db=self.catalog_db,
+            )
+
+        self.assertEqual([item.name for item in directory], ["山西青铜博物馆"])
+        cached.assert_called_once_with()
+        refresh.assert_not_called()
+        self.assertEqual(len(background_tasks.tasks), 1)
 
     def test_uploaded_directory_merges_trailing_cang_museum_names(self) -> None:
         now = datetime.now()
@@ -386,6 +567,7 @@ class MuseumDirectoryTests(unittest.TestCase):
         self.catalog_db.commit()
 
         directory = list_museum_directory(
+            background_tasks=BackgroundTasks(),
             q=None,
             limit=100,
             db=self.main_db,

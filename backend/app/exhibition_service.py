@@ -15,6 +15,7 @@ from app.exhibition_source import (
     SOURCE_BASE_URL,
     SOURCE_SITEMAP_URL,
     ParsedExhibition,
+    is_probable_room_label,
     parse_city_regions,
     parse_exhibition_detail,
     parse_sitemap_event_urls,
@@ -103,7 +104,7 @@ def _candidate_urls(
         row.source_url
         for row in rows
         if not (row.description or "").strip()
-        or not (row.museum_name or "").strip()
+        or is_probable_room_label(row.museum_name)
     ]
     unknown_urls = [url for url in reversed(discovered_urls) if url not in existing_urls]
     backfill_urls = list(dict.fromkeys([*missing_detail_urls, *unknown_urls]))
@@ -187,6 +188,27 @@ async def _fetch_detail(
         return None, f"{url}: {last_error!r}"
 
 
+async def _fetch_source_document(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    attempts: int = 4,
+) -> httpx.Response:
+    """Fetch a discovery document through transient iMuseum TLS failures."""
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response
+        except Exception as exc:  # noqa: BLE001 - source failures are retried as a unit
+            last_error = exc
+            if attempt + 1 < attempts:
+                await asyncio.sleep(2**attempt)
+    assert last_error is not None
+    raise last_error
+
+
 async def run_exhibition_sync(
     *,
     mode: SyncMode = "incremental",
@@ -214,11 +236,9 @@ async def run_exhibition_sync(
             follow_redirects=True,
         ) as client:
             root_response, sitemap_response = await asyncio.gather(
-                client.get(SOURCE_BASE_URL),
-                client.get(SOURCE_SITEMAP_URL),
+                _fetch_source_document(client, SOURCE_BASE_URL),
+                _fetch_source_document(client, SOURCE_SITEMAP_URL),
             )
-            root_response.raise_for_status()
-            sitemap_response.raise_for_status()
             city_regions = parse_city_regions(root_response.text)
             discovered_urls = parse_sitemap_event_urls(sitemap_response.content)
             candidates, existing_urls = _candidate_urls(
@@ -313,11 +333,33 @@ def exhibition_catalog_count(db: Session) -> int:
 
 
 def exhibition_enrichment_pending_count(db: Session) -> int:
+    floor_suffixes = tuple(
+        f"{number}{unit}"
+        for number in "0123456789一二三四五六七八九十"
+        for unit in ("楼", "层", "F", "f")
+    )
     return int(
         db.scalar(
             select(func.count())
             .select_from(CatalogExhibition)
-            .where(CatalogExhibition.museum_name.is_(None))
+            .where(
+                or_(
+                    CatalogExhibition.museum_name.is_(None),
+                    func.trim(CatalogExhibition.museum_name) == "",
+                    CatalogExhibition.museum_name.in_(
+                        ("未知", "其他", "待确认", "待识别")
+                    ),
+                    CatalogExhibition.museum_name.like("%展览厅"),
+                    CatalogExhibition.museum_name.like("%展厅"),
+                    CatalogExhibition.museum_name.like("%展区"),
+                    CatalogExhibition.museum_name.like("%展廊"),
+                    CatalogExhibition.museum_name.like("%号展馆"),
+                    *(
+                        CatalogExhibition.museum_name.like(f"%{suffix}")
+                        for suffix in floor_suffixes
+                    ),
+                )
+            )
         )
         or 0
     )
@@ -420,7 +462,20 @@ class ExhibitionSyncCoordinator:
             if target <= now:
                 target += timedelta(days=1)
             await asyncio.sleep(max(1, (target - now).total_seconds()))
-            self.start(mode="incremental", trigger="scheduled")
+            while True:
+                self.start(mode="incremental", trigger="scheduled")
+                task = self._task
+                if task is None:
+                    break
+                run = await asyncio.shield(task)
+                if run is not None and run.status in {"success", "partial"}:
+                    break
+                retry_seconds = max(60, settings.exhibition_sync_retry_seconds)
+                logger.warning(
+                    "scheduled exhibition sync failed; retrying in %ss",
+                    retry_seconds,
+                )
+                await asyncio.sleep(retry_seconds)
 
 
 exhibition_sync_coordinator = ExhibitionSyncCoordinator()

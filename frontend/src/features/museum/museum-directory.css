@@ -100,6 +100,16 @@
     align-items: stretch;
     flex-direction: column;
   }
+
+  .museum-directory-load-more {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .museum-directory-load-more-button {
+    min-width: 132px;
+    min-height: 44px;
+  }
 }
 
 .museum-console-head {
@@ -133,6 +143,18 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.museum-directory-load-more {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.museum-directory-load-more-button {
+  min-height: 40px;
 }
 
 .museum-summary-card {

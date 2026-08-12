@@ -103,6 +103,7 @@ class ExhibitionSyncWorkerRead(BaseModel):
     heartbeat_at: datetime
     next_run_at: datetime | None = None
     online: bool
+    scheduled: bool = False
 
 
 class ExhibitionSyncStatusRead(BaseModel):

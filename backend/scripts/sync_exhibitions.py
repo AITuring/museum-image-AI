@@ -166,10 +166,25 @@ async def main() -> int:
         await run_daemon()
         return 0
 
+    heartbeat = WorkerHeartbeat()
+    heartbeat.set("syncing", message="正在执行每日单轮同步")
+    heartbeat.persist()
     run = await run_exhibition_sync(mode=args.mode, trigger="cli")
     if run is None:
+        heartbeat.set("retry_wait", message="另一个同步任务正在运行")
+        heartbeat.persist()
         print("另一个同步任务正在运行。")
         return 2
+    if run.status in {"success", "partial"}:
+        delay = seconds_until_daily_sync()
+        heartbeat.set(
+            "waiting_schedule",
+            message="每日单轮同步已完成",
+            next_run_at=datetime.now(timezone.utc) + timedelta(seconds=delay),
+        )
+    else:
+        heartbeat.set("retry_wait", message="每日单轮同步失败，等待重试")
+    heartbeat.persist()
     print(
         f"status={run.status} discovered={run.discovered} attempted={run.attempted} "
         f"created={run.created} updated={run.updated} failed={run.failed}"

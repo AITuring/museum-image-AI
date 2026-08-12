@@ -8,6 +8,7 @@ on:
       - "backend/**"
       - "docker-compose.cloud.yml"
       - ".github/workflows/deploy-cloud.yml"
+      - ".github/workflows/sync-exhibitions-cloud.yml"
       - "scripts/deploy_cloud.sh"
       - "scripts/docker_cleanup.sh"
       - "scripts/install_docker_cleanup_timer.sh"

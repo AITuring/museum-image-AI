@@ -15,6 +15,17 @@ CHINESE_DATE_PATTERN = re.compile(r"(?:(\d{4})年)?(\d{1,2})月(\d{1,2})日")
 ISO_DATE_PATTERN = re.compile(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b")
 SPACE_PATTERN = re.compile(r"\s+")
 VENUE_DETAIL_SUFFIX_PATTERN = re.compile(r"[（(].*?[）)]")
+INSTITUTION_SUFFIX_PATTERN = re.compile(
+    r"(博物馆|博物院|美术馆|艺术馆|纪念馆|科技馆|展览馆|陈列馆|文化馆|图书馆)$"
+)
+QUOTED_TITLE_PREFIX_PATTERN = re.compile(
+    r"^(?:[「『《〈“][^」』》〉”]+[」』》〉”]\s*)+"
+)
+PERMANENT_TITLE_INSTITUTION_PATTERN = re.compile(
+    r"(?P<name>[\w\u3400-\u9fff·•・（）()\-\s]{2,80}?"
+    r"(?:博物馆|博物院|美术馆|艺术馆|纪念馆|科技馆|展览馆|陈列馆|文化馆|图书馆))"
+    r"(?:常设展|常设陈列|基本陈列)$"
+)
 
 
 @dataclass
@@ -167,6 +178,47 @@ def museum_name_from_source_fields(
     # institution and its room. The catalog needs the institution as its
     # museum label; retain the unmodified value in `venue` separately.
     return VENUE_DETAIL_SUFFIX_PATTERN.sub("", fallback).strip() or fallback
+
+
+def is_probable_room_label(value: str | None) -> bool:
+    """Return whether a legacy museum value actually names a room or floor."""
+    label = (value or "").strip()
+    if not label:
+        return True
+    if INSTITUTION_SUFFIX_PATTERN.search(label):
+        return False
+    compact = SPACE_PATTERN.sub("", label)
+    return bool(
+        compact in {"未知", "其他", "待确认", "待识别"}
+        or re.search(
+            r"(?:[负B]?\d+|[一二三四五六七八九十]+)(?:F|楼|层)$",
+            compact,
+            flags=re.IGNORECASE,
+        )
+        or re.search(r"(?:展览厅|展厅|展区|展廊)$", compact)
+        or re.fullmatch(
+            r"(?:第)?(?:\d+|[一二三四五六七八九十]+)(?:号)?展馆",
+            compact,
+        )
+    )
+
+
+def institution_name_from_permanent_title(value: str | None) -> str | None:
+    """Extract a host only from an explicit permanent-display title.
+
+    Legacy rows may contain a floor in ``museum_name`` while a title such as
+    ``「吉金光华」山西青铜博物馆常设展`` still preserves the institution.  Requiring a
+    permanent-display suffix avoids mistaking a lending museum in an ordinary
+    special-exhibition title for the host.
+    """
+    title = SPACE_PATTERN.sub(" ", (value or "").strip())
+    if not title:
+        return None
+    without_prefix = QUOTED_TITLE_PREFIX_PATTERN.sub("", title).strip()
+    match = PERMANENT_TITLE_INSTITUTION_PATTERN.fullmatch(without_prefix)
+    if match is None:
+        return None
+    return match.group("name").strip() or None
 
 
 def parse_html(contents: str) -> HtmlNode:

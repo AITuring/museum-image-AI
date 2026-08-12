@@ -138,7 +138,7 @@ export function useGalleryPageState({ apiBaseUrl, editingRef, routeExitRef }: Pa
     void (async () => {
       try {
         const [museums, eras] = await Promise.all([
-          fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?limit=200`),
+          fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museum-directory?limit=5000`),
           fetchJson<EraOption[]>(`${apiBaseUrl}/api/era-options`),
         ])
         setMuseumOptions(normalizeMuseumOptions(museums))

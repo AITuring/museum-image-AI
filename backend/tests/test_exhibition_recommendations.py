@@ -271,6 +271,52 @@ class ExhibitionRecommendationTests(unittest.TestCase):
         self.assertTrue(status.worker.online)
         self.assertEqual(status.worker.status, "syncing")
 
+    def test_live_sync_progress_counts_missing_museum_details_as_incomplete(self) -> None:
+        now = datetime.now(timezone.utc)
+        items = [
+            exhibition(
+                f"item-{index}",
+                f"展览 {index}",
+                start_date=date(2026, 1, 1),
+                end_date=date(2026, 12, 31),
+            )
+            for index in range(4)
+        ]
+        items[2].museum_name = None
+        items[3].museum_name = "二层临展厅"
+        self.catalog_db.add_all(items)
+        self.catalog_db.add(
+            ExhibitionSyncRun(
+                mode="incremental",
+                trigger="scheduled",
+                status="success",
+                discovered=4,
+                attempted=4,
+                created=4,
+                started_at=now - timedelta(minutes=1),
+                completed_at=now - timedelta(minutes=1),
+            )
+        )
+        self.catalog_db.add(
+            ExhibitionSyncRun(
+                mode="incremental",
+                trigger="scheduled",
+                status="failed",
+                discovered=0,
+                attempted=0,
+                error="temporary TLS failure",
+                started_at=now,
+                completed_at=now,
+            )
+        )
+        self.catalog_db.commit()
+
+        status = get_exhibition_sync_live_status(self.catalog_db)
+
+        self.assertEqual(status.catalog_total, 4)
+        self.assertEqual(status.backfill_remaining, 2)
+        self.assertEqual(status.overall_progress, 50)
+
 
 if __name__ == "__main__":
     unittest.main()

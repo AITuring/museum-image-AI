@@ -139,6 +139,7 @@ type RawMuseumArtifact = Omit<MuseumArtifact, "images" | "exhibitions"> & {
 }
 
 type MuseumMode = "cards" | "map"
+const MUSEUM_CARD_PAGE_SIZE = 60
 
 type FolderEntry = {
   artifactId: number
@@ -151,7 +152,7 @@ type FolderEntry = {
 }
 
 function museumIdFromPath(pathname: string) {
-  const match = pathname.match(/^\/museums\/(\d+)\/?$/)
+  const match = pathname.match(/^\/museums\/(-?\d+)\/?$/)
   return match ? Number(match[1]) : null
 }
 
@@ -398,6 +399,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const [mapLoading, setMapLoading] = useState(false)
   const [mapError, setMapError] = useState<string | null>(null)
   const [mapReady, setMapReady] = useState(false)
+  const [visibleMuseumCount, setVisibleMuseumCount] = useState(MUSEUM_CARD_PAGE_SIZE)
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any>(null)
   const markersRef = useRef<any[]>([])
@@ -405,6 +407,10 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
   const resizeObserverRef = useRef<ResizeObserver | null>(null)
 
   const filteredMuseums = useMemo(() => items.filter((museum) => museumMatchesQuery(museum, query)), [items, query])
+  const visibleMuseums = useMemo(
+    () => filteredMuseums.slice(0, visibleMuseumCount),
+    [filteredMuseums, visibleMuseumCount],
+  )
 
   useEffect(() => {
     setActiveId((current) => {
@@ -469,21 +475,28 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
         response = await fetch(`${apiBaseUrl}/api/museums?limit=500`)
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const payload = ((await response.json()) as RawMuseumRecord[]).map((item) => normalizeMuseumCoordinates({
-        ...item,
-        museum_id: item.museum_id ?? item.id,
-        museum_ids: item.museum_ids?.length ? item.museum_ids : [item.museum_id ?? item.id],
-        catalog_exhibition_count: item.catalog_exhibition_count ?? 0,
-        first_year: item.first_year ?? null,
-        last_year: item.last_year ?? null,
-        cover_url: item.cover_url ?? null,
-        catalog_museum_name: item.catalog_museum_name ?? null,
-        catalog_address: item.catalog_address ?? null,
-        catalog_venue: item.catalog_venue ?? null,
-        catalog_city: item.catalog_city ?? null,
-        catalog_region: item.catalog_region ?? null,
-        derived_from_catalog: item.derived_from_catalog ?? false,
-      }))
+      const payload = ((await response.json()) as RawMuseumRecord[]).map((item) => {
+        const derivedFromCatalog = item.derived_from_catalog ?? false
+        return normalizeMuseumCoordinates({
+          ...item,
+          museum_id: derivedFromCatalog ? item.museum_id ?? null : item.museum_id ?? item.id,
+          museum_ids: item.museum_ids?.length
+            ? item.museum_ids
+            : derivedFromCatalog
+              ? []
+              : [item.museum_id ?? item.id],
+          catalog_exhibition_count: item.catalog_exhibition_count ?? 0,
+          first_year: item.first_year ?? null,
+          last_year: item.last_year ?? null,
+          cover_url: item.cover_url ?? null,
+          catalog_museum_name: item.catalog_museum_name ?? null,
+          catalog_address: item.catalog_address ?? null,
+          catalog_venue: item.catalog_venue ?? null,
+          catalog_city: item.catalog_city ?? null,
+          catalog_region: item.catalog_region ?? null,
+          derived_from_catalog: derivedFromCatalog,
+        })
+      })
       setItems(payload)
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载博物馆失败")
@@ -1104,7 +1117,11 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
             {!activeArtifactError && activeArtifactsLoaded && folders.length === 0 ? (
               <div className="museum-state-card">
                 <strong>还没有可展示的图片</strong>
-                <p className="muted">这座馆已有记录，但暂时还没有可归入展览文件夹的图片。</p>
+                <p className="muted">
+                  {activeMuseum.derived_from_catalog
+                    ? "这座馆来自公开展览目录，暂时还没有关联到图库图片。"
+                    : "这座馆已有记录，但暂时还没有可归入展览文件夹的图片。"}
+                </p>
               </div>
             ) : null}
 
@@ -1189,7 +1206,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
         {loading ? (
           <div className="museum-state-card spacious">
             <strong>正在载入场馆详情…</strong>
-            <p className="muted">正在从图库读取文物与图片，请稍候。</p>
+            <p className="muted">正在读取展览目录与已上传图片，请稍候。</p>
           </div>
         ) : renderMuseumStage()}
       </section>
@@ -1202,7 +1219,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
         <div className="museum-page-copy">
           <span className="page-kicker">MUSEUM DIRECTORY</span>
           <h2 id="museum-page-title">博物馆浏览</h2>
-          <p>仅展示图库中已上传图片的博物馆；选馆后可按展览查看图像与地点档案。</p>
+          <p>整合图库记录与 iMuseum 公开展览目录；选馆后可查看历年展览与已上传图像。</p>
         </div>
 
         <div className="museum-console-tools">
@@ -1219,7 +1236,10 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
           <label className="gallery-search museum-search">
             <Input
               value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => {
+                setQuery(event.target.value)
+                setVisibleMuseumCount(MUSEUM_CARD_PAGE_SIZE)
+              }}
               placeholder="搜索博物馆名称、地点或简介"
               aria-label="搜索博物馆"
             />
@@ -1228,7 +1248,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
       </div>
 
       <p className="museum-console-summary">
-        {filteredMuseums.length} / {items.length} 座有图库图片的博物馆，{museumsWithCoordinates.length} 座已落点
+        {filteredMuseums.length} / {items.length} 座可浏览场馆，{museumsWithCoordinates.length} 座已记录坐标
       </p>
 
       {error ? <p className="error-text">{error}</p> : null}
@@ -1248,7 +1268,7 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
 
       {!loading && filteredMuseums.length > 0 && mode === "cards" ? (
         <div className="museum-card-grid">
-          {filteredMuseums.map((museum) => {
+          {visibleMuseums.map((museum) => {
               const artifactPreviews = getMuseumPreviewStack(apiBaseUrl, artifactStore[museum.id] ?? [])
               const previewStack = artifactPreviews.length > 0
                 ? artifactPreviews
@@ -1319,6 +1339,22 @@ export default function MuseumBrowser({ apiBaseUrl }: { apiBaseUrl: string }) {
                 </button>
               )
           })}
+        </div>
+      ) : null}
+
+      {!loading && filteredMuseums.length > 0 && mode === "cards" ? (
+        <div className="museum-directory-load-more" aria-live="polite">
+          <span className="muted small">
+            已显示 {visibleMuseums.length.toLocaleString("zh-CN")} / {filteredMuseums.length.toLocaleString("zh-CN")} 个场馆
+          </span>
+          {visibleMuseums.length < filteredMuseums.length ? (
+            <Button
+              className="museum-directory-load-more-button"
+              onClick={() => setVisibleMuseumCount((current) => current + MUSEUM_CARD_PAGE_SIZE)}
+            >
+              加载更多
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

@@ -120,6 +120,7 @@ type ExhibitionSyncStatus = {
     heartbeat_at: string
     next_run_at: string | null
     online: boolean
+    scheduled: boolean
   } | null
 }
 
@@ -651,32 +652,40 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
   const catalogTotal = syncStatus?.catalog_total ?? payload?.total ?? 0
   const backfillRemaining = syncStatus?.backfill_remaining ?? payload?.backfill_remaining ?? null
   const discoveredTotal = syncStatus?.discovered_total ?? currentRun?.discovered ?? catalogTotal
+  const completedTotal = Math.max(0, discoveredTotal - (backfillRemaining ?? 0))
   const overallProgress = syncStatus?.overall_progress
-    ?? (discoveredTotal ? Math.min(100, catalogTotal / discoveredTotal * 100) : 0)
+    ?? (discoveredTotal ? Math.min(100, completedTotal / discoveredTotal * 100) : 0)
   const worker = syncStatus?.worker ?? null
+  const scheduledSync = Boolean(worker?.scheduled && worker.status === "waiting_schedule")
   const syncActive = worker
     ? Boolean(worker.online && worker.status === "syncing")
     : syncRunning
-  const syncStateLabel = worker && !worker.online
+  const syncStateLabel = worker && !worker.online && !scheduledSync
     ? "Worker 离线"
-    : worker?.status === "retry_wait"
-      ? "等待重试"
-      : worker?.status === "waiting_daily"
-        ? "数据已追平"
-        : backfillRemaining && backfillRemaining > 0
-          ? "持续同步中"
-          : currentRun
-            ? SYNC_STATUS_LABELS[currentRun.status]
-            : "同步状态"
+    : scheduledSync
+      ? "等待每日同步"
+      : worker?.status === "retry_wait"
+        ? "等待重试"
+        : worker?.status === "waiting_daily" && !backfillRemaining
+          ? "数据已追平"
+          : backfillRemaining && backfillRemaining > 0
+            ? "持续同步中"
+            : currentRun
+              ? SYNC_STATUS_LABELS[currentRun.status]
+              : "同步状态"
   const recentRuns = syncStatus?.recent_runs ?? (currentRun ? [currentRun] : [])
   const syncFootnote = syncStatusError
     ? "实时状态暂不可用"
-    : worker?.status === "waiting_daily" && worker.next_run_at
-      ? formatSyncTime(worker.next_run_at).replace("更新于 ", "下次同步 ")
-      : worker?.message
-        ?? (backfillRemaining
-          ? `待补详情 ${backfillRemaining.toLocaleString("zh-CN")} 条`
-          : "目录详情已追平")
+    : worker && !worker.online && !scheduledSync
+      ? backfillRemaining
+        ? `同步 Worker 已离线，仍有 ${backfillRemaining.toLocaleString("zh-CN")} 条待补`
+        : "同步 Worker 已离线"
+      : (worker?.status === "waiting_daily" || scheduledSync) && worker?.next_run_at
+        ? formatSyncTime(worker.next_run_at).replace("更新于 ", "下次同步 ")
+        : worker?.message
+          ?? (backfillRemaining
+            ? `待补详情 ${backfillRemaining.toLocaleString("zh-CN")} 条`
+            : "目录详情已追平")
   const cityOptions = [
     { value: "", label: "全部城市" },
     ...(payload?.cities ?? []).map((item) => ({
@@ -736,7 +745,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
               <div className="exhibition-sync-card-summary-main">
                 <strong>{overallProgress.toFixed(overallProgress < 10 ? 1 : 0)}%</strong>
                 <span>
-                  已同步 {catalogTotal.toLocaleString("zh-CN")} / {discoveredTotal.toLocaleString("zh-CN")}
+                  详情完整 {completedTotal.toLocaleString("zh-CN")} / {discoveredTotal.toLocaleString("zh-CN")}
                 </span>
               </div>
               <div className="exhibition-sync-card-summary-side">
@@ -747,7 +756,7 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
             <div
               className="exhibition-sync-progress exhibition-sync-progress-overall"
               role="progressbar"
-              aria-label="展览总体同步进度"
+              aria-label="展览详情完整度"
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={overallProgress}
@@ -778,9 +787,9 @@ export default function ExhibitionCatalog({ apiBaseUrl }: { apiBaseUrl: string }
                   <strong>{formatDuration(syncStatus?.eta_seconds ?? null)}</strong>
                   <span>预计完成</span>
                 </div>
-                <div className={worker?.online ? "online" : "offline"}>
-                  <strong>{worker?.online ? "在线" : "未连接"}</strong>
-                  <span>同步 Worker</span>
+                <div className={worker?.online || scheduledSync ? "online" : "offline"}>
+                  <strong>{scheduledSync ? "已计划" : worker?.online ? "在线" : "未连接"}</strong>
+                  <span>{scheduledSync ? "每日同步" : "同步 Worker"}</span>
                 </div>
               </div>
 

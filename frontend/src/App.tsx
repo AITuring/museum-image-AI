@@ -286,7 +286,7 @@ function normalizeViewFromPath(pathname: string): View {
   if (/^\/gallery\/\d+$/.test(normalizedPath)) {
     return "gallery"
   }
-  if (/^\/museums\/\d+$/.test(normalizedPath)) {
+  if (/^\/museums\/-?\d+$/.test(normalizedPath)) {
     return "museums"
   }
   if (
@@ -880,7 +880,7 @@ function App() {
         || /^\/exhibitions\/history\/[^/]+\/?$/.test(window.location.pathname)
       )
     const isGalleryDetailPath = normalizedView === "gallery" && /^\/gallery\/\d+\/?$/.test(window.location.pathname)
-    const isMuseumDetailPath = normalizedView === "museums" && /^\/museums\/\d+\/?$/.test(window.location.pathname)
+    const isMuseumDetailPath = normalizedView === "museums" && /^\/museums\/-?\d+\/?$/.test(window.location.pathname)
     if (window.location.pathname !== targetPath && !isExhibitionDetailPath && !isGalleryDetailPath && !isMuseumDetailPath) {
       window.history.replaceState({}, "", targetPath)
     }

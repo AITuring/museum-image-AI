@@ -30,7 +30,8 @@ export async function loadMuseumSuggestions(
     if (keyword) {
       params.set("q", keyword)
     }
-    const items = await fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?${params.toString()}`)
+    const endpoint = keyword.trim() ? "museum-directory" : "museums"
+    const items = await fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/${endpoint}?${params.toString()}`)
     setter(items)
   } catch {
     setter([])
@@ -60,7 +61,7 @@ export async function listDirectoryImageEntries(handle: WritableDirectoryHandle)
 
 export async function resolveMuseum(apiBaseUrl: string, name: string): Promise<MuseumOption | null> {
   const items = await fetchJson<MuseumOption[]>(
-    `${apiBaseUrl}/api/museums?${new URLSearchParams({ q: name, limit: "8" }).toString()}`,
+    `${apiBaseUrl}/api/museum-directory?${new URLSearchParams({ q: name, limit: "8" }).toString()}`,
   )
   const exact = items.find((item) => item.name === name)
   return exact ?? items[0] ?? null
