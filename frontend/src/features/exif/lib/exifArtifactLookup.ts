@@ -60,11 +60,26 @@ export async function listDirectoryImageEntries(handle: WritableDirectoryHandle)
 }
 
 export async function resolveMuseum(apiBaseUrl: string, name: string): Promise<MuseumOption | null> {
-  const items = await fetchJson<MuseumOption[]>(
-    `${apiBaseUrl}/api/museum-directory?${new URLSearchParams({ q: name, limit: "8" }).toString()}`,
-  )
+  const params = new URLSearchParams({ q: name, limit: "8" })
+  // Quick entry only needs a museum's own coordinates. The directory endpoint
+  // also joins exhibition catalog data and may proxy a cloud snapshot, so keep
+  // it as a fallback for catalog-only venues instead of putting it on the hot
+  // path for every uploaded photo.
+  let items: MuseumOption[] = []
+  try {
+    items = await fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museums?${params.toString()}`)
+  } catch {
+    // The directory fallback below can still resolve catalog-only venues.
+  }
   const exact = items.find((item) => item.name === name)
-  return exact ?? items[0] ?? null
+  if (exact || items.length > 0) return exact ?? items[0]
+
+  try {
+    items = await fetchJson<MuseumOption[]>(`${apiBaseUrl}/api/museum-directory?${params.toString()}`)
+    return items.find((item) => item.name === name) ?? items[0] ?? null
+  } catch {
+    return null
+  }
 }
 
 export async function parseArtifactName(apiBaseUrl: string, name: string): Promise<ParsedArtifactName> {

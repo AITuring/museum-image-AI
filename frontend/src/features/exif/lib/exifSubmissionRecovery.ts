@@ -1,5 +1,10 @@
 import type { ExifWorkbenchItem, PersistedExifDraftItem } from "../components/types"
 
+export type HttpRequestError = Error & {
+  status?: number
+  code?: string
+}
+
 export function waitForRetry(delayMs: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, delayMs)
@@ -20,7 +25,10 @@ export function postFormDataWithProgress<T>(url: string, formData: FormData, onP
       let payload: { detail?: string } | T | null = null
       try { payload = JSON.parse(request.responseText) as { detail?: string } | T } catch { /* non-json error */ }
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error((payload as { detail?: string } | null)?.detail || `HTTP ${request.status}`))
+        const error = new Error((payload as { detail?: string } | null)?.detail || `HTTP ${request.status}`) as HttpRequestError
+        error.status = request.status
+        error.code = request.getResponseHeader("X-Error-Code") || undefined
+        reject(error)
         return
       }
       resolve(payload as T)
@@ -37,6 +45,8 @@ export async function confirmSubmittedSourceHash(apiBaseUrl: string, sourceHash:
         `${apiBaseUrl}/api/artifact-images/by-source-hash?${new URLSearchParams({ source_hash: sourceHash }).toString()}`,
       )
       if (response.ok && await response.json()) return true
+      const errorCode = response.headers.get("X-Error-Code")
+      if (errorCode === "cloud_source_hash_endpoint_missing" || (response.status >= 400 && response.status < 500)) return false
     } catch {
       // A failed confirmation request should fall through to the normal retry.
     }

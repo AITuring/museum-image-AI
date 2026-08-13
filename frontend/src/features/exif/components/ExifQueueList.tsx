@@ -61,7 +61,7 @@ export function ExifQueueList({
         ? "描述中"
         : showDescriptionTools && hasGeneratedDescription(item) ? "描述完成" : ""
       const needsAuthorization = !item.fileHandle || /授权|权限|未绑定原文件/.test(item.submitMessage ?? "")
-      return <div key={item.id} className={`exif-queue-item-shell${item.submitState === "error" ? " is-error" : ""}`}>
+      return <div key={item.id} className={`exif-queue-item-shell${item.submitState === "error" ? " is-error" : ""}${item.submitState === "submitting" ? " is-submitting" : ""}`}>
         <button
           type="button"
           data-ui="interactive-surface"

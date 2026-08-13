@@ -7,7 +7,7 @@ import "./museum.css"
 const AMAP_SCRIPT_ID = "museum-console-amap-script"
 const AMAP_SECURITY_CODE = "3ba01835420271d5405dccba5e089b46"
 const AMAP_SCRIPT_SRC =
-  "https://webapi.amap.com/maps?v=2.0&key=7a9513e700e06c00890363af1bd2d926&plugin=AMap.ToolBar"
+  "https://webapi.amap.com/maps?v=2.0&key=7a9513e700e06c00890363af1bd2d926&plugin=AMap.PlaceSearch,AMap.Geocoder"
 const AMAP_RASTER_TILE_PATH = "/api/map-tiles/[z]/[x]/[y].png"
 const MAP_REGION_GEOCODE_LIMIT = 24
 const MAP_GEOCODE_CONCURRENCY = 4

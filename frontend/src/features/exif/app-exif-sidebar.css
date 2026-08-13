@@ -505,6 +505,14 @@
   transform: none;
 }
 
+/* 文件名下方的状态行才是“重试/移除”的视觉基线；整行居中会让按钮
+   比“提交失败/待处理”高一截。上传进度出现时仍保持整行居中，避免按钮
+   跟随不断变化的进度文案跳动。 */
+.exif-queue-item-shell:not(.is-submitting) .exif-queue-item-actions {
+  align-self: end;
+  margin-block-end: 6px;
+}
+
 .exif-queue-item-actions .ant-btn {
   width: var(--queue-row-action-size);
   min-width: var(--queue-row-action-size);
@@ -597,6 +605,11 @@
   .exif-queue-panel {
     --queue-action-size: 44px;
     --queue-row-action-size: 44px;
+  }
+
+  .exif-queue-item-shell:not(.is-submitting) .exif-queue-item-actions {
+    align-self: center;
+    margin-block-end: 0;
   }
 
   .exif-sidebar-tools > details > summary {

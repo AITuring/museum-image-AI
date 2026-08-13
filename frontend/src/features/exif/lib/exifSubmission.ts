@@ -1,7 +1,7 @@
 import { useCallback } from "react"
 import { assertWrittenExif, changedParts, toNullableNumber } from "./exifFormDomain"
 import { cloneFormState } from "./exifWorkbenchFormState"
-import { confirmPreviouslySubmittedItem, confirmSubmittedSourceHash, postFormDataWithProgress, waitForRetry } from "./exifSubmissionRecovery"
+import { confirmPreviouslySubmittedItem, confirmSubmittedSourceHash, postFormDataWithProgress, waitForRetry, type HttpRequestError } from "./exifSubmissionRecovery"
 import { verifyWritablePermission } from "./exifArtifactLookup"
 import type { ArtifactSubmitResult, ExifWorkbenchItem, ImageExifMetadata, SubmitNotice, WritableDirectoryHandle } from "../components/types"
 
@@ -16,6 +16,25 @@ type SubmitOptions = {
   clearHistory: () => void
   fetchJson: FetchJson
   responseErrorMessage: (response: Response, prefix?: string) => Promise<string>
+}
+
+function getHttpRequestError(error: unknown) {
+  return error && typeof error === "object" ? error as HttpRequestError : null
+}
+
+function shouldRetryCloudSubmit(error: unknown) {
+  const requestError = getHttpRequestError(error)
+  if (requestError?.code === "cloud_ingest_endpoint_missing") return false
+  const status = requestError?.status
+  if (status === undefined) return true
+  return status === 408 || status === 425 || status === 429 || status >= 500
+}
+
+function shouldAttemptCloudRecovery(error: unknown) {
+  const requestError = getHttpRequestError(error)
+  if (requestError?.code === "cloud_ingest_endpoint_missing") return false
+  const status = requestError?.status
+  return status === undefined || status === 408 || status === 425 || status === 429 || status >= 500
 }
 
 export function useExifSubmitOne({
@@ -248,16 +267,19 @@ export function useExifSubmitOne({
             )
             break
           } catch (error) {
-            if (sourceHash && await confirmSubmittedSourceHash(apiBaseUrl, sourceHash)) {
+            if (sourceHash && shouldAttemptCloudRecovery(error) && await confirmSubmittedSourceHash(apiBaseUrl, sourceHash)) {
               result = {
                 reconciled_after_timeout: true,
                 duplicate_image_detail: "云端已确认这张图片完成入库。",
               }
               break
             }
-            if (attempt === 3) {
+            if (attempt === 3 || !shouldRetryCloudSubmit(error)) {
               const message = error instanceof Error ? error.message : "未知错误"
-              throw new Error(`云端提交已重试 3 次：${message}`, { cause: error })
+              throw new Error(
+                attempt === 3 ? `云端提交已重试 3 次：${message}` : message,
+                { cause: error },
+              )
             }
             await waitForRetry(700 * attempt)
           }

@@ -2019,6 +2019,15 @@ async def submit_artifact_to_cloud(
                     response.status_code,
                     detail,
                 )
+                if response.status_code == 404:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            f"云端入库接口不存在（{settings.api_prefix}/ingest/artifacts）。"
+                            "请检查 CLOUD_API_BASE_URL，或重新部署与本地代码匹配的云端后端。"
+                        ),
+                        headers={"X-Error-Code": "cloud_ingest_endpoint_missing"},
+                    )
                 raise HTTPException(
                     status_code=response.status_code,
                     detail=f"提交云端失败：{detail}",
@@ -6459,6 +6468,17 @@ def get_artifact_image_by_source_hash(
                     params={"source_hash": normalized_source_hash},
                 )
                 response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"云端入库状态接口不存在（{settings.api_prefix}/artifact-images/by-source-hash）。"
+                        "请检查 CLOUD_API_BASE_URL，或重新部署与本地代码匹配的云端后端。"
+                    ),
+                    headers={"X-Error-Code": "cloud_source_hash_endpoint_missing"},
+                ) from exc
+            raise HTTPException(status_code=502, detail=f"查询云端入库状态失败：{exc}") from exc
         except Exception as exc:  # noqa: BLE001 - surface lookup failure to the caller
             raise HTTPException(status_code=502, detail=f"查询云端入库状态失败：{exc}") from exc
         payload = response.json()

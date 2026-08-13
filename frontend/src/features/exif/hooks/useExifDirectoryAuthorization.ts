@@ -22,7 +22,11 @@ type UseExifDirectoryAuthorizationOptions = {
   setSubmitNotice: Dispatch<SetStateAction<SubmitNotice | null>>
   clearHistory: () => void
   createItem: (file: File, index: number, fileHandle?: WritableFileHandle | null) => Promise<ExifWorkbenchItem>
-  beginArtifactMatchReview: (items: ExifWorkbenchItem[], openPermissionAfterReview: boolean) => void
+  startBackgroundEnrichment: (
+    items: ExifWorkbenchItem[],
+    openPermissionAfterReview: boolean,
+    completionLabel?: string,
+  ) => void
   submitOne: (itemId: string) => Promise<boolean>
   yieldToMainThread: () => Promise<void>
 }
@@ -39,7 +43,7 @@ export function useExifDirectoryAuthorization({
   setSubmitNotice,
   clearHistory,
   createItem,
-  beginArtifactMatchReview,
+  startBackgroundEnrichment,
   submitOne,
   yieldToMainThread,
 }: UseExifDirectoryAuthorizationOptions) {
@@ -67,18 +71,23 @@ export function useExifDirectoryAuthorization({
         setSubmitNotice({ type: "success", text: `正在解析文件夹照片 ${index + 1}/${addedEntries.length}：${entry.file.name}` })
         const builtItem = await createItem(entry.file, itemsRef.current.length + index, entry.handle)
         builtItems.push(builtItem)
-        setItems((current) => [...current, builtItem])
+        const nextItems = [...itemsRef.current, builtItem]
+        itemsRef.current = nextItems
+        setItems(nextItems)
         setSelectedId((current) => current ?? builtItem.id)
         await yieldToMainThread()
       }
       setDirectoryHandle(nextDirectoryHandle)
       if (builtItems.length > 0) clearHistory()
-      const matchCount = builtItems.filter((item) => item.existingArtifactCandidates.length > 0).length
       setSubmitNotice({
         type: "success",
-        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片${matchCount > 0 ? `，其中 ${matchCount} 张发现已有文物候选，请确认选择` : ""}，并获得批量原地回写权限；未提交内容会自动保存在本机浏览器。`,
+        text: `已从文件夹“${nextDirectoryHandle.name}”载入 ${builtItems.length} 张照片，正在后台检查已有文物候选；已获得批量原地回写权限。`,
       })
-      beginArtifactMatchReview(builtItems, false)
+      void startBackgroundEnrichment(
+        builtItems,
+        false,
+        `已从文件夹“${nextDirectoryHandle.name}”载入`,
+      )
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return
       setSubmitNotice({ type: "error", text: error instanceof Error ? error.message : "读取照片文件夹失败" })

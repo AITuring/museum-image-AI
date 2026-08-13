@@ -102,6 +102,10 @@ export function useExifEditorEffects({
         )
         setReviewIds((current) => (current.includes(target.id) ? current : [...current, target.id]))
       })
+      .catch(() => {
+        // Existing-artifact matching is best-effort; cloud query failures must
+        // not surface as unhandled promises or block editing the new photo.
+      })
       .finally(() => {
         lookupRef.current.delete(lookupKey)
       })

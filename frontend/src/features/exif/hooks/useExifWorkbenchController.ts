@@ -585,6 +585,7 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
     createItem: createWorkbenchItem,
     selectImages: handleSelectImages,
     uploadFiles: handleUpload,
+    startBackgroundEnrichment,
     removeItem,
     clearAll: clearQueue,
   } = useExifFileIntake({
@@ -623,7 +624,7 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
     setSubmitNotice,
     clearHistory: () => clearOperationHistory(EXIF_HISTORY_SCOPE),
     createItem: createWorkbenchItem,
-    beginArtifactMatchReview,
+    startBackgroundEnrichment,
     submitOne: (itemId) => submitOne(itemId),
     yieldToMainThread,
   })
