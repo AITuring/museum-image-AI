@@ -43,7 +43,7 @@ type UseExifFileIntakeOptions = {
   yieldToMainThread: () => Promise<void>
 }
 
-const BACKGROUND_ENRICHMENT_CONCURRENCY = 3
+const BACKGROUND_ENRICHMENT_CONCURRENCY = 2
 
 async function mapWithConcurrency<T, R>(
   values: T[],

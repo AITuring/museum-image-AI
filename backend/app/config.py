@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     # "cloud"  = Alibaba Cloud server: receives submissions, stores images in OSS and
     #            metadata in the cloud DB, and serves query/search.
     app_role: str = "local"
+    # Injected by the deployment script. Exposed by /api/health so a deploy is
+    # not considered successful while an older container is still answering.
+    app_revision: str = "development"
 
     # ── Cloud ingest (used by the LOCAL side to push reviewed records) ────────────
     # Base URL of the cloud API, e.g. https://your-server.example.com
@@ -98,6 +101,10 @@ class Settings(BaseSettings):
     # Shared secret sent as `Authorization: Bearer <token>`. The cloud side validates
     # it; the local side sends it. Keep both in sync.
     ingest_token: str = ""
+    # A single large photo can briefly consume substantial memory while hashing,
+    # reading EXIF, and uploading to OSS. Reject excess work with a retryable 429
+    # instead of letting concurrent submissions exhaust a small cloud host.
+    cloud_ingest_concurrency: int = 1
 
     # ── Alibaba Cloud OSS (used by the CLOUD side to store images) ────────────────
     oss_access_key_id: str = ""

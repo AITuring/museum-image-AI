@@ -344,6 +344,9 @@ class HealthRead(BaseModel):
     status: str
     environment: str
     database: str
+    role: str
+    revision: str
+    ingest: str
 
 
 class WebBridgeStatusRead(BaseModel):

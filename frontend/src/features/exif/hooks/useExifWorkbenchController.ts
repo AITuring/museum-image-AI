@@ -69,6 +69,8 @@ async function responseErrorMessage(response: Response, prefix?: string) {
   } catch {
     // Keep the HTTP fallback for non-JSON proxy/server errors.
   }
+  const requestId = response.headers.get("X-Request-ID")
+  if (requestId) detail = `${detail}（请求编号 ${requestId.slice(0, 12)}）`
   return prefix ? `${prefix}：${detail}` : detail
 }
 

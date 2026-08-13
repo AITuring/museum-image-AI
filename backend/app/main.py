@@ -11,6 +11,7 @@ import threading
 import time as time_module
 import unicodedata
 from collections import OrderedDict
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from io import BytesIO
@@ -21,7 +22,7 @@ from typing import Awaitable, BinaryIO, Callable
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -107,7 +108,7 @@ from app.models import (
 )
 from app.reference_data import WENWU_ERA_OPTIONS, WENWU_ERA_TIMELINE, WENWU_MUSEUM_OPTIONS
 from app.reference_data import WENWU_MUSEUM_COORDINATES
-from app.oss import delete_image, upload_image
+from app.oss import delete_image, oss_configured, upload_image
 from app.schemas import (
     ArtifactCreate,
     ArtifactDescriptionCandidateRead,
@@ -205,7 +206,9 @@ ERA_TOKEN_CANDIDATES = [
 ]
 CATALOG_NO_PATTERN = re.compile(r"^[A-Za-z]{2,}[\-_]?\d{3,}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 cloud_http_client: httpx.AsyncClient | None = None
+current_request_id: ContextVar[str | None] = ContextVar("current_request_id", default=None)
 MUSEUM_SEGMENT_PATTERN = re.compile(r"(博物馆|纪念馆|美术馆|收藏|馆藏|藏)$")
 
 logger = logging.getLogger("app.vision")
@@ -221,67 +224,12 @@ IMAGE_VARIANT_LOCKS: dict[str, asyncio.Lock] = {}
 IMAGE_VARIANT_WORK_SEMAPHORE = asyncio.Semaphore(
     max(1, settings.image_variant_concurrency)
 )
+CLOUD_INGEST_WORK_SEMAPHORE = threading.BoundedSemaphore(
+    max(1, settings.cloud_ingest_concurrency)
+)
 MAP_TILE_CACHE_MAX_ITEMS = 512
 MAP_TILE_CACHE: OrderedDict[tuple[int, int, int], bytes] = OrderedDict()
 MAP_TILE_FETCH_SEMAPHORE = asyncio.Semaphore(8)
-
-
-def report_debug_event(
-    *,
-    session_id: str,
-    hypothesis_id: str,
-    location: str,
-    message: str,
-    data: dict[str, object] | None = None,
-    run_id: str = "pre-fix",
-) -> None:
-    default_url = "http://127.0.0.1:7777/event"
-    if Path("/.dockerenv").exists():
-        default_url = "http://host.docker.internal:7777/event"
-
-    session_value = session_id
-    for env_path in (
-        BASE_DIR / ".dbg" / f"{session_id}.env",
-        Path(".dbg") / f"{session_id}.env",
-    ):
-        try:
-            if not env_path.exists():
-                continue
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                if raw_line.startswith("DEBUG_SERVER_URL="):
-                    configured_url = raw_line.split("=", 1)[1].strip()
-                    if configured_url:
-                        default_url = configured_url
-                elif raw_line.startswith("DEBUG_SESSION_ID="):
-                    configured_session = raw_line.split("=", 1)[1].strip()
-                    if configured_session:
-                        session_value = configured_session
-        except Exception:
-            continue
-
-    if Path("/.dockerenv").exists() and "127.0.0.1:7777" in default_url:
-        default_url = default_url.replace("127.0.0.1", "host.docker.internal")
-
-    payload = {
-        "sessionId": session_value,
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "msg": message,
-        "data": data or {},
-    }
-
-    try:
-        import urllib.request
-
-        request = urllib.request.Request(
-            default_url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-        urllib.request.urlopen(request, timeout=2).read()
-    except Exception:
-        return
 
 
 @dataclass(slots=True)
@@ -709,8 +657,53 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Source-Hash", "Server-Timing"],
+    expose_headers=[
+        "X-Source-Hash",
+        "X-Error-Code",
+        "X-Request-ID",
+        "X-App-Revision",
+        "Retry-After",
+        "Server-Timing",
+    ],
 )
+
+
+@app.middleware("http")
+async def add_request_observability(request: Request, call_next):
+    incoming_request_id = request.headers.get("X-Request-ID", "").strip()
+    request_id = (
+        incoming_request_id
+        if REQUEST_ID_PATTERN.fullmatch(incoming_request_id)
+        else uuid4().hex
+    )
+    request_id_token = current_request_id.set(request_id)
+    started_at = time_module.perf_counter()
+    try:
+        response = await call_next(request)
+        elapsed_ms = (time_module.perf_counter() - started_at) * 1000
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-App-Revision"] = settings.app_revision
+        if response.status_code >= 400 or elapsed_ms >= 1000:
+            log_request = logger.warning if response.status_code >= 500 else logger.info
+            log_request(
+                "request completed request_id=%s method=%s path=%s status=%d duration_ms=%.0f",
+                request_id,
+                request.method,
+                request.url.path,
+                response.status_code,
+                elapsed_ms,
+            )
+        return response
+    except Exception:
+        logger.exception(
+            "request failed request_id=%s method=%s path=%s",
+            request_id,
+            request.method,
+            request.url.path,
+        )
+        raise
+    finally:
+        current_request_id.reset(request_id_token)
 
 
 def artifact_detail_query():
@@ -1414,25 +1407,7 @@ def parse_artifact_compound_name(raw_name: str) -> ParsedArtifactNameRead:
             catalog_no = segment
             continue
         if museum_name is None and MUSEUM_SEGMENT_PATTERN.search(segment):
-            # #region debug-point D:parse-museum-segment
-            report_debug_event(
-                session_id="exif-submit-parse",
-                hypothesis_id="D",
-                location="main.py:parse-museum-segment",
-                message="[DEBUG] museum segment matched",
-                data={"raw_name": original_name, "segment": segment},
-            )
-            # #endregion
             museum_name = normalize_museum_segment(segment)
-            # #region debug-point D:parse-museum-result
-            report_debug_event(
-                session_id="exif-submit-parse",
-                hypothesis_id="D",
-                location="main.py:parse-museum-result",
-                message="[DEBUG] museum segment normalized",
-                data={"segment": segment, "museum_name": museum_name},
-            )
-            # #endregion
             continue
         # Tomb names are often part of the artifact title itself, for example
         # “韩休墓北壁《山水图》”. Only explicit excavation/provenance wording
@@ -1668,6 +1643,30 @@ def require_ingest_token(authorization: str | None) -> None:
         raise HTTPException(status_code=401, detail="无效的鉴权令牌。")
 
 
+def cloud_ingest_configuration_error() -> str | None:
+    missing: list[str] = []
+    if not settings.ingest_token:
+        missing.append("INGEST_TOKEN")
+    if not oss_configured():
+        missing.append("OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET / OSS_ENDPOINT / OSS_BUCKET")
+    if not missing:
+        return None
+    return f"云端入库配置不完整：缺少 {'；'.join(missing)}。"
+
+
+def reserve_cloud_ingest_slot():
+    if not CLOUD_INGEST_WORK_SEMAPHORE.acquire(blocking=False):
+        raise HTTPException(
+            status_code=429,
+            detail="云端正在处理另一张图片，请稍候自动重试。",
+            headers={"Retry-After": "2"},
+        )
+    try:
+        yield
+    finally:
+        CLOUD_INGEST_WORK_SEMAPHORE.release()
+
+
 def hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -1680,6 +1679,23 @@ def hash_bytes(contents: bytes) -> str:
     digest = hashlib.sha256()
     digest.update(contents)
     return digest.hexdigest()
+
+
+def normalize_source_hash(source_hash: str | None) -> str | None:
+    normalized = (source_hash or "").strip().lower() or None
+    if normalized is not None and not SHA256_PATTERN.fullmatch(normalized):
+        raise HTTPException(status_code=400, detail="原图哈希格式不正确。")
+    return normalized
+
+
+def read_bounded_upload(source: BinaryIO) -> bytes:
+    contents = source.read(MAX_IMAGE_SOURCE_BYTES + 1)
+    if len(contents) > MAX_IMAGE_SOURCE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"图片超过 {MAX_IMAGE_SOURCE_BYTES // (1024 * 1024)} MB，已拒绝入库以保护云端稳定性。",
+        )
+    return contents
 
 
 def persist_upload_and_build_preview(
@@ -1845,8 +1861,78 @@ def extract_http_error_detail(response: httpx.Response) -> str:
             return detail.strip()
     text_body = response.text.strip()
     if text_body:
-        return text_body
+        return text_body[:1000]
     return f"HTTP {response.status_code}"
+
+
+TRANSIENT_CLOUD_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+
+
+def cloud_retry_delay_seconds(response: httpx.Response | None, attempt: int) -> float:
+    fallback = 0.8 * (2**attempt)
+    if response is None:
+        return fallback
+    retry_after = response.headers.get("Retry-After", "").strip()
+    try:
+        requested_delay = float(retry_after)
+    except ValueError:
+        return fallback
+    return min(10.0, max(fallback, requested_delay))
+
+
+async def reconcile_cloud_submission(
+    client: httpx.AsyncClient,
+    *,
+    base: str,
+    source_hash: str | None,
+    request_id: str,
+) -> ArtifactRead | None:
+    """Confirm a possibly committed upload before sending the image again."""
+    if not source_hash:
+        return None
+    request_headers = {"X-Request-ID": request_id}
+    lookup_timeout = httpx.Timeout(8, connect=3)
+    try:
+        image_response = await client.get(
+            f"{base}{settings.api_prefix}/artifact-images/by-source-hash",
+            params={"source_hash": source_hash},
+            headers=request_headers,
+            timeout=lookup_timeout,
+        )
+        if image_response.status_code == 404:
+            return None
+        image_response.raise_for_status()
+        image_payload = image_response.json()
+        if not isinstance(image_payload, dict):
+            return None
+        artifact_id = image_payload.get("artifact_id")
+        if not isinstance(artifact_id, int) or artifact_id <= 0:
+            return None
+
+        artifact_response = await client.get(
+            f"{base}{settings.api_prefix}/artifacts/{artifact_id}",
+            headers=request_headers,
+            timeout=lookup_timeout,
+        )
+        if artifact_response.status_code == 404:
+            return None
+        artifact_response.raise_for_status()
+        artifact = ArtifactRead.model_validate(artifact_response.json())
+        logger.info(
+            "cloud ingest reconciled request_id=%s source_hash=%s artifact_id=%d",
+            request_id,
+            source_hash[:12],
+            artifact.id,
+        )
+        return artifact
+    except Exception as exc:  # noqa: BLE001 - reconciliation is best effort
+        logger.warning(
+            "cloud ingest reconciliation failed request_id=%s source_hash=%s: %s",
+            request_id,
+            source_hash[:12],
+            exc,
+        )
+        return None
 
 
 def write_temp_image_file(contents: bytes, filename: str | None = None) -> Path:
@@ -1986,6 +2072,11 @@ async def submit_artifact_to_cloud(
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
     started_at = time_module.perf_counter()
+    request_id = current_request_id.get() or uuid4().hex
+    request_headers = {
+        "Authorization": f"Bearer {settings.ingest_token}",
+        "X-Request-ID": request_id,
+    }
     try:
         for attempt in range(2):
             try:
@@ -1993,28 +2084,62 @@ async def submit_artifact_to_cloud(
                     cloud_url,
                     files={"image": (image_name, image_bytes, content_type)},
                     data=submit_data,
-                    headers={"Authorization": f"Bearer {settings.ingest_token}"},
+                    headers=request_headers,
                 )
             except httpx.RequestError as exc:
-                if attempt == 0:
-                    logger.warning("cloud ingest connection failed for %s; retrying once: %s", image_name, exc)
-                    await asyncio.sleep(0.8)
-                    continue
-                raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
-
-            if response.status_code in {502, 503, 504} and attempt == 0:
-                logger.warning(
-                    "cloud ingest returned HTTP %s for %s; retrying once. response=%s",
-                    response.status_code,
-                    image_name,
-                    response.text[:2000],
+                reconciled = await reconcile_cloud_submission(
+                    client,
+                    base=base,
+                    source_hash=source_hash,
+                    request_id=request_id,
                 )
-                await asyncio.sleep(0.8)
+                if reconciled is not None:
+                    return reconciled
+                if attempt == 0:
+                    retry_delay = cloud_retry_delay_seconds(None, attempt)
+                    logger.warning(
+                        "cloud ingest connection failed request_id=%s image=%s; "
+                        "retrying once in %.1fs: %s",
+                        request_id,
+                        image_name,
+                        retry_delay,
+                        exc,
+                    )
+                    await asyncio.sleep(retry_delay)
+                    continue
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"提交云端失败：{exc}",
+                    headers={"Retry-After": "2"},
+                ) from exc
+
+            if response.status_code in TRANSIENT_CLOUD_STATUSES:
+                reconciled = await reconcile_cloud_submission(
+                    client,
+                    base=base,
+                    source_hash=source_hash,
+                    request_id=request_id,
+                )
+                if reconciled is not None:
+                    return reconciled
+            if response.status_code in TRANSIENT_CLOUD_STATUSES and attempt == 0:
+                retry_delay = cloud_retry_delay_seconds(response, attempt)
+                logger.warning(
+                    "cloud ingest returned HTTP %s request_id=%s image=%s; "
+                    "retrying once in %.1fs. response=%s",
+                    response.status_code,
+                    request_id,
+                    image_name,
+                    retry_delay,
+                    response.text[:1000],
+                )
+                await asyncio.sleep(retry_delay)
                 continue
             if not response.is_success:
                 detail = extract_http_error_detail(response)
                 logger.error(
-                    "cloud ingest failed for %s with HTTP %s: %s",
+                    "cloud ingest failed request_id=%s image=%s HTTP %s: %s",
+                    request_id,
                     image_name,
                     response.status_code,
                     detail,
@@ -2028,25 +2153,46 @@ async def submit_artifact_to_cloud(
                         ),
                         headers={"X-Error-Code": "cloud_ingest_endpoint_missing"},
                     )
+                error_headers = None
+                if response.status_code in TRANSIENT_CLOUD_STATUSES:
+                    error_headers = {
+                        "Retry-After": response.headers.get("Retry-After", "2")
+                    }
                 raise HTTPException(
                     status_code=response.status_code,
                     detail=f"提交云端失败：{detail}",
+                    headers=error_headers,
                 )
-            break
+            try:
+                return ArtifactRead.model_validate(response.json())
+            except Exception as exc:  # noqa: BLE001 - invalid upstream contract
+                raise HTTPException(
+                    status_code=502,
+                    detail="云端入库响应格式不正确，请稍后重试。",
+                    headers={"Retry-After": "2"},
+                ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail="提交云端失败：重试次数已用尽。",
+            headers={"Retry-After": "2"},
+        )
     except Exception as exc:  # noqa: BLE001 - surface submit failure to the operator
         if isinstance(exc, HTTPException):
             raise exc
-        raise HTTPException(status_code=502, detail=f"提交云端失败：{exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"提交云端失败：{exc}",
+            headers={"Retry-After": "2"},
+        ) from exc
     finally:
         if owns_client:
             await client.aclose()
         logger.info(
-            "cloud ingest round trip completed for %s in %.0fms",
+            "cloud ingest round trip completed request_id=%s image=%s in %.0fms",
+            request_id,
             image_name,
             (time_module.perf_counter() - started_at) * 1000,
         )
-
-    return ArtifactRead.model_validate(response.json())
 
 
 async def generate_artifact_description_payload(
@@ -3315,7 +3461,36 @@ async def fetch_cloud_artifact_match(
 
 @app.get(f"{settings.api_prefix}/health", response_model=HealthRead)
 def healthcheck() -> HealthRead:
-    return HealthRead(status="ok", environment=settings.app_env, database="connected")
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 - health must convert DB failures into readiness
+        logger.error("healthcheck database probe failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="主数据库暂不可用。",
+            headers={"Retry-After": "2", "X-Error-Code": "database_unavailable"},
+        ) from exc
+
+    ingest_status = "not-applicable"
+    if settings.app_role == "cloud":
+        configuration_error = cloud_ingest_configuration_error()
+        if configuration_error:
+            raise HTTPException(
+                status_code=503,
+                detail=configuration_error,
+                headers={"Retry-After": "2", "X-Error-Code": "cloud_ingest_not_ready"},
+            )
+        ingest_status = "ready"
+
+    return HealthRead(
+        status="ok",
+        environment=settings.app_env,
+        database="connected",
+        role=settings.app_role,
+        revision=settings.app_revision,
+        ingest=ingest_status,
+    )
 
 
 @app.get(f"{settings.api_prefix}/map-tiles/{{zoom}}/{{x}}/{{y}}.png", include_in_schema=False)
@@ -4054,33 +4229,10 @@ async def submit_artifact_with_exif_file(
     exif_prepared: bool = Form(False),
     source_hash: str | None = Form(None),
 ) -> ArtifactRead:
-    # #region debug-point A:submit-entry
-    report_debug_event(
-        session_id="exif-submit-parse",
-        hypothesis_id="A",
-        location="main.py:submit-entry",
-        message="[DEBUG] exif submit entry",
-        data={
-            "filename": file.filename,
-            "museum_name": museum_name,
-            "name": name,
-            "era": era,
-            "Place_of_Excavation": Place_of_Excavation,
-            "display_location_name": display_location_name,
-            "latitude": latitude,
-            "longitude": longitude,
-            "existing_artifact_id": existing_artifact_id,
-            "skip_existing_match": skip_existing_match,
-            "exif_prepared": exif_prepared,
-        },
-    )
-    # #endregion
     original_bytes = await file.read()
     if not original_bytes:
         raise HTTPException(status_code=400, detail="图片内容为空。")
-    normalized_source_hash = (source_hash or "").strip().lower() or None
-    if normalized_source_hash is not None and not SHA256_PATTERN.fullmatch(normalized_source_hash):
-        raise HTTPException(status_code=400, detail="原图哈希格式不正确。")
+    normalized_source_hash = normalize_source_hash(source_hash)
     if normalized_source_hash is None:
         normalized_source_hash = await run_in_threadpool(hash_bytes, original_bytes)
 
@@ -4124,61 +4276,34 @@ async def submit_artifact_with_exif_file(
             iso=iso,
         )
     await run_in_threadpool(verify_written_gps, image_bytes, latitude, longitude)
-    # #region debug-point B:submit-after-exif
-    report_debug_event(
-        session_id="exif-submit-parse",
-        hypothesis_id="B",
-        location="main.py:submit-after-exif",
-        message="[DEBUG] exif updated before cloud submit",
-        data={
-            "filename": file.filename,
-            "content_type": content_type,
-            "original_size": len(original_bytes),
-            "updated_size": len(image_bytes),
-            "tag_count": len(normalized_tags),
-        },
+    return await submit_artifact_to_cloud(
+        image_bytes=image_bytes,
+        image_name=file.filename or "photo-exif-upload.jpg",
+        content_type=content_type,
+        museum_name=museum_name,
+        name=name,
+        era=era,
+        Place_of_Excavation=Place_of_Excavation,
+        description=description_text,
+        existing_artifact_id=existing_artifact_id,
+        skip_existing_match=skip_existing_match,
+        tags=normalized_tags,
+        camera_model=camera_model,
+        lens_model=lens_model,
+        capture_museum_name=display_location_name,
+        exhibition_name=exhibition_name,
+        capture_location=display_location_name,
+        latitude=latitude,
+        longitude=longitude,
+        captured_at=captured_at,
+        shutter_speed=shutter_speed,
+        aperture=aperture,
+        iso=iso,
+        edit_method=None,
+        source_hash=normalized_source_hash,
+        catalog_exhibition_source_id=catalog_exhibition_source_id,
+        catalog_exhibition_id=catalog_exhibition_id,
     )
-    # #endregion
-    try:
-        return await submit_artifact_to_cloud(
-            image_bytes=image_bytes,
-            image_name=file.filename or "photo-exif-upload.jpg",
-            content_type=content_type,
-            museum_name=museum_name,
-            name=name,
-            era=era,
-            Place_of_Excavation=Place_of_Excavation,
-            description=description_text,
-            existing_artifact_id=existing_artifact_id,
-            skip_existing_match=skip_existing_match,
-            tags=normalized_tags,
-            camera_model=camera_model,
-            lens_model=lens_model,
-            capture_museum_name=display_location_name,
-            exhibition_name=exhibition_name,
-            capture_location=display_location_name,
-            latitude=latitude,
-            longitude=longitude,
-            captured_at=captured_at,
-            shutter_speed=shutter_speed,
-            aperture=aperture,
-            iso=iso,
-            edit_method=None,
-            source_hash=normalized_source_hash,
-            catalog_exhibition_source_id=catalog_exhibition_source_id,
-            catalog_exhibition_id=catalog_exhibition_id,
-        )
-    except Exception as exc:
-        # #region debug-point B:submit-error
-        report_debug_event(
-            session_id="exif-submit-parse",
-            hypothesis_id="B",
-            location="main.py:submit-error",
-            message="[DEBUG] exif submit raised exception",
-            data={"error_type": type(exc).__name__, "error": str(exc)},
-        )
-        # #endregion
-        raise
 
 
 # ── Cloud ingest (Alibaba Cloud server): receive a reviewed record + image ────────
@@ -4216,18 +4341,27 @@ def ingest_artifact(
     edit_method: str | None = Form(None),
     source_hash: str | None = Form(None),
     authorization: str | None = Header(default=None),
+    _ingest_slot: None = Depends(reserve_cloud_ingest_slot),
     db: Session = Depends(get_db),
 ) -> Artifact | ArtifactRead:
     """Store the image in OSS and the metadata in the cloud DB. Bearer-token protected."""
     started_at = time_module.perf_counter()
     require_ingest_token(authorization)
+    configuration_error = cloud_ingest_configuration_error()
+    if configuration_error:
+        raise HTTPException(
+            status_code=503,
+            detail=configuration_error,
+            headers={"Retry-After": "2", "X-Error-Code": "cloud_ingest_not_ready"},
+        )
 
-    contents = image.file.read()
+    normalized_source_hash = normalize_source_hash(source_hash)
+    contents = read_bounded_upload(image.file)
     if not contents:
         raise HTTPException(status_code=400, detail="图片内容为空。")
     image_hash = hash_bytes(contents)
     byte_duplicate = (
-        find_artifact_image_by_source_hash_local(db, source_hash)
+        find_artifact_image_by_source_hash_local(db, normalized_source_hash)
         or find_artifact_image_by_hash_local(db, image_hash)
     )
     content_hash = image_content_fingerprint(contents)
@@ -4336,7 +4470,7 @@ def ingest_artifact(
 
         duplicate_image.url = image_url
         duplicate_image.image_hash = image_hash
-        duplicate_image.source_hash = source_hash or image_hash
+        duplicate_image.source_hash = normalized_source_hash or image_hash
         duplicate_image.content_hash = content_hash
         duplicate_image.capture_museum_id = capture_museum.id if capture_museum is not None else None
         duplicate_image.exhibition_id = exhibition.id if exhibition is not None else None
@@ -4348,7 +4482,7 @@ def ingest_artifact(
             ArtifactImage(
                 url=image_url,
                 image_hash=image_hash,
-                source_hash=source_hash or image_hash,
+                source_hash=normalized_source_hash or image_hash,
                 content_hash=content_hash,
                 capture_museum_id=capture_museum.id if capture_museum is not None else None,
                 exhibition_id=exhibition.id if exhibition is not None else None,

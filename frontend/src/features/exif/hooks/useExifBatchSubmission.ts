@@ -21,7 +21,10 @@ export function useExifBatchSubmission({ apiBaseUrl, items, directoryHandle, set
     if (items.length === 0) return
     setSubmittingAll(true); setNotice(null)
     let pendingItems = items.filter((item) => item.submitState !== "submitted" || changedParts(item).length > 0)
-    const confirmedIds = new Set((await Promise.all(pendingItems.map(async (item) => await confirmPreviouslySubmittedItem(apiBaseUrl, item) ? item.id : null))).filter((id): id is string => Boolean(id)))
+    const confirmedIds = new Set<string>()
+    for (const item of pendingItems) {
+      if (await confirmPreviouslySubmittedItem(apiBaseUrl, item)) confirmedIds.add(item.id)
+    }
     if (confirmedIds.size > 0) {
       setItems((current) => current.map((item) => confirmedIds.has(item.id) ? { ...item, submitState: "submitted", submitMessage: "已从云端确认这张图片完成入库。", uploadProgress: 100, uploadStage: "已完成", originalForm: cloneFormState(item.form) } : item))
       pendingItems = pendingItems.filter((item) => !confirmedIds.has(item.id))
@@ -37,7 +40,7 @@ export function useExifBatchSubmission({ apiBaseUrl, items, directoryHandle, set
     }
     let succeeded = confirmedIds.size; let failed = 0; const queue = [...pendingItems]
     const worker = async () => { while (queue.length > 0) { const item = queue.shift(); if (!item) return; if (await submitOne(item.id)) succeeded += 1; else failed += 1 } }
-    await Promise.all(Array.from({ length: Math.min(2, pendingItems.length) }, () => worker()))
+    await worker()
     if (succeeded > 0) clearHistory()
     setSubmittingAll(false)
     setNotice(failed > 0 ? { type: "error", text: `批量提交完成：${succeeded} 张成功，${failed} 张失败。可在队列中点击“重试”后再次提交。` } : { type: "success", text: `已完成批量提交：${succeeded} 张图片已入库。` })
