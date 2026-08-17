@@ -4,6 +4,7 @@ set -Eeuo pipefail
 DEPLOY_PATH="${DEPLOY_PATH:?DEPLOY_PATH is required}"
 REPO_URL="${REPO_URL:?REPO_URL is required}"
 BRANCH="${BRANCH:-main}"
+SKIP_REPO_SYNC="${SKIP_REPO_SYNC:-false}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.cloud.yml}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-http://127.0.0.1:8000/api/health}"
 HEALTHCHECK_RETRIES="${HEALTHCHECK_RETRIES:-30}"
@@ -41,6 +42,10 @@ require_command() {
 }
 
 setup_git_ssh() {
+  if [ "$SKIP_REPO_SYNC" = "true" ]; then
+    return
+  fi
+
   if [ -z "${REPO_SSH_PRIVATE_KEY:-}" ] && [ -n "$REPO_SSH_PRIVATE_KEY_B64" ]; then
     REPO_SSH_PRIVATE_KEY="$(printf '%s' "$REPO_SSH_PRIVATE_KEY_B64" | base64 --decode)"
   fi
@@ -95,8 +100,10 @@ ensure_repo() {
 
   cd "$DEPLOY_PATH"
   mkdir -p "$DEPLOY_STATE_DIR"
-  git remote set-url origin "$REPO_URL"
-  git fetch --prune origin "$BRANCH" --tags
+  if [ "$SKIP_REPO_SYNC" != "true" ]; then
+    git remote set-url origin "$REPO_URL"
+    git fetch --prune origin "$BRANCH" --tags
+  fi
 
   if [ ! -f "$DEPLOY_PATH/.env" ]; then
     printf 'Missing %s/.env. Create it from .env.example before rollback.\n' "$DEPLOY_PATH" >&2
@@ -150,6 +157,11 @@ resolve_release_from_history() {
 
 checkout_ref() {
   local target_ref="$1"
+
+  if [ "$SKIP_REPO_SYNC" = "true" ]; then
+    log "Skipping server-side GitHub sync; using the existing deployment files"
+    return 0
+  fi
 
   log "Checking out $target_ref"
   git checkout --force "$target_ref"
@@ -215,7 +227,11 @@ main() {
   fi
 
   checkout_ref "$target_ref"
-  target_commit="$(git rev-parse --verify HEAD)"
+  if [ "$SKIP_REPO_SYNC" = "true" ]; then
+    target_commit="$target_ref"
+  else
+    target_commit="$(git rev-parse --verify HEAD)"
+  fi
   log "Rolling back to $target_commit with image $target_image"
   deploy_release "$target_commit" "$target_image"
   log "Rollback completed"

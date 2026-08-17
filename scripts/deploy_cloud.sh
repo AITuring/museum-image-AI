@@ -5,6 +5,7 @@ DEPLOY_PATH="${DEPLOY_PATH:?DEPLOY_PATH is required}"
 REPO_URL="${REPO_URL:?REPO_URL is required}"
 BRANCH="${BRANCH:-main}"
 DEPLOY_REF="${DEPLOY_REF:-}"
+SKIP_REPO_SYNC="${SKIP_REPO_SYNC:-false}"
 BACKEND_IMAGE="${BACKEND_IMAGE:?BACKEND_IMAGE is required}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.cloud.yml}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-http://127.0.0.1:8000/api/health}"
@@ -43,6 +44,10 @@ require_command() {
 }
 
 setup_git_ssh() {
+  if [ "$SKIP_REPO_SYNC" = "true" ]; then
+    return
+  fi
+
   if [ -z "${REPO_SSH_PRIVATE_KEY:-}" ] && [ -n "$REPO_SSH_PRIVATE_KEY_B64" ]; then
     REPO_SSH_PRIVATE_KEY="$(printf '%s' "$REPO_SSH_PRIVATE_KEY_B64" | base64 --decode)"
   fi
@@ -124,6 +129,10 @@ verify_required_routes() {
 
 ensure_repo() {
   if [ ! -d "$DEPLOY_PATH/.git" ]; then
+    if [ "$SKIP_REPO_SYNC" = "true" ]; then
+      printf 'Repository checkout does not exist at %s; cannot deploy without the server-side deployment directory.\n' "$DEPLOY_PATH" >&2
+      exit 1
+    fi
     mkdir -p "$(dirname "$DEPLOY_PATH")"
     log "Cloning repository into $DEPLOY_PATH"
     git clone "$REPO_URL" "$DEPLOY_PATH"
@@ -131,7 +140,9 @@ ensure_repo() {
 
   cd "$DEPLOY_PATH"
   mkdir -p "$DEPLOY_STATE_DIR"
-  git remote set-url origin "$REPO_URL"
+  if [ "$SKIP_REPO_SYNC" != "true" ]; then
+    git remote set-url origin "$REPO_URL"
+  fi
 
   if [ ! -f "$DEPLOY_PATH/.env" ]; then
     printf 'Missing %s/.env. Create it from .env.example before deployment.\n' "$DEPLOY_PATH" >&2
@@ -157,6 +168,11 @@ resolve_deploy_ref() {
 
 checkout_ref() {
   local requested_ref="$1"
+
+  if [ "$SKIP_REPO_SYNC" = "true" ]; then
+    log "Skipping server-side GitHub sync; deploying the requested image with existing deployment files"
+    return 0
+  fi
 
   log "Fetching repository metadata from $BRANCH"
   git fetch --prune origin "$BRANCH" --tags
@@ -250,7 +266,11 @@ main() {
 
   target_ref="$(resolve_deploy_ref)"
   checkout_ref "$target_ref"
-  target_commit="$(git rev-parse --verify HEAD)"
+  if [ "$SKIP_REPO_SYNC" = "true" ]; then
+    target_commit="$target_ref"
+  else
+    target_commit="$(git rev-parse --verify HEAD)"
+  fi
 
   if deploy_release "$target_commit" "$BACKEND_IMAGE"; then
     install_docker_cleanup_timer

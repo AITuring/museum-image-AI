@@ -101,6 +101,57 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Sync deployment assets to server
+        # The release image is built on the runner. Keep the server from needing
+        # outbound GitHub access just to obtain compose and deployment scripts.
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT || 22 }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_APP_PATH: ${{ secrets.SERVER_APP_PATH }}
+        run: |
+          set -euo pipefail
+          asset_archive="$RUNNER_TEMP/museum-image-deploy-assets-${GITHUB_RUN_ID}.tar.gz"
+          remote_archive="/tmp/museum-image-deploy-assets-${GITHUB_RUN_ID}.tar.gz"
+          key_file="$RUNNER_TEMP/museum-image-server-key-${GITHUB_RUN_ID}"
+          known_hosts_file="$RUNNER_TEMP/museum-image-server-known-hosts-${GITHUB_RUN_ID}"
+          trap 'rm -f "$asset_archive" "$key_file" "$known_hosts_file"' EXIT
+
+          tar -czf "$asset_archive" \
+            docker-compose.cloud.yml \
+            scripts/deploy_cloud.sh \
+            scripts/rollback_cloud.sh \
+            scripts/docker_cleanup.sh \
+            scripts/install_docker_cleanup_timer.sh
+
+          umask 077
+          printf '%s\n' "$SERVER_SSH_KEY" > "$key_file"
+          ssh-keyscan -H -p "$SERVER_PORT" "$SERVER_HOST" > "$known_hosts_file" 2>/dev/null
+          ssh_options=(
+            -i "$key_file"
+            -p "$SERVER_PORT"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$known_hosts_file"
+            -o ConnectTimeout=20
+          )
+          scp_options=(
+            -i "$key_file"
+            -P "$SERVER_PORT"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$known_hosts_file"
+            -o ConnectTimeout=20
+          )
+
+          ssh "${ssh_options[@]}" "${SERVER_USER}@${SERVER_HOST}" \
+            "mkdir -p -- '$SERVER_APP_PATH'"
+          scp "${scp_options[@]}" "$asset_archive" \
+            "${SERVER_USER}@${SERVER_HOST}:${remote_archive}"
+          ssh "${ssh_options[@]}" "${SERVER_USER}@${SERVER_HOST}" \
+            "tar -xzf '$remote_archive' -C '$SERVER_APP_PATH' && rm -f '$remote_archive'"
+
       - name: Create deployment record
         id: create_deployment
         # GitHub's deployment API is metadata only. A transient 404/5xx must
@@ -180,6 +231,7 @@ jobs:
           REPO_URL: https://github.com/${{ github.repository }}.git
           BRANCH: main
           DEPLOY_REF: ${{ needs.build.outputs.deploy_ref }}
+          SKIP_REPO_SYNC: "true"
           BACKEND_IMAGE: ${{ needs.build.outputs.image_name }}:${{ needs.build.outputs.image_tag }}
           COMPOSE_FILE: docker-compose.cloud.yml
           # This check runs inside the SSH session. Keep it on the server's
@@ -201,21 +253,21 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           command_timeout: 40m
           script_stop: true
-          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,OPENAPI_URL,GHCR_USERNAME,GHCR_TOKEN,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,DEPLOY_EXHIBITION_SYNC_WORKER,INSTALL_DOCKER_CLEANUP_TIMER,DOCKER_CLEANUP_RETENTION_DAYS
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,SKIP_REPO_SYNC,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,OPENAPI_URL,GHCR_USERNAME,GHCR_TOKEN,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,DEPLOY_EXHIBITION_SYNC_WORKER,INSTALL_DOCKER_CLEANUP_TIMER,DOCKER_CLEANUP_RETENTION_DAYS
           script: |
             set -euo pipefail
             mkdir -p "$(dirname "$DEPLOY_PATH")"
             if [ ! -d "$DEPLOY_PATH/.git" ]; then
-              git clone "$REPO_URL" "$DEPLOY_PATH"
+              echo "Repository does not exist at $DEPLOY_PATH" >&2
+              exit 1
             fi
             cd "$DEPLOY_PATH"
             # Relieve a saturated host before git/Docker release work. This
             # container name is fixed by docker-compose.cloud.yml.
             docker stop --time 20 museum-cloud-exhibition-sync >/dev/null 2>&1 || true
-            git remote set-url origin "$REPO_URL"
-            git fetch --prune origin "$BRANCH" --tags
-            if [ -n "${DEPLOY_REF:-}" ]; then
-              git checkout --force "$DEPLOY_REF"
+            if [ ! -f docker-compose.cloud.yml ] || [ ! -f scripts/deploy_cloud.sh ]; then
+              echo "Deployment assets are missing from $DEPLOY_PATH" >&2
+              exit 1
             fi
             chmod +x scripts/deploy_cloud.sh
             bash scripts/deploy_cloud.sh
