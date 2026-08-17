@@ -19,7 +19,17 @@ const scriptId = import.meta.env.VITE_AMAP_SCRIPT_ID as string | undefined ?? "m
 const securityCode = import.meta.env.VITE_AMAP_SECURITY_CODE as string | undefined
 const scriptSrc = import.meta.env.VITE_AMAP_SCRIPT_SRC as string | undefined
 let loadPromise: Promise<AMapSdk> | null = null
+const GEOCODING_FAILURE_COOLDOWN_MS = 45_000
+let geocodingDisabledUntil = 0
 const DEFAULT_CENTER: [number, number] = [116.397428, 39.90923]
+
+function markGeocodingFailure() {
+  geocodingDisabledUntil = Date.now() + GEOCODING_FAILURE_COOLDOWN_MS
+}
+
+function markGeocodingSuccess() {
+  if (geocodingDisabledUntil <= Date.now()) geocodingDisabledUntil = 0
+}
 
 function parseCoordinate(value: string) {
   const trimmed = value.trim()
@@ -96,14 +106,26 @@ function loadAmap(): Promise<AMapSdk> {
 }
 
 export async function geocodeLocationName(name: string): Promise<{ latitude: number; longitude: number } | null> {
-  const sdk = await loadAmap()
+  if (geocodingDisabledUntil > Date.now()) return null
+  let sdk: AMapSdk
+  try {
+    sdk = await loadAmap()
+  } catch {
+    markGeocodingFailure()
+    return null
+  }
   const coordinateFromLocation = (location?: AMapGeocodeLocation) => {
     const longitude = location?.getLng?.() ?? location?.lng; const latitude = location?.getLat?.() ?? location?.lat
     return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude: Number(latitude), longitude: Number(longitude) } : null
   }
   const withTimeout = <T,>(register: (finish: (value: T) => void) => void, fallback: T) => new Promise<T>((resolve) => {
     let settled = false
-    const timer = window.setTimeout(() => { if (!settled) { settled = true; resolve(fallback) } }, 8000)
+    const timer = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      markGeocodingFailure()
+      resolve(fallback)
+    }, 8000)
     register((value) => { if (settled) return; settled = true; window.clearTimeout(timer); resolve(value) })
   })
 
@@ -111,33 +133,66 @@ export async function geocodeLocationName(name: string): Promise<{ latitude: num
     const Geocoder = sdk.Geocoder
     const coordinate = await withTimeout<{ latitude: number; longitude: number } | null>((finish) => {
       new Geocoder({ city: "全国" }).getLocation(name, (status, result) => {
-        finish(status === "complete" ? coordinateFromLocation(result.geocodes?.[0]?.location) : null)
+        if (status !== "complete") {
+          markGeocodingFailure()
+          finish(null)
+          return
+        }
+        const value = coordinateFromLocation(result?.geocodes?.[0]?.location)
+        if (value) markGeocodingSuccess()
+        finish(value)
       })
     }, null)
     if (coordinate) return coordinate
+    if (geocodingDisabledUntil > Date.now()) return null
   }
 
   if (!sdk.PlaceSearch) return null
   const PlaceSearch = sdk.PlaceSearch
   return withTimeout<{ latitude: number; longitude: number } | null>((finish) => {
     new PlaceSearch({ city: "全国", citylimit: false, pageSize: 10 }).search(name, (status, result) => {
+      if (status !== "complete") {
+        markGeocodingFailure()
+        finish(null)
+        return
+      }
       const location = status === "complete" ? result.poiList?.pois?.[0]?.location : undefined
-      finish(coordinateFromLocation(location))
+      const value = coordinateFromLocation(location)
+      if (value) markGeocodingSuccess()
+      finish(value)
     })
   }, null)
 }
 
 export async function reverseGeocodeCoordinates(latitude: number, longitude: number): Promise<string> {
-  const Geocoder = (await loadAmap()).Geocoder
+  if (geocodingDisabledUntil > Date.now()) return ""
+  let Geocoder: AMapSdk["Geocoder"]
+  try {
+    Geocoder = (await loadAmap()).Geocoder
+  } catch {
+    markGeocodingFailure()
+    return ""
+  }
   if (!Geocoder) return ""
   return new Promise((resolve) => {
     let settled = false
-    const timer = window.setTimeout(() => { if (!settled) { settled = true; resolve("") } }, 8000)
+    const timer = window.setTimeout(() => {
+      if (settled) return
+      settled = true
+      markGeocodingFailure()
+      resolve("")
+    }, 8000)
     new Geocoder({}).getAddress([longitude, latitude], (status, result) => {
       if (settled) return
       settled = true
       window.clearTimeout(timer)
-      resolve(status === "complete" ? result.regeocode?.formattedAddress?.trim() ?? "" : "")
+      if (status !== "complete") {
+        markGeocodingFailure()
+        resolve("")
+        return
+      }
+      markGeocodingSuccess()
+      resolve(result?.regeocode?.formattedAddress?.trim() ?? "")
     })
   })
 }
@@ -147,11 +202,10 @@ export function GpsMapPicker({ latitude, longitude, onPick }: { latitude: string
   const onPickRef = useRef(onPick)
   const initialCoordinatesRef = useRef({ latitude, longitude })
   useEffect(() => { onPickRef.current = onPick }, [onPick])
-  async function applyPoint(event: AMapEvent) {
+  function applyPoint(event: AMapEvent) {
     if (!event.lnglat) return
     const nextLatitude = event.lnglat.getLat().toFixed(6); const nextLongitude = event.lnglat.getLng().toFixed(6)
-    let locationName = ""; try { locationName = await reverseGeocodeCoordinates(Number(nextLatitude), Number(nextLongitude)) } catch { /* Coordinates remain usable if reverse geocoding is unavailable. */ }
-    onPickRef.current(nextLatitude, nextLongitude, locationName || undefined)
+    onPickRef.current(nextLatitude, nextLongitude)
   }
   useEffect(() => {
     if (!containerRef.current || !scriptSrc) { setState("missing"); return }

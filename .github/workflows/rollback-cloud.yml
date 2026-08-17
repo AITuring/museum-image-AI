@@ -27,6 +27,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -93,7 +94,11 @@ jobs:
           REPO_URL: https://github.com/${{ github.repository }}.git
           BRANCH: main
           COMPOSE_FILE: docker-compose.cloud.yml
-          HEALTHCHECK_URL: ${{ secrets.BACKEND_HEALTHCHECK_URL }}
+          # Rollback checks the service from the SSH host itself; the public
+          # endpoint may be behind a separate proxy or firewall.
+          HEALTHCHECK_URL: http://127.0.0.1:8000/api/health
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEALTHCHECK_RETRIES: "30"
           HEALTHCHECK_INTERVAL: "5"
           ROLLBACK_TARGET: ${{ inputs.rollback_target }}
@@ -107,7 +112,7 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           command_timeout: 30m
           script_stop: true
-          envs: DEPLOY_PATH,REPO_URL,BRANCH,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,ROLLBACK_TARGET,ROLLBACK_REF,ROLLBACK_IMAGE,DEPLOY_EXHIBITION_SYNC_WORKER
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,COMPOSE_FILE,HEALTHCHECK_URL,GHCR_USERNAME,GHCR_TOKEN,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,ROLLBACK_TARGET,ROLLBACK_REF,ROLLBACK_IMAGE,DEPLOY_EXHIBITION_SYNC_WORKER
           script: |
             set -euo pipefail
             if [ ! -d "$DEPLOY_PATH/.git" ]; then

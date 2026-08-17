@@ -5,6 +5,20 @@ export type HttpRequestError = Error & {
   code?: string
 }
 
+const SOURCE_HASH_LOOKUP_COOLDOWN_MS = 45_000
+const OPTIONAL_LOOKUP_TIMEOUT_MS = 2_500
+let sourceHashLookupDisabledUntil = 0
+
+async function fetchWithTimeout(input: string, init?: RequestInit) {
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => controller.abort(), OPTIONAL_LOOKUP_TIMEOUT_MS)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
 export function waitForRetry(delayMs: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, delayMs)
@@ -38,19 +52,25 @@ export function postFormDataWithProgress<T>(url: string, formData: FormData, onP
 }
 
 export async function confirmSubmittedSourceHash(apiBaseUrl: string, sourceHash: string) {
-  for (const delayMs of [0, 800, 1600]) {
-    if (delayMs > 0) await waitForRetry(delayMs)
-    try {
-      const response = await fetch(
-        `${apiBaseUrl}/api/artifact-images/by-source-hash?${new URLSearchParams({ source_hash: sourceHash }).toString()}`,
-      )
-      if (response.ok && await response.json()) return true
-      const errorCode = response.headers.get("X-Error-Code")
-      if (errorCode === "cloud_source_hash_endpoint_missing" || (response.status >= 400 && response.status < 500)) return false
-    } catch {
-      // A failed confirmation request should fall through to the normal retry.
+  if (sourceHashLookupDisabledUntil > Date.now()) return false
+  try {
+    const response = await fetchWithTimeout(
+      `${apiBaseUrl}/api/artifact-images/by-source-hash?${new URLSearchParams({ source_hash: sourceHash }).toString()}`,
+    )
+    if (response.ok) {
+      sourceHashLookupDisabledUntil = 0
+      return Boolean(await response.json())
     }
+    const errorCode = response.headers.get("X-Error-Code")
+    if (errorCode === "cloud_source_hash_endpoint_missing" || response.status >= 400) {
+      sourceHashLookupDisabledUntil = Date.now() + SOURCE_HASH_LOOKUP_COOLDOWN_MS
+      return false
+    }
+  } catch {
+    // Source-hash confirmation is optional. A local/cloud outage must not
+    // retry once per restored draft or delay the normal submit path.
   }
+  sourceHashLookupDisabledUntil = Date.now() + SOURCE_HASH_LOOKUP_COOLDOWN_MS
   return false
 }
 
@@ -60,7 +80,7 @@ export async function confirmSubmittedFileHash(apiBaseUrl: string, file: File) {
     const imageHash = Array.from(new Uint8Array(digest))
       .map((byte) => byte.toString(16).padStart(2, "0"))
       .join("")
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${apiBaseUrl}/api/artifact-images/by-hash?${new URLSearchParams({ image_hash: imageHash }).toString()}`,
     )
     return response.ok && Boolean(await response.json())

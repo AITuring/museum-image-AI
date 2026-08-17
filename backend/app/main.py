@@ -2211,7 +2211,7 @@ async def find_duplicate_artifact_image(
     if should_proxy_artifact_queries_to_cloud():
         base = settings.cloud_api_base_url.rstrip("/")
         try:
-            async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=CLOUD_QUERY_TIMEOUT_SECONDS, follow_redirects=True) as client:
                 response = await client.get(
                     f"{base}{settings.api_prefix}/artifact-images/by-hash",
                     params={"image_hash": image_hash},
@@ -2237,10 +2237,12 @@ async def find_duplicate_artifact_image(
                             return ArtifactImageRead.model_validate(item)
                     return None
                 response.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 - validation failures should surface clearly
-            raise HTTPException(status_code=502, detail=f"查询云端重复图片失败：{exc}") from exc
-        payload = response.json()
-        return ArtifactImageRead.model_validate(payload) if payload else None
+        except Exception:  # noqa: BLE001 - duplicate lookup is best-effort
+            mark_cloud_query_failure("重复图片查询")
+        else:
+            mark_cloud_query_success()
+            payload = response.json()
+            return ArtifactImageRead.model_validate(payload) if payload else None
 
     match = find_artifact_image_by_hash_local(db, image_hash)
     return ArtifactImageRead.model_validate(match) if match is not None else None
@@ -2348,8 +2350,45 @@ def build_google_photos_callback_html(success: bool, message: str) -> str:
 </html>"""
 
 
+CLOUD_QUERY_TIMEOUT_SECONDS = 8
+CLOUD_SOURCE_HASH_TIMEOUT_SECONDS = 3
+CLOUD_QUERY_CIRCUIT_COOLDOWN_SECONDS = 45
+CLOUD_QUERY_CIRCUIT_LOCK = threading.Lock()
+CLOUD_QUERY_CIRCUIT_OPEN_UNTIL = 0.0
+
+
 def should_proxy_artifact_queries_to_cloud() -> bool:
-    return settings.app_role == "local" and bool(settings.cloud_api_base_url)
+    if settings.app_role != "local" or not settings.cloud_api_base_url:
+        return False
+    with CLOUD_QUERY_CIRCUIT_LOCK:
+        return CLOUD_QUERY_CIRCUIT_OPEN_UNTIL <= time_module.monotonic()
+
+
+def mark_cloud_query_failure(context: str) -> None:
+    """Temporarily stop optional cloud reads after an upstream outage.
+
+    Local quick entry can still use its own database while the cloud endpoint
+    is unavailable. The circuit prevents subsequent lookups from repeatedly
+    reaching the same failed upstream and turning one outage into many 502s.
+    """
+    global CLOUD_QUERY_CIRCUIT_OPEN_UNTIL
+    now = time_module.monotonic()
+    with CLOUD_QUERY_CIRCUIT_LOCK:
+        was_open = CLOUD_QUERY_CIRCUIT_OPEN_UNTIL > now
+        CLOUD_QUERY_CIRCUIT_OPEN_UNTIL = now + CLOUD_QUERY_CIRCUIT_COOLDOWN_SECONDS
+    if not was_open:
+        logger.warning(
+            "云端图库查询暂不可用（%s），接下来 %ss 使用本地数据",
+            context,
+            CLOUD_QUERY_CIRCUIT_COOLDOWN_SECONDS,
+        )
+
+
+def mark_cloud_query_success() -> None:
+    global CLOUD_QUERY_CIRCUIT_OPEN_UNTIL
+    with CLOUD_QUERY_CIRCUIT_LOCK:
+        if CLOUD_QUERY_CIRCUIT_OPEN_UNTIL <= time_module.monotonic():
+            CLOUD_QUERY_CIRCUIT_OPEN_UNTIL = 0.0
 
 
 def fetch_cloud_artifact_payload(
@@ -2357,7 +2396,7 @@ def fetch_cloud_artifact_payload(
 ) -> list[dict]:
     base = settings.cloud_api_base_url.rstrip("/")
     last_error: Exception | None = None
-    with httpx.Client(timeout=30, follow_redirects=True) as client:
+    with httpx.Client(timeout=CLOUD_QUERY_TIMEOUT_SECONDS, follow_redirects=True) as client:
         for attempt in range(2):
             try:
                 response = client.get(
@@ -2368,11 +2407,19 @@ def fetch_cloud_artifact_payload(
                     continue
                 response.raise_for_status()
                 payload = response.json()
+                mark_cloud_query_success()
                 return payload if isinstance(payload, list) else []
             except (httpx.RequestError, httpx.HTTPStatusError) as exc:
                 last_error = exc
-                if attempt == 0:
+                if attempt == 0 and (
+                    isinstance(exc, httpx.RequestError)
+                    or (
+                        isinstance(exc, httpx.HTTPStatusError)
+                        and exc.response.status_code in {502, 503, 504}
+                    )
+                ):
                     continue
+                mark_cloud_query_failure("图库列表")
                 raise
     if last_error is not None:
         raise last_error
@@ -3297,16 +3344,17 @@ async def fetch_cloud_artifact_match(
 
     base = settings.cloud_api_base_url.rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=CLOUD_QUERY_TIMEOUT_SECONDS, follow_redirects=True) as client:
             response = await client.get(
                 f"{base}{settings.api_prefix}/artifacts/match",
                 params=params,
             )
             response.raise_for_status()
-    except Exception as exc:  # noqa: BLE001 - do not fail the main workflow on preview lookup
-        logger.warning("artifact match lookup failed: %s", exc, exc_info=exc)
+    except Exception:  # noqa: BLE001 - do not fail the main workflow on preview lookup
+        mark_cloud_query_failure("预览同名文物查询")
         return None
 
+    mark_cloud_query_success()
     payload = response.json()
     if not payload:
         return None
@@ -6095,11 +6143,12 @@ def list_artifacts(
         }
         try:
             payload = fetch_cloud_artifact_payload(filtered_params)
-        except Exception as exc:  # noqa: BLE001 - surface cloud query failure to the operator
-            raise HTTPException(status_code=502, detail=f"查询云端图库失败：{exc}") from exc
-        return enrich_artifact_catalog_links(
-            merge_duplicate_artifact_reads(payload)
-        )
+        except Exception:  # noqa: BLE001 - a local catalog is a safe fallback
+            logger.warning("云端图库查询失败，回退到本地图库")
+        else:
+            return enrich_artifact_catalog_links(
+                merge_duplicate_artifact_reads(payload)
+            )
 
     query = artifact_detail_query().order_by(Artifact.created_at.desc())
     if museum_id is not None:
@@ -6280,16 +6329,18 @@ def match_artifact(
         }
         base = settings.cloud_api_base_url.rstrip("/")
         try:
-            with httpx.Client(timeout=15, follow_redirects=True) as client:
+            with httpx.Client(timeout=CLOUD_QUERY_TIMEOUT_SECONDS, follow_redirects=True) as client:
                 response = client.get(
                     f"{base}{settings.api_prefix}/artifacts/match",
                     params=params,
                 )
                 response.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 - surface lookup failure to the caller
-            raise HTTPException(status_code=502, detail=f"查询云端同名文物失败：{exc}") from exc
-        payload = response.json()
-        return ArtifactMatchRead.model_validate(payload) if payload else None
+        except Exception:  # noqa: BLE001 - matching is best-effort
+            mark_cloud_query_failure("同名文物查询")
+        else:
+            mark_cloud_query_success()
+            payload = response.json()
+            return ArtifactMatchRead.model_validate(payload) if payload else None
 
     match = find_existing_artifact_match(
         db,
@@ -6436,16 +6487,18 @@ def get_artifact_image_by_hash(
     if should_proxy_artifact_queries_to_cloud():
         base = settings.cloud_api_base_url.rstrip("/")
         try:
-            with httpx.Client(timeout=15, follow_redirects=True) as client:
+            with httpx.Client(timeout=CLOUD_QUERY_TIMEOUT_SECONDS, follow_redirects=True) as client:
                 response = client.get(
                     f"{base}{settings.api_prefix}/artifact-images/by-hash",
                     params={"image_hash": image_hash},
                 )
                 response.raise_for_status()
-        except Exception as exc:  # noqa: BLE001 - surface lookup failure to the caller
-            raise HTTPException(status_code=502, detail=f"查询云端重复图片失败：{exc}") from exc
-        payload = response.json()
-        return ArtifactImageRead.model_validate(payload) if payload else None
+        except Exception:  # noqa: BLE001 - duplicate lookup is best-effort
+            mark_cloud_query_failure("重复图片查询")
+        else:
+            mark_cloud_query_success()
+            payload = response.json()
+            return ArtifactImageRead.model_validate(payload) if payload else None
 
     match = find_artifact_image_by_hash_local(db, image_hash)
     return ArtifactImageRead.model_validate(match) if match is not None else None
@@ -6462,27 +6515,18 @@ def get_artifact_image_by_source_hash(
     if should_proxy_artifact_queries_to_cloud():
         base = settings.cloud_api_base_url.rstrip("/")
         try:
-            with httpx.Client(timeout=15, follow_redirects=True) as client:
+            with httpx.Client(timeout=CLOUD_SOURCE_HASH_TIMEOUT_SECONDS, follow_redirects=True) as client:
                 response = client.get(
                     f"{base}{settings.api_prefix}/artifact-images/by-source-hash",
                     params={"source_hash": normalized_source_hash},
                 )
                 response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                raise HTTPException(
-                    status_code=502,
-                    detail=(
-                        f"云端入库状态接口不存在（{settings.api_prefix}/artifact-images/by-source-hash）。"
-                        "请检查 CLOUD_API_BASE_URL，或重新部署与本地代码匹配的云端后端。"
-                    ),
-                    headers={"X-Error-Code": "cloud_source_hash_endpoint_missing"},
-                ) from exc
-            raise HTTPException(status_code=502, detail=f"查询云端入库状态失败：{exc}") from exc
-        except Exception as exc:  # noqa: BLE001 - surface lookup failure to the caller
-            raise HTTPException(status_code=502, detail=f"查询云端入库状态失败：{exc}") from exc
-        payload = response.json()
-        return ArtifactImageRead.model_validate(payload) if payload else None
+        except Exception:  # noqa: BLE001 - confirmation is best-effort
+            mark_cloud_query_failure("原图哈希确认")
+        else:
+            mark_cloud_query_success()
+            payload = response.json()
+            return ArtifactImageRead.model_validate(payload) if payload else None
 
     match = find_artifact_image_by_source_hash_local(db, normalized_source_hash)
     return ArtifactImageRead.model_validate(match) if match is not None else None

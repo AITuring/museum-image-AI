@@ -38,7 +38,6 @@ type UseExifFileIntakeOptions = {
   beginArtifactMatchReview: (items: ExifWorkbenchItem[], openPermissionAfterReview: boolean) => void
   fetchJson: FetchJson
   buildItemId: (file: File, index: number) => string
-  reverseGeocodeCoordinates: (latitude: number, longitude: number) => Promise<string>
   revokePreviewUrl: (url: string) => void
   yieldToMainThread: () => Promise<void>
 }
@@ -85,7 +84,6 @@ export function useExifFileIntake({
   beginArtifactMatchReview,
   fetchJson,
   buildItemId,
-  reverseGeocodeCoordinates,
   revokePreviewUrl,
   yieldToMainThread,
 }: UseExifFileIntakeOptions) {
@@ -182,17 +180,10 @@ export function useExifFileIntake({
   }
 
   async function enrichOptionalMetadata(item: ExifWorkbenchItem) {
-    const locationTask = item.form.latitude && item.form.longitude
-      ? reverseGeocodeCoordinates(Number(item.form.latitude), Number(item.form.longitude))
-      : Promise.resolve("")
-    const museumTask = item.parsedName?.museum_name
-      ? resolveMuseum(apiBaseUrl, item.parsedName.museum_name)
-      : Promise.resolve(null)
-
-    const [locationResult, museumResult] = await Promise.allSettled([locationTask, museumTask])
-    const locationName = locationResult.status === "fulfilled" ? locationResult.value : ""
-    const museum = museumResult.status === "fulfilled" ? museumResult.value : null
-    if (!locationName && !museum) return
+    const museum = item.parsedName?.museum_name
+      ? await resolveMuseum(apiBaseUrl, item.parsedName.museum_name)
+      : null
+    if (!museum) return
 
     updateQueuedItem(item.id, (current) => {
       // A user can edit the form while these optional lookups are in flight.
@@ -200,10 +191,6 @@ export function useExifFileIntake({
       // the baseline so they do not become spurious manual changes.
       const nextForm = { ...current.form }
       const nextOriginalForm = { ...current.originalForm }
-      if (!nextForm.displayLocationName && locationName) {
-        nextForm.displayLocationName = locationName
-        nextOriginalForm.displayLocationName = locationName
-      }
       if (!nextForm.latitude && museum?.latitude != null) {
         const latitude = museum.latitude.toString()
         nextForm.latitude = latitude
@@ -220,7 +207,7 @@ export function useExifFileIntake({
 
   async function enrichItem(item: ExifWorkbenchItem) {
     void enrichOptionalMetadata(item).catch(() => {
-      // Optional location enrichment must never turn into an unhandled
+      // Optional museum enrichment must never turn into an unhandled
       // rejection or affect the fast intake path.
     })
 

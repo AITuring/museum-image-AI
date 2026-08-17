@@ -96,6 +96,7 @@ jobs:
     permissions:
       contents: read
       deployments: write
+      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -128,7 +129,13 @@ jobs:
           DEPLOY_REF: ${{ needs.build.outputs.deploy_ref }}
           BACKEND_IMAGE: ${{ needs.build.outputs.image_name }}:${{ needs.build.outputs.image_tag }}
           COMPOSE_FILE: docker-compose.cloud.yml
-          HEALTHCHECK_URL: ${{ secrets.BACKEND_HEALTHCHECK_URL }}
+          # This check runs inside the SSH session. Keep it on the server's
+          # loopback interface so a public reverse proxy/firewall cannot make
+          # a healthy container look unavailable during deployment.
+          HEALTHCHECK_URL: http://127.0.0.1:8000/api/health
+          OPENAPI_URL: http://127.0.0.1:8000/openapi.json
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEALTHCHECK_RETRIES: "30"
           HEALTHCHECK_INTERVAL: "5"
           DEPLOY_EXHIBITION_SYNC_WORKER: "false"
@@ -141,7 +148,7 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           command_timeout: 40m
           script_stop: true
-          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,DEPLOY_EXHIBITION_SYNC_WORKER,INSTALL_DOCKER_CLEANUP_TIMER,DOCKER_CLEANUP_RETENTION_DAYS
+          envs: DEPLOY_PATH,REPO_URL,BRANCH,DEPLOY_REF,BACKEND_IMAGE,COMPOSE_FILE,HEALTHCHECK_URL,OPENAPI_URL,GHCR_USERNAME,GHCR_TOKEN,HEALTHCHECK_RETRIES,HEALTHCHECK_INTERVAL,DEPLOY_EXHIBITION_SYNC_WORKER,INSTALL_DOCKER_CLEANUP_TIMER,DOCKER_CLEANUP_RETENTION_DAYS
           script: |
             set -euo pipefail
             mkdir -p "$(dirname "$DEPLOY_PATH")"

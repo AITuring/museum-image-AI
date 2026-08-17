@@ -9,15 +9,44 @@ import type {
 } from "../components/types"
 
 const IMAGE_FILE_PATTERN = /\.(?:jpe?g|png|webp|tiff?)$/i
+const OPTIONAL_LOOKUP_COOLDOWN_MS = 45_000
+let optionalLookupDisabledUntil = 0
+
+type HttpResponseError = Error & { status?: number }
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, init)
   if (!response.ok) {
     let detail = "HTTP " + response.status
     try { detail = ((await response.json()) as { detail?: string }).detail || detail } catch { /* retain HTTP fallback */ }
-    throw new Error(detail)
+    const error = new Error(detail) as HttpResponseError
+    error.status = response.status
+    throw error
   }
   return (await response.json()) as T
+}
+
+function optionalLookupIsAvailable() {
+  return optionalLookupDisabledUntil <= Date.now()
+}
+
+function markOptionalLookupFailure(error: unknown) {
+  const status = (error as HttpResponseError | null)?.status
+  if (error instanceof TypeError || status === 404 || (status !== undefined && status >= 500)) {
+    optionalLookupDisabledUntil = Date.now() + OPTIONAL_LOOKUP_COOLDOWN_MS
+  }
+}
+
+async function fetchOptionalArtifactLookup<T>(input: string): Promise<T | null> {
+  if (!optionalLookupIsAvailable()) return null
+  try {
+    const payload = await fetchJson<T>(input)
+    if (optionalLookupDisabledUntil <= Date.now()) optionalLookupDisabledUntil = 0
+    return payload
+  } catch (error) {
+    markOptionalLookupFailure(error)
+    return null
+  }
 }
 
 export async function loadMuseumSuggestions(
@@ -106,18 +135,15 @@ export async function lookupExistingArtifact(
   form: FormState,
 ): Promise<ExistingArtifactMatch | null> {
   if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return null
+  if (!optionalLookupIsAvailable()) return null
   const params = new URLSearchParams({
     name: form.name.trim(),
     museum_name: form.museumName.trim(),
     era: form.era.trim(),
   })
-  try {
-    return await fetchJson<ExistingArtifactMatch | null>(
-      `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
-    )
-  } catch {
-    return null
-  }
+  return fetchOptionalArtifactLookup<ExistingArtifactMatch | null>(
+    `${apiBaseUrl}/api/artifacts/match?${params.toString()}`,
+  )
 }
 
 export function compactArtifactIdentity(value: string | null | undefined) {
@@ -141,13 +167,14 @@ export async function lookupExistingArtifactCandidates(
   form: FormState,
 ): Promise<ExistingArtifactMatch[]> {
   if (!form.name.trim() || !form.museumName.trim() || !form.era.trim()) return []
+  if (!optionalLookupIsAvailable()) return []
   const params = new URLSearchParams({
     q: form.name.trim(),
     era: form.era.trim(),
   })
   const [bestMatch, searchResults] = await Promise.all([
     lookupExistingArtifact(apiBaseUrl, form),
-    fetchJson<ExistingArtifact[]>(`${apiBaseUrl}/api/artifacts?${params.toString()}`).catch(() => []),
+    fetchOptionalArtifactLookup<ExistingArtifact[]>(`${apiBaseUrl}/api/artifacts?${params.toString()}`),
   ])
   const normalizedMuseum = compactArtifactIdentity(form.museumName)
   const normalizedEra = compactArtifactIdentity(form.era)
@@ -159,7 +186,8 @@ export async function lookupExistingArtifactCandidates(
     compactArtifactIdentity(artifact.era),
   ].join("|")
   if (bestMatch) candidates.set(candidateIdentity(bestMatch.artifact), bestMatch)
-  searchResults.forEach((artifact) => {
+  const safeSearchResults = searchResults ?? []
+  safeSearchResults.forEach((artifact) => {
     if (
       compactArtifactIdentity(artifact.museum_name) !== normalizedMuseum
       || compactArtifactIdentity(artifact.era) !== normalizedEra

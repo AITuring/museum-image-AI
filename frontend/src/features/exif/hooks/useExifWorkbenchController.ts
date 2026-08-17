@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useOperationHistory } from "../../../OperationHistory"
 import type { ArtifactFieldWarning } from "../components/ReviewIndicators"
-import { geocodeLocationName, reverseGeocodeCoordinates } from "../components/GpsMapPicker"
+import { geocodeLocationName } from "../components/GpsMapPicker"
 import { useExifMetadataSync } from "./useExifMetadataSync"
 import { useExifFileIntake } from "./useExifFileIntake"
 import { useExifDirectoryAuthorization } from "./useExifDirectoryAuthorization"
@@ -603,7 +603,6 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
     beginArtifactMatchReview,
     fetchJson,
     buildItemId,
-    reverseGeocodeCoordinates,
     revokePreviewUrl,
     yieldToMainThread,
   })
@@ -689,7 +688,6 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
   })
 
   const { submitAll: handleSubmitAll } = useExifBatchSubmission({
-    apiBaseUrl,
     items,
     directoryHandle,
     setItems,

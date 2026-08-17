@@ -60,45 +60,50 @@ export function useExifSubmitOne({
         clearHistory()
         return true
       }
-      if (await confirmPreviouslySubmittedItem(apiBaseUrl, target)) {
-        updateItem(itemId, (item) => ({
-          ...item,
-          submitState: "submitted",
-          submitMessage: "已从云端确认这张图片完成入库。",
-          uploadProgress: 100,
-          uploadStage: "已完成",
-          originalForm: cloneFormState(item.form),
-        }))
-        clearHistory()
-        return true
-      }
-      if (!target.form.name.trim() || !target.form.museumName.trim()) {
-        updateItem(itemId, (item) => ({
-          ...item,
-          submitState: "error",
-          submitMessage: "请先确认名称和馆藏信息",
-        }))
-        return false
-      }
-      if (!target.fileHandle && !directoryHandle) {
-        updateItem(itemId, (item) => ({
-          ...item,
-          submitState: "error",
-          submitMessage: "提交前请先点击图片列表上方的文件夹按钮并授权原文件；保存并入库会同时修改本地文件名和 EXIF。",
-        }))
-        return false
-      }
-      if (target.fileName !== target.originalFileName && !directoryHandle) {
-        updateItem(itemId, (item) => ({
-          ...item,
-          submitState: "error",
-          submitMessage: "目标文件名已修改，请先点击图片列表上方的文件夹按钮授权原文件，才能在本地完成重命名。",
-        }))
-        return false
-      }
-    
-      updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null, uploadProgress: 8, uploadStage: "正在准备 EXIF 信息" }))
+      // Show feedback before any optional cloud recovery or file-system API
+      // can await. A restored draft may have a source hash, and checking it
+      // must never make a click look like it was ignored.
+      updateItem(itemId, (item) => ({ ...item, submitState: "submitting", submitMessage: null, uploadProgress: 3, uploadStage: "正在检查是否已入库" }))
       try {
+        if (await confirmPreviouslySubmittedItem(apiBaseUrl, target)) {
+          updateItem(itemId, (item) => ({
+            ...item,
+            submitState: "submitted",
+            submitMessage: "已从云端确认这张图片完成入库。",
+            uploadProgress: 100,
+            uploadStage: "已完成",
+            originalForm: cloneFormState(item.form),
+          }))
+          clearHistory()
+          return true
+        }
+
+        if (!target.form.name.trim() || !target.form.museumName.trim()) {
+          updateItem(itemId, (item) => ({
+            ...item,
+            submitState: "error",
+            submitMessage: "请先确认名称和馆藏信息",
+          }))
+          return false
+        }
+        if (!target.fileHandle && !directoryHandle) {
+          updateItem(itemId, (item) => ({
+            ...item,
+            submitState: "error",
+            submitMessage: "提交前请先点击图片列表上方的文件夹按钮并授权原文件；保存并入库会同时修改本地文件名和 EXIF。",
+          }))
+          return false
+        }
+        if (target.fileName !== target.originalFileName && !directoryHandle) {
+          updateItem(itemId, (item) => ({
+            ...item,
+            submitState: "error",
+            submitMessage: "目标文件名已修改，请先点击图片列表上方的文件夹按钮授权原文件，才能在本地完成重命名。",
+          }))
+          return false
+        }
+
+        updateItem(itemId, (item) => ({ ...item, uploadProgress: 8, uploadStage: "正在准备 EXIF 信息" }))
         // A retry click is a fresh user gesture, so request write permission
         // before any network request can consume that activation.
         let sourceHandle = target.fileHandle
