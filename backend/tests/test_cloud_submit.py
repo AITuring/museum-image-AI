@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -74,6 +75,29 @@ class LostResponseThenReconciledClient(RecordingCloudClient):
         else:
             payload = artifact_payload()
         return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
+
+
+class ConcurrentCloudClient(RecordingCloudClient):
+    def __init__(self) -> None:
+        super().__init__(status_code=201)
+        self.active_requests = 0
+        self.max_active_requests = 0
+
+    async def post(self, url: str, **kwargs: object) -> httpx.Response:
+        self.active_requests += 1
+        self.max_active_requests = max(
+            self.max_active_requests,
+            self.active_requests,
+        )
+        try:
+            await asyncio.sleep(0.01)
+            return httpx.Response(
+                201,
+                json=artifact_payload(),
+                request=httpx.Request("POST", url),
+            )
+        finally:
+            self.active_requests -= 1
 
 
 class CloudSubmitFormTests(unittest.IsolatedAsyncioTestCase):
@@ -167,6 +191,46 @@ class CloudSubmitFormTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.id, 7)
         self.assertEqual(client.post_count, 1)
         self.assertEqual(client.get_count, 2)
+
+    async def test_local_cloud_submissions_are_serialized(self) -> None:
+        client = ConcurrentCloudClient()
+        arguments: dict[str, object] = {
+            "image_bytes": b"image",
+            "image_name": "test.jpg",
+            "content_type": "image/jpeg",
+            "museum_name": "测试博物馆",
+            "name": "测试文物",
+            "era": None,
+            "Place_of_Excavation": None,
+            "description": None,
+            "existing_artifact_id": None,
+            "skip_existing_match": False,
+            "tags": [],
+            "camera_model": None,
+            "lens_model": None,
+            "capture_museum_name": None,
+            "exhibition_name": None,
+            "capture_location": None,
+            "latitude": None,
+            "longitude": None,
+            "captured_at": None,
+            "shutter_speed": None,
+            "aperture": None,
+            "iso": None,
+            "edit_method": None,
+        }
+        with (
+            patch.object(main.settings, "cloud_api_base_url", "https://cloud.example"),
+            patch.object(main.settings, "ingest_token", "test-token"),
+            patch.object(main, "cloud_http_client", client),
+        ):
+            results = await asyncio.gather(
+                main.submit_artifact_to_cloud(**arguments),  # type: ignore[arg-type]
+                main.submit_artifact_to_cloud(**arguments),  # type: ignore[arg-type]
+            )
+
+        self.assertEqual([result.id for result in results], [7, 7])
+        self.assertEqual(client.max_active_requests, 1)
 
     def test_cloud_ingest_guard_rejects_overlapping_work(self) -> None:
         active_slot = main.reserve_cloud_ingest_slot()

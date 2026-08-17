@@ -239,6 +239,13 @@ IMAGE_VARIANT_WORK_SEMAPHORE = asyncio.Semaphore(
 CLOUD_INGEST_WORK_SEMAPHORE = threading.BoundedSemaphore(
     max(1, settings.cloud_ingest_concurrency)
 )
+# The local quick-entry API can be called by an older page, a retry button, or
+# another import path independently of the batch hook. Serialize outbound cloud
+# submissions here as well, so those callers cannot bypass the cloud's one-image
+# admission limit and turn a valid upload into a 429 retry storm.
+LOCAL_CLOUD_SUBMISSION_SEMAPHORE = asyncio.Semaphore(
+    max(1, settings.cloud_ingest_concurrency)
+)
 
 cloud_http_client: httpx.AsyncClient | None = None
 
@@ -472,7 +479,17 @@ _cloud_submission_service = CloudSubmissionService(
     normalize_place_of_excavation=lambda value: normalize_place_of_excavation(value),
     normalize_exhibition_name=lambda value: normalize_exhibition_name(value),
 )
-submit_artifact_to_cloud = _cloud_submission_service.submit_artifact_to_cloud
+
+
+async def submit_artifact_to_cloud_serialized(*args, **kwargs):
+    async with LOCAL_CLOUD_SUBMISSION_SEMAPHORE:
+        return await _cloud_submission_service.submit_artifact_to_cloud(
+            *args,
+            **kwargs,
+        )
+
+
+submit_artifact_to_cloud = submit_artifact_to_cloud_serialized
 
 
 # Small infrastructure routes.
