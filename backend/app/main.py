@@ -611,6 +611,7 @@ submit_artifact_with_exif_file = _quick_entry_handlers.submit_with_exif_file
 
 # Cloud ingest routes.
 _cloud_ingest_dependencies = CloudIngestDependencies(
+    data_dir=DATA_DIR,
     reserve_ingest_slot=reserve_cloud_ingest_slot,
     require_ingest_token=lambda *args, **kwargs: require_ingest_token(*args, **kwargs),
     configuration_error=lambda: cloud_ingest_configuration_error(),

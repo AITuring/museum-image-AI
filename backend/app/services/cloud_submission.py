@@ -109,6 +109,192 @@ class CloudSubmissionService:
     normalize_place_of_excavation: Callable[[str | None], str | None]
     normalize_exhibition_name: Callable[[str | None], str]
 
+    async def _submit_artifact_chunked(
+        self,
+        client: httpx.AsyncClient,
+        *,
+        base: str,
+        image_bytes: bytes,
+        image_name: str,
+        content_type: str,
+        museum_name: str,
+        name: str,
+        era: str | None,
+        excavation_value: str | None,
+        description: str | None,
+        existing_artifact_id: int | None,
+        skip_existing_match: bool,
+        tags: list[str],
+        camera_model: str | None,
+        lens_model: str | None,
+        capture_museum_name: str | None,
+        exhibition_name: str | None,
+        catalog_exhibition_source_id: str | None,
+        catalog_exhibition_id: int | None,
+        capture_location: str | None,
+        latitude: float | None,
+        longitude: float | None,
+        captured_at: datetime | None,
+        shutter_speed: str | None,
+        aperture: str | None,
+        iso: int | None,
+        edit_method: str | None,
+        source_hash: str | None,
+        request_headers: dict[str, str],
+    ) -> ArtifactRead:
+        """Upload large originals as small raw chunks through Vercel's proxy."""
+        chunk_size = max(1, settings.cloud_ingest_chunk_size_bytes)
+        chunk_count = (len(image_bytes) + chunk_size - 1) // chunk_size
+        upload_id = uuid4().hex
+        chunk_url = f"{base}{settings.api_prefix}/ingest/artifacts/chunks"
+        complete_url = f"{base}{settings.api_prefix}/ingest/artifacts/chunks/complete"
+
+        for chunk_index in range(chunk_count):
+            chunk = image_bytes[chunk_index * chunk_size : (chunk_index + 1) * chunk_size]
+            chunk_request_headers = {
+                **request_headers,
+                "Content-Type": "application/octet-stream",
+                "X-Upload-ID": upload_id,
+                "X-Chunk-Index": str(chunk_index),
+                "X-Chunk-Count": str(chunk_count),
+            }
+            for attempt in range(2):
+                try:
+                    response = await client.post(
+                        chunk_url,
+                        content=chunk,
+                        headers=chunk_request_headers,
+                    )
+                except httpx.RequestError as exc:
+                    if attempt == 0:
+                        await asyncio.sleep(cloud_retry_delay_seconds(None, attempt))
+                        continue
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"提交云端分块失败：{exc}",
+                        headers={"Retry-After": "2"},
+                    ) from exc
+
+                if response.status_code in TRANSIENT_CLOUD_STATUSES and attempt == 0:
+                    await asyncio.sleep(cloud_retry_delay_seconds(response, attempt))
+                    continue
+                if response.is_success:
+                    break
+                detail = extract_http_error_detail(response)
+                if response.status_code == 404:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            "云端分块入库接口不存在，请重新部署与本地代码匹配的云端后端。"
+                        ),
+                        headers={"X-Error-Code": "cloud_ingest_chunk_endpoint_missing"},
+                    )
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"提交云端分块失败：{detail}",
+                    headers=(
+                        {"Retry-After": response.headers.get("Retry-After", "2")}
+                        if response.status_code in TRANSIENT_CLOUD_STATUSES
+                        else None
+                    ),
+                )
+
+        complete_data = {
+            "upload_id": upload_id,
+            "chunk_count": chunk_count,
+            "image_name": image_name,
+            "content_type": content_type,
+            "museum_name": museum_name,
+            "name": name,
+            "era": era,
+            "Place_of_Excavation": excavation_value,
+            "description": description,
+            "existing_artifact_id": existing_artifact_id,
+            "skip_existing_match": skip_existing_match,
+            "tags": tags,
+            "camera_model": camera_model,
+            "lens_model": lens_model,
+            "capture_museum_name": capture_museum_name,
+            "exhibition_name": exhibition_name,
+            "catalog_exhibition_source_id": catalog_exhibition_source_id,
+            "catalog_exhibition_id": catalog_exhibition_id,
+            "capture_location": capture_location,
+            "latitude": latitude,
+            "longitude": longitude,
+            "captured_at": captured_at.isoformat() if captured_at else None,
+            "shutter_speed": shutter_speed,
+            "aperture": aperture,
+            "iso": iso,
+            "edit_method": edit_method,
+            "source_hash": source_hash,
+        }
+        for attempt in range(2):
+            try:
+                response = await client.post(
+                    complete_url,
+                    json=complete_data,
+                    headers=request_headers,
+                )
+            except httpx.RequestError as exc:
+                reconciled = await reconcile_cloud_submission(
+                    client,
+                    base=base,
+                    source_hash=source_hash,
+                    request_id=request_headers["X-Request-ID"],
+                )
+                if reconciled is not None:
+                    return reconciled
+                if attempt == 0:
+                    await asyncio.sleep(cloud_retry_delay_seconds(None, attempt))
+                    continue
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"提交云端失败：{exc}",
+                    headers={"Retry-After": "2"},
+                ) from exc
+
+            if response.status_code in TRANSIENT_CLOUD_STATUSES:
+                reconciled = await reconcile_cloud_submission(
+                    client,
+                    base=base,
+                    source_hash=source_hash,
+                    request_id=request_headers["X-Request-ID"],
+                )
+                if reconciled is not None:
+                    return reconciled
+            if response.status_code in TRANSIENT_CLOUD_STATUSES and attempt == 0:
+                await asyncio.sleep(cloud_retry_delay_seconds(response, attempt))
+                continue
+            if response.is_success:
+                try:
+                    return ArtifactRead.model_validate(response.json())
+                except Exception as exc:  # noqa: BLE001 - upstream contract validation
+                    raise HTTPException(
+                        status_code=502,
+                        detail="云端入库响应格式不正确，请稍后重试。",
+                        headers={"Retry-After": "2"},
+                    ) from exc
+            detail = extract_http_error_detail(response)
+            if response.status_code == 404:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        "云端分块入库接口不存在，请重新部署与本地代码匹配的云端后端。"
+                    ),
+                    headers={"X-Error-Code": "cloud_ingest_chunk_endpoint_missing"},
+                )
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"提交云端失败：{detail}",
+                headers=(
+                    {"Retry-After": response.headers.get("Retry-After", "2")}
+                    if response.status_code in TRANSIENT_CLOUD_STATUSES
+                    else None
+                ),
+            )
+
+        raise HTTPException(status_code=502, detail="提交云端失败：分块重试次数已用尽。")
+
     async def submit_artifact_to_cloud(
         self,
         *,
@@ -196,6 +382,38 @@ class CloudSubmissionService:
             "X-Request-ID": request_id,
         }
         try:
+            if len(image_bytes) > settings.cloud_ingest_chunk_threshold_bytes:
+                return await self._submit_artifact_chunked(
+                    client,
+                    base=base,
+                    image_bytes=image_bytes,
+                    image_name=image_name,
+                    content_type=content_type,
+                    museum_name=museum_name.strip(),
+                    name=name.strip(),
+                    era=era,
+                    excavation_value=excavation_value,
+                    description=description,
+                    existing_artifact_id=existing_artifact_id,
+                    skip_existing_match=skip_existing_match,
+                    tags=tags,
+                    camera_model=camera_model,
+                    lens_model=lens_model,
+                    capture_museum_name=capture_museum_name,
+                    exhibition_name=self.normalize_exhibition_name(exhibition_name),
+                    catalog_exhibition_source_id=catalog_exhibition_source_id,
+                    catalog_exhibition_id=catalog_exhibition_id,
+                    capture_location=capture_location,
+                    latitude=latitude,
+                    longitude=longitude,
+                    captured_at=captured_at,
+                    shutter_speed=shutter_speed,
+                    aperture=aperture,
+                    iso=iso,
+                    edit_method=edit_method,
+                    source_hash=source_hash,
+                    request_headers=request_headers,
+                )
             for attempt in range(2):
                 try:
                     response = await client.post(

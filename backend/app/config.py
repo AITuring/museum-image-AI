@@ -105,6 +105,12 @@ class Settings(BaseSettings):
     # reading EXIF, and uploading to OSS. Reject excess work with a retryable 429
     # instead of letting concurrent submissions exhaust a small cloud host.
     cloud_ingest_concurrency: int = 1
+    # Vercel's external proxy is unreliable for large multipart requests. The local
+    # side switches to these raw-body chunks above the threshold, and the cloud side
+    # assembles them before entering the normal ingest path.
+    cloud_ingest_chunk_threshold_bytes: int = 4_000_000
+    cloud_ingest_chunk_size_bytes: int = 3_000_000
+    cloud_ingest_chunk_ttl_seconds: int = 6 * 60 * 60
 
     # ── Alibaba Cloud OSS (used by the CLOUD side to store images) ────────────────
     oss_access_key_id: str = ""

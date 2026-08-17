@@ -1,10 +1,15 @@
 import json
 import logging
 import mimetypes
+import os
+import re
+import shutil
+import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import (
@@ -15,20 +20,30 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Request,
     UploadFile,
 )
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.datastructures import Headers
 
+from app.config import settings
 from app.db import get_db
 from app.models import Artifact, ArtifactExhibition, ArtifactImage, ArtifactTag
-from app.schemas import ArtifactRead, CloudArtifactSubmitRequest
+from app.schemas import (
+    ArtifactRead,
+    CloudArtifactChunkCompleteRequest,
+    CloudArtifactSubmitRequest,
+)
 
 logger = logging.getLogger("app.vision")
+UPLOAD_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+MAX_CHUNK_COUNT = 64
 
 
 @dataclass(slots=True)
 class CloudIngestDependencies:
+    data_dir: Path
     reserve_ingest_slot: Callable[..., Any]
     require_ingest_token: Callable[..., Any]
     configuration_error: Callable[..., Any]
@@ -80,6 +95,44 @@ def create_cloud_ingest_router(
                     old_url,
                     exc,
                 )
+
+    chunk_root = dependencies.data_dir / "ingest_chunks"
+
+    def cleanup_stale_chunk_sessions() -> None:
+        """Bound abandoned chunk uploads without touching active sessions."""
+        try:
+            cutoff = time.time() - max(300, settings.cloud_ingest_chunk_ttl_seconds)
+            chunk_root.mkdir(parents=True, exist_ok=True)
+            for session_dir in chunk_root.iterdir():
+                if not session_dir.is_dir():
+                    continue
+                try:
+                    if session_dir.stat().st_mtime < cutoff:
+                        shutil.rmtree(session_dir)
+                except FileNotFoundError:
+                    continue
+        except OSError as exc:
+            logger.warning("cloud ingest chunk cleanup failed: %s", exc)
+
+    def chunk_session_dir(upload_id: str) -> Path:
+        if not UPLOAD_ID_PATTERN.fullmatch(upload_id):
+            raise HTTPException(status_code=400, detail="分块上传标识不正确。")
+        session_dir = chunk_root / upload_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        return session_dir
+
+    def validate_chunk_headers(
+        upload_id: str,
+        chunk_index: int,
+        chunk_count: int,
+    ) -> Path:
+        if not UPLOAD_ID_PATTERN.fullmatch(upload_id):
+            raise HTTPException(status_code=400, detail="分块上传标识不正确。")
+        if chunk_count < 1 or chunk_count > MAX_CHUNK_COUNT:
+            raise HTTPException(status_code=400, detail="分块数量不正确。")
+        if chunk_index < 0 or chunk_index >= chunk_count:
+            raise HTTPException(status_code=400, detail="分块序号不正确。")
+        return chunk_session_dir(upload_id)
 
     @router.post(
         "/ingest/artifacts",
@@ -324,6 +377,158 @@ def create_cloud_ingest_router(
                 "duplicate_image_detail": f"{detail}。",
             }
         )
+
+    @router.post(
+        "/ingest/artifacts/chunks",
+        status_code=200,
+    )
+    async def receive_ingest_chunk(
+        request: Request,
+        upload_id: str = Header(..., alias="X-Upload-ID"),
+        chunk_index: int = Header(..., alias="X-Chunk-Index"),
+        chunk_count: int = Header(..., alias="X-Chunk-Count"),
+        authorization: str | None = Header(default=None),
+        _ingest_slot: None = Depends(dependencies.reserve_ingest_slot),
+    ) -> dict[str, Any]:
+        """Receive one raw image chunk without passing a large multipart body."""
+        dependencies.require_ingest_token(authorization)
+        configuration_error = dependencies.configuration_error()
+        if configuration_error:
+            raise HTTPException(
+                status_code=503,
+                detail=configuration_error,
+                headers={"Retry-After": "2"},
+            )
+        cleanup_stale_chunk_sessions()
+        session_dir = validate_chunk_headers(upload_id, chunk_index, chunk_count)
+        contents = await request.body()
+        if not contents:
+            raise HTTPException(status_code=400, detail="图片分块内容为空。")
+        if len(contents) > settings.cloud_ingest_chunk_size_bytes:
+            raise HTTPException(status_code=413, detail="图片分块超过允许大小。")
+
+        chunk_path = session_dir / f"chunk-{chunk_index:04d}.bin"
+        temp_path = session_dir / f".chunk-{chunk_index:04d}.{os.getpid()}.tmp"
+        try:
+            temp_path.write_bytes(contents)
+            os.replace(temp_path, chunk_path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+        return {
+            "upload_id": upload_id,
+            "chunk_index": chunk_index,
+            "chunk_count": chunk_count,
+            "received_bytes": len(contents),
+        }
+
+    @router.post(
+        "/ingest/artifacts/chunks/complete",
+        response_model=ArtifactRead,
+        status_code=201,
+    )
+    def complete_ingest_chunks(
+        payload: CloudArtifactChunkCompleteRequest,
+        background_tasks: BackgroundTasks,
+        authorization: str | None = Header(default=None),
+        _ingest_slot: None = Depends(dependencies.reserve_ingest_slot),
+        db: Session = Depends(get_db),
+    ) -> ArtifactRead:
+        """Assemble validated chunks, then run the ordinary cloud ingest path."""
+        dependencies.require_ingest_token(authorization)
+        configuration_error = dependencies.configuration_error()
+        if configuration_error:
+            raise HTTPException(
+                status_code=503,
+                detail=configuration_error,
+                headers={"Retry-After": "2"},
+            )
+        cleanup_stale_chunk_sessions()
+        session_dir = validate_chunk_headers(
+            payload.upload_id,
+            0,
+            payload.chunk_count,
+        )
+        result_path = session_dir / "result.json"
+        if result_path.exists():
+            try:
+                return ArtifactRead.model_validate(json.loads(result_path.read_text()))
+            except (OSError, json.JSONDecodeError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail="分块上传结果已损坏，请重试。") from exc
+
+        chunk_paths = [
+            session_dir / f"chunk-{chunk_index:04d}.bin"
+            for chunk_index in range(payload.chunk_count)
+        ]
+        if not all(path.is_file() for path in chunk_paths):
+            raise HTTPException(status_code=409, detail="图片分块尚未全部上传。")
+
+        image_name = Path(payload.image_name or "image.jpg").name or "image.jpg"
+        content_type = payload.content_type or "application/octet-stream"
+        assembled_fd, assembled_name = tempfile.mkstemp(
+            prefix="assembled-",
+            suffix=".bin",
+            dir=session_dir,
+        )
+        os.close(assembled_fd)
+        assembled_path = Path(assembled_name)
+        completed = False
+        try:
+            with assembled_path.open("wb") as assembled:
+                for chunk_path in chunk_paths:
+                    with chunk_path.open("rb") as chunk:
+                        shutil.copyfileobj(chunk, assembled, length=1024 * 1024)
+            with assembled_path.open("rb") as assembled:
+                upload = UploadFile(
+                    file=assembled,
+                    filename=image_name,
+                    headers=Headers({"content-type": content_type}),
+                )
+                result = ingest_artifact(
+                    background_tasks=background_tasks,
+                    image=upload,
+                    museum_name=payload.museum_name,
+                    name=payload.name,
+                    era=payload.era,
+                    Place_of_Excavation=payload.Place_of_Excavation,
+                    description=payload.description,
+                    existing_artifact_id=payload.existing_artifact_id,
+                    skip_existing_match=payload.skip_existing_match,
+                    tags=json.dumps(payload.tags, ensure_ascii=False),
+                    camera_model=payload.camera_model,
+                    lens_model=payload.lens_model,
+                    capture_museum_name=payload.capture_museum_name,
+                    exhibition_name=payload.exhibition_name,
+                    catalog_exhibition_source_id=payload.catalog_exhibition_source_id,
+                    catalog_exhibition_id=payload.catalog_exhibition_id,
+                    capture_location=payload.capture_location,
+                    latitude=None if payload.latitude is None else str(payload.latitude),
+                    longitude=None if payload.longitude is None else str(payload.longitude),
+                    captured_at=None if payload.captured_at is None else payload.captured_at.isoformat(),
+                    shutter_speed=payload.shutter_speed,
+                    aperture=payload.aperture,
+                    iso=None if payload.iso is None else str(payload.iso),
+                    edit_method=payload.edit_method,
+                    source_hash=payload.source_hash,
+                    authorization=authorization,
+                    _ingest_slot=_ingest_slot,
+                    db=db,
+                )
+            artifact = (
+                result
+                if isinstance(result, ArtifactRead)
+                else ArtifactRead.model_validate(result)
+            )
+            result_path.write_text(
+                json.dumps(artifact.model_dump(mode="json"), ensure_ascii=False),
+                encoding="utf-8",
+            )
+            completed = True
+            return artifact
+        finally:
+            assembled_path.unlink(missing_ok=True)
+            if completed:
+                for chunk_path in chunk_paths:
+                    chunk_path.unlink(missing_ok=True)
 
     @router.post(
         "/artifacts/submit-cloud",

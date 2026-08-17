@@ -17,6 +17,8 @@ class RouteRegistrationTests(unittest.TestCase):
             ("POST", "/api/vision/analyze"),
             ("POST", "/api/uploads/images"),
             ("POST", "/api/ingest/artifacts"),
+            ("POST", "/api/ingest/artifacts/chunks"),
+            ("POST", "/api/ingest/artifacts/chunks/complete"),
             ("POST", "/api/artifacts/submit-cloud"),
             ("POST", "/api/artifacts/submit-cloud-file"),
             ("GET", "/api/artifacts/parse-name"),

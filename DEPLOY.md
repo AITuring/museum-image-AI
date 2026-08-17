@@ -359,6 +359,7 @@ IMPORT_DIR=/absolute/path/to/your/images  # 要批量识别的图片目录，会
 
 CLOUD_API_BASE_URL=https://image.aituring.xyz   # 生产 API 域名；不要直接填写裸 IP:8000
 INGEST_TOKEN=与云端完全相同的那串
+# 大于 4 MB 的原图会自动通过 3 MB 分块上传，不会压缩原图
 ```
 
 ### 3. 启动 / 停止（识图服务）

@@ -76,6 +76,28 @@ class LostResponseThenReconciledClient(RecordingCloudClient):
         return httpx.Response(200, json=payload, request=httpx.Request("GET", url))
 
 
+class ChunkedCloudClient:
+    def __init__(self) -> None:
+        self.chunk_calls: list[tuple[bytes, dict[str, str]]] = []
+        self.complete_payload: dict[str, object] | None = None
+
+    async def post(self, url: str, **kwargs: object) -> httpx.Response:
+        if url.endswith("/ingest/artifacts/chunks"):
+            self.chunk_calls.append(
+                (
+                    kwargs["content"],  # type: ignore[arg-type]
+                    kwargs["headers"],  # type: ignore[arg-type]
+                )
+            )
+            return httpx.Response(200, json={"received": True}, request=httpx.Request("POST", url))
+        self.complete_payload = kwargs["json"]  # type: ignore[assignment]
+        return httpx.Response(
+            201,
+            json=artifact_payload(),
+            request=httpx.Request("POST", url),
+        )
+
+
 class CloudSubmitFormTests(unittest.IsolatedAsyncioTestCase):
     async def submit(self, client: RecordingCloudClient, **overrides: object):
         arguments: dict[str, object] = {
@@ -167,6 +189,20 @@ class CloudSubmitFormTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.id, 7)
         self.assertEqual(client.post_count, 1)
         self.assertEqual(client.get_count, 2)
+
+    async def test_large_image_uses_small_cloud_chunks(self) -> None:
+        client = ChunkedCloudClient()
+        with (
+            patch.object(main.settings, "cloud_ingest_chunk_threshold_bytes", 4),
+            patch.object(main.settings, "cloud_ingest_chunk_size_bytes", 3),
+        ):
+            result = await self.submit(client, image_bytes=b"12345678")  # type: ignore[arg-type]
+
+        self.assertEqual(result.id, 7)
+        self.assertEqual([contents for contents, _ in client.chunk_calls], [b"123", b"456", b"78"])
+        self.assertEqual(client.chunk_calls[0][1]["X-Chunk-Count"], "3")
+        self.assertIsNotNone(client.complete_payload)
+        self.assertEqual(client.complete_payload["chunk_count"], 3)  # type: ignore[index]
 
     def test_cloud_ingest_guard_rejects_overlapping_work(self) -> None:
         active_slot = main.reserve_cloud_ingest_slot()
