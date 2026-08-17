@@ -7,6 +7,7 @@ import httpx
 from fastapi import HTTPException, Request, Response
 
 from app import main
+from app.services.cloud_submission import should_bypass_environment_proxy
 
 
 class RecordingCloudClient:
@@ -101,6 +102,11 @@ class ConcurrentCloudClient(RecordingCloudClient):
 
 
 class CloudSubmitFormTests(unittest.IsolatedAsyncioTestCase):
+    def test_direct_ip_cloud_endpoint_bypasses_environment_proxy(self) -> None:
+        self.assertTrue(should_bypass_environment_proxy("http://123.57.34.90:8000"))
+        self.assertTrue(should_bypass_environment_proxy("http://localhost:8000"))
+        self.assertFalse(should_bypass_environment_proxy("https://cloud.example"))
+
     async def submit(self, client: RecordingCloudClient, **overrides: object):
         arguments: dict[str, object] = {
             "image_bytes": b"image",

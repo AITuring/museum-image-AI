@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import time
@@ -6,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
@@ -17,6 +19,27 @@ from app.schemas import ArtifactRead
 
 logger = logging.getLogger("app.vision")
 TRANSIENT_CLOUD_STATUSES = {408, 425, 429, 500, 502, 503, 504}
+
+
+def should_bypass_environment_proxy(base_url: str | None) -> bool:
+    """Keep direct-IP cloud traffic out of host HTTP proxy settings.
+
+    The local operator may use a proxy for browser access, but a raw cloud
+    server IP must receive the original multipart POST. Some proxy paths allow
+    GET probes while returning a synthetic 404 for the upload request.
+    Domain-based cloud endpoints retain the normal trust-env behavior so a
+    deployment that intentionally requires a proxy is still supported.
+    """
+    hostname = urlparse(base_url or "").hostname
+    if not hostname:
+        return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return True
 
 
 def extract_http_error_detail(response: httpx.Response) -> str:
@@ -188,6 +211,7 @@ class CloudSubmissionService:
                     max_connections=20,
                     max_keepalive_connections=10,
                 ),
+                trust_env=not should_bypass_environment_proxy(base),
             )
         started_at = time.perf_counter()
         request_id = current_request_id.get() or uuid4().hex

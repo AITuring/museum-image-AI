@@ -160,6 +160,7 @@ from app.services.catalog import (  # noqa: F401 - compatibility exports
 from app.services.cloud_submission import (
     CloudSubmissionService,
     extract_http_error_detail,
+    should_bypass_environment_proxy,
 )
 from app.services.image_delivery import (  # noqa: F401 - compatibility exports
     ImageDeliveryDependencies,
@@ -305,6 +306,7 @@ async def lifespan(_: FastAPI):
     cloud_http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(120, connect=15),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+        trust_env=not should_bypass_environment_proxy(settings.cloud_api_base_url),
     )
     logger.info(
         "application startup complete in %.0fms",
