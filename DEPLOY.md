@@ -31,6 +31,28 @@ python3 scripts/check_runtime_contracts.py
 
 GitHub Actions 的 `Verify Runtime Contracts` 会在 PR 和 `main` 推送时再次检查，并构建前端；`Deploy Cloud Backend` 在构建镜像前也会执行契约检查。仓库设置还应启用分支保护：禁止直接推送 `main`，要求 PR 通过 `Verify Runtime Contracts / verify`，生产环境保留 reviewer 审批。
 
+### 两条运行命令（快速录入 / 智能识别）
+
+两条工作流刻意分开：快速录入只启动一个很小的 Vite 页面，图片和文字直接提交到阿里云后端；智能识别才启动本地 Docker、数据库和通义网页桥。
+
+首次使用快速录入：
+
+```bash
+cp frontend/.env.quick.example frontend/.env.quick
+# 编辑 frontend/.env.quick：把 VITE_QUICK_ENTRY_TOKEN 填成服务器 .env 中的 QUICK_ENTRY_TOKEN
+make quick-entry
+```
+
+打开 <http://localhost:7002/quick-entry.html>。这个页面会立即显示本地图片预览，不请求本地 `:8000`；提交时通过 Vite 同源代理调用云端 `/api/ingest/artifacts`，按顺序上传，避免小服务器收到并发请求。
+
+需要识图、EXIF 工作台、批量相册同步时才运行：
+
+```bash
+make identify
+```
+
+它等价于 `docker compose up --build`，启动完整的本地识图工作流。云端服务器 `.env` 需要增加一个与 `INGEST_TOKEN` 不同的 `QUICK_ENTRY_TOKEN`，然后重新部署后端；这个令牌会被浏览器使用，因此不要把主入库令牌配置到公开前端。
+
 数据流：本地扫描目录 → 通义识别 → 人工核对 → 带 `INGEST_TOKEN` 提交到云端 `/api/ingest/artifacts` → 云端图片入 OSS、元数据入库 → Vercel / 本地 `:7001` 图库检索云端。
 
 ---
@@ -129,6 +151,7 @@ DATABASE_URL=postgresql+psycopg://museum:改成强密码@postgres:5432/museum_im
 
 BACKEND_PORT=8000
 INGEST_TOKEN=与本地完全一致
+QUICK_ENTRY_TOKEN=单独生成的快速录入浏览器令牌
 CLOUD_INGEST_CONCURRENCY=1  # 小规格主机建议保持 1，超出的提交会返回可重试的 429
 
 OSS_ACCESS_KEY_ID=你的AK
@@ -145,6 +168,7 @@ OSS_KEY_PREFIX=artifacts/
 
 - `DATABASE_URL` 的密码必须与 `POSTGRES_PASSWORD` 一致
 - `DATABASE_URL` 的主机固定写 `postgres`
+- `QUICK_ENTRY_TOKEN` 只给独立快速录入页面使用，不要与 `INGEST_TOKEN` 共用
 - `.env` 只放在服务器，不要提交到 Git
 
 ### 3. GitHub Secrets 与权限
@@ -343,8 +367,9 @@ Vercel 会在服务端把 `/api`、`/files` 反代到后端，浏览器始终同
 
 ## 三、本地机器（识别 + 批量入库）
 
-本地有两件事，互不影响：
+本地有三条互不影响的入口：
 
+- **快速录入（npm）**：运行 `make quick-entry`，只启动 `:7002` 的轻量页面，直接提交到云端，不依赖本地后端或 Docker。
 - **识图服务（Docker）**：`docker-compose.yml` 起 3 个容器——`postgres`（本地库 `:5432`）、`backend`（识图后端 `:8000`，`APP_ROLE=local`）、`frontend`（识别控制台 `:5173`，跑 `npm run dev:identify`）。控制台连的是**本地** `:8000`。
 - **线上图库预览（npm）**：`cd frontend && npm run dev`，在 `:7001` 起一个 cloud-only 图库，连的是**云端**后端（见下「5. 本地预览线上图库」）。
 
@@ -376,6 +401,14 @@ IMPORT_DIR=/absolute/path/to/your/images  # 要批量识别的图片目录，会
 
 CLOUD_API_BASE_URL=http://<公网IP>:8000   # 本地后端直连云端 API；不要填写图库预览域名
 INGEST_TOKEN=与云端完全相同的那串
+```
+
+快速录入另建一个不入 Git 的前端配置：
+
+```bash
+cp frontend/.env.quick.example frontend/.env.quick
+# 编辑 frontend/.env.quick：
+VITE_QUICK_ENTRY_TOKEN=与服务器 QUICK_ENTRY_TOKEN 一致
 ```
 
 ### 3. 启动 / 停止（识图服务）
@@ -417,13 +450,14 @@ npm run dev        # 图库前端 http://localhost:7001
 | --- | --- | --- | --- |
 | 云端后端 | `http://<公网IP>:8000` | 自身 | 安全组+防火墙放行 8000 |
 | 健康检查 | `GET /api/health` | — | 返回 ok |
-| 云端入库 | `POST /api/ingest/artifacts` | — | Bearer `INGEST_TOKEN` |
+| 云端入库 | `POST /api/ingest/artifacts` | — | Bearer `INGEST_TOKEN` 或快速录入专用 `X-Quick-Entry-Token` |
 | Vercel 图库 | `https://<app>.vercel.app` | 云端 | 选项 A 反代 / 选项 B 直连 |
+| 本地快速录入 | `http://localhost:7002/quick-entry.html` | **云端** | `make quick-entry`，不启动 Docker |
 | 本地图库预览 | `http://localhost:7001` | **云端** | `npm run dev`，Vite proxy 反代云端 |
 | 本地识别控制台 | `http://localhost:5173` | **本地** | `docker compose up`（识别 + 批量入库） |
 | 本地后端 | `http://localhost:8000` | 自身 | 识图后端，并向云端推送入库 |
 
-`INGEST_TOKEN` 是本地↔云端的唯一写入凭证，两边必须一致。
+`INGEST_TOKEN` 是本地识图后端↔云端的写入凭证；`QUICK_ENTRY_TOKEN` 只给浏览器快速录入页使用，两者不要混用。
 
 ---
 

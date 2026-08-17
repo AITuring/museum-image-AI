@@ -12,12 +12,19 @@ export default defineConfig(({ mode }) => {
   // CLOUD backend, not the local one. We proxy /api and /files server-side (just like
   // Vercel's rewrites), so the browser stays same-origin: no CORS, no cloud .env changes.
   const isGallery = mode === 'gallery'
-  const cloudBackend = env.VITE_CLOUD_BACKEND || 'http://123.57.34.90:8000'
+  const isQuickEntry = mode === 'quick'
+  const cloudBackend =
+    env.VITE_CLOUD_BACKEND || env.CLOUD_API_BASE_URL || 'http://123.57.34.90:8000'
+  const quickEntryBackend = env.VITE_QUICK_ENTRY_API_BASE_URL || cloudBackend
 
   return {
     plugins: [react()],
     build: {
       rollupOptions: {
+        input: {
+          main: resolve(__dirname, 'index.html'),
+          quickEntry: resolve(__dirname, 'quick-entry.html'),
+        },
         output: {
           manualChunks(id) {
             if (id.includes('node_modules')) {
@@ -62,10 +69,16 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path) => path.replace(/^\/cloud-api/, ''),
         },
-        ...(isGallery
+        ...(isGallery || isQuickEntry
           ? {
-              '/api': { target: cloudBackend, changeOrigin: true },
-              '/files': { target: cloudBackend, changeOrigin: true },
+              '/api': {
+                target: isQuickEntry ? quickEntryBackend : cloudBackend,
+                changeOrigin: true,
+              },
+              '/files': {
+                target: isQuickEntry ? quickEntryBackend : cloudBackend,
+                changeOrigin: true,
+              },
             }
           : {}),
       },

@@ -42,6 +42,12 @@ jobs:
       - name: Check Python syntax
         run: python3 -m compileall -q backend/app backend/tests scripts
 
+      - name: Install backend test dependencies
+        run: python3 -m pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: Run cloud ingest unit tests
+        run: PYTHONPATH=backend python3 -m unittest discover -s backend/tests -p 'test_cloud_submit.py'
+
   build:
     needs: verify
     runs-on: ubuntu-latest

@@ -12,7 +12,8 @@ A local-first starter for building a museum artifact image library with React, F
 ## Architecture
 
 项目使用同一套 FastAPI 代码承担本地操作端与云端服务端，通过 `APP_ROLE`
-切换角色。本地端负责图片读取、识别、EXIF 处理和人工校对；云端负责集中存储、
+切换角色。快速录入是独立的轻量前端，直接把图片和人工文字推送到云端，不需要本地
+Docker；只有智能识别、EXIF 工作台和批量识别才启动本地 Docker。云端负责集中存储、
 检索和对外提供图片。全球展览目录使用独立数据库与可选 Worker，避免历史同步任务
 影响核心文物 API。
 
@@ -65,6 +66,7 @@ flowchart TB
 
     Frontend -->|"本地开发 / 操作"| LocalAPI
     Frontend -->|"云端浏览 / 管理"| CloudAPI
+    Frontend -->|"快速录入：图片 + 文字直传"| CloudAPI
     Batch -->|"审核后 HTTPS 提交"| CloudAPI
     Vision --> Models
     Vision --> Search
@@ -86,14 +88,10 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    subgraph TextFlow["快速录入 · 不上传图片"]
-        Fields["名称 · 年代<br/>博物馆 · 出土地点"]
-        Agent["文物检索 Agent"]
-        Evidence["研究报告与来源证据<br/>research_id"]
-        Writers["Qwen / Doubao<br/>分别生成候选描述"]
-        ReviewText["用户对比并确认"]
-
-        Fields --> Agent --> Evidence --> Writers --> ReviewText
+    subgraph QuickFlow["快速录入 · 不启动 Docker"]
+        QuickImages["图片 + 人工文字"]
+        QuickPage["轻量 Vite 页面"]
+        QuickImages --> QuickPage --> CloudQuick["云端 /api/ingest/artifacts"]
     end
 
     subgraph ImageFlow["图片入库"]
@@ -108,7 +106,7 @@ flowchart LR
         Sources --> Prepare --> Pending --> Identify --> ReviewImage --> Verify --> Submit
     end
 
-    ReviewText -.->|"可作为文物元数据"| ReviewImage
+    QuickPage -.->|"可稍后进入识图工作流补充"| ReviewImage
     Submit --> OSS2[("OSS 图片")]
     Submit --> DB2[("主库元数据")]
     OSS2 --> Gallery["图库 / 博物馆浏览 / 图片代理"]
@@ -132,16 +130,34 @@ museum-image-db/
 ```
 
 ## Quick Start
-运行命令
+智能识别工作流（需要 Docker）：
 
 ```bash
 cp .env.example .env
-docker compose up --build
+make identify
 ```
 
 Frontend: <http://localhost:5173\>
 
 Backend health: <http://localhost:8000/api/health\>（会实际探测数据库；云端角色还会校验入库 Token、OSS 配置和当前发布版本）
+
+## 两条运行命令
+
+快速录入不需要启动 Docker：
+
+```bash
+cp frontend/.env.quick.example frontend/.env.quick
+# 在 frontend/.env.quick 填 VITE_QUICK_ENTRY_TOKEN
+make quick-entry
+```
+
+打开 <http://localhost:7002/quick-entry.html>，图片和人工文字会直接提交到云端后端。
+
+智能识别、EXIF 工作台和批量相册同步才启动 Docker：
+
+```bash
+make identify
+```
 
 ## Current Scope
 

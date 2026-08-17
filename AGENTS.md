@@ -15,6 +15,8 @@ Changes must be scoped to the user's request and must preserve unrelated behavio
 - `image.aituring.xyz` is a preview frontend only; it must never become the ingest API base URL.
 - Keep `frontend/.env.gallery`, `frontend/vite.config.ts`, and `frontend/vercel.json` aligned.
 - Keep AMap browser configuration separate from cloud ingest routing.
+- Quick entry must remain a frontend-only cloud upload path; do not add a local Docker dependency to it.
+- Smart identification and batch recognition may use Docker, but must remain behind the explicit identify command.
 - Run `python3 scripts/check_runtime_contracts.py` after any routing, proxy, environment, or deployment change.
 
 ## Verification and delivery

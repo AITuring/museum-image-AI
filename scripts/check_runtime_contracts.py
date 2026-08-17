@@ -37,8 +37,13 @@ def require(condition: bool, message: str) -> None:
 def main() -> int:
     example = read_env(ROOT / ".env.example")
     gallery = read_env(ROOT / "frontend/.env.gallery")
+    quick_example = read_env(ROOT / "frontend/.env.quick.example")
     cloud_api = example.get("CLOUD_API_BASE_URL", "").rstrip("/")
     require(cloud_api, ".env.example must define CLOUD_API_BASE_URL")
+    require(
+        "QUICK_ENTRY_TOKEN" in example,
+        ".env.example must declare QUICK_ENTRY_TOKEN separately from INGEST_TOKEN",
+    )
 
     parsed_cloud_api = urlparse(cloud_api)
     require(
@@ -72,16 +77,31 @@ def main() -> int:
         gallery.get("VITE_CLOUD_BACKEND", "").rstrip("/") == cloud_api,
         "gallery VITE_CLOUD_BACKEND must match CLOUD_API_BASE_URL",
     )
+    require(
+        quick_example.get("VITE_QUICK_ENTRY_API_BASE_URL", "") == "",
+        "quick entry must use same-origin /api through the Vite or Vercel proxy",
+    )
+    require(
+        "VITE_QUICK_ENTRY_TOKEN" in quick_example,
+        "quick entry example must declare VITE_QUICK_ENTRY_TOKEN",
+    )
 
     vite_source = (ROOT / "frontend/vite.config.ts").read_text(encoding="utf-8")
     require(
-        f"env.VITE_CLOUD_BACKEND || '{cloud_api}'" in vite_source,
-        "vite gallery fallback must match CLOUD_API_BASE_URL",
+        f"env.VITE_CLOUD_BACKEND || env.CLOUD_API_BASE_URL || '{cloud_api}'"
+        in vite_source,
+        "vite cloud backend fallback must match CLOUD_API_BASE_URL",
     )
     require(
         "'import.meta.env.VITE_AMAP_SCRIPT_SRC'" in vite_source
         and "env.AMAP_SCRIPT_SRC" in vite_source,
         "vite must keep the AMap script URL configurable",
+    )
+    require(
+        "const isQuickEntry = mode === 'quick'" in vite_source
+        and "isGallery || isQuickEntry" in vite_source
+        and "env.VITE_QUICK_ENTRY_API_BASE_URL || cloudBackend" in vite_source,
+        "vite quick entry must proxy /api to the cloud backend",
     )
 
     vercel = json.loads((ROOT / "frontend/vercel.json").read_text(encoding="utf-8"))
@@ -94,6 +114,10 @@ def main() -> int:
     require(
         destinations.get("/files/:path*") == f"{cloud_api}/files/:path*",
         "Vercel /files rewrite must target the cloud backend",
+    )
+    require(
+        destinations.get("/quick-entry") == "/quick-entry.html",
+        "Vercel quick-entry route must serve the standalone upload page",
     )
     require(
         destinations.get("/(.*)") == "/index.html",

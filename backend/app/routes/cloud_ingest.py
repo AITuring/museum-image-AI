@@ -113,12 +113,16 @@ def create_cloud_ingest_router(
         edit_method: str | None = Form(None),
         source_hash: str | None = Form(None),
         authorization: str | None = Header(default=None),
+        quick_entry_token: str | None = Header(
+            default=None,
+            alias="X-Quick-Entry-Token",
+        ),
         _ingest_slot: None = Depends(dependencies.reserve_ingest_slot),
         db: Session = Depends(get_db),
     ) -> Artifact | ArtifactRead:
         """Store an image in OSS and its reviewed metadata in the cloud DB."""
         started_at = time.perf_counter()
-        dependencies.require_ingest_token(authorization)
+        dependencies.require_ingest_token(authorization, quick_entry_token)
         configuration_error = dependencies.configuration_error()
         if configuration_error:
             raise HTTPException(

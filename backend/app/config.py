@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     # Shared secret sent as `Authorization: Bearer <token>`. The cloud side validates
     # it; the local side sends it. Keep both in sync.
     ingest_token: str = ""
+    # Optional browser-side key for the standalone quick-entry page. Keep this
+    # separate from INGEST_TOKEN because Vite exposes the client key to the page.
+    quick_entry_token: str = ""
     # A single large photo can briefly consume substantial memory while hashing,
     # reading EXIF, and uploading to OSS. Reject excess work with a retryable 429
     # instead of letting concurrent submissions exhaust a small cloud host.

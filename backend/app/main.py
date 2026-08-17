@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import secrets
 import threading
 import time as time_module
 from contextlib import asynccontextmanager
@@ -364,15 +365,26 @@ def artifact_image_query():
     )
 
 
-def require_ingest_token(authorization: str | None) -> None:
+def require_ingest_token(
+    authorization: str | None,
+    quick_entry_token: str | None = None,
+) -> None:
     expected = settings.ingest_token
     if not expected:
         raise HTTPException(
             status_code=503,
             detail="云端未配置 INGEST_TOKEN，拒绝写入。",
         )
-    if authorization != f"Bearer {expected}":
-        raise HTTPException(status_code=401, detail="无效的鉴权令牌。")
+    if secrets.compare_digest(authorization or "", f"Bearer {expected}"):
+        return
+    configured_quick_entry_token = settings.quick_entry_token
+    if configured_quick_entry_token and secrets.compare_digest(
+        quick_entry_token or "", configured_quick_entry_token
+    ):
+        return
+    if authorization is None and quick_entry_token is None:
+        raise HTTPException(status_code=401, detail="缺少云端写入鉴权。")
+    raise HTTPException(status_code=401, detail="无效的鉴权令牌。")
 
 
 def cloud_ingest_configuration_error() -> str | None:

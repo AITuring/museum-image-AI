@@ -107,6 +107,18 @@ class CloudSubmitFormTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(should_bypass_environment_proxy("http://localhost:8000"))
         self.assertFalse(should_bypass_environment_proxy("https://cloud.example"))
 
+    def test_quick_entry_token_is_separate_from_ingest_token(self) -> None:
+        with (
+            patch.object(main.settings, "ingest_token", "server-ingest-token"),
+            patch.object(main.settings, "quick_entry_token", "browser-quick-token"),
+        ):
+            main.require_ingest_token(None, "browser-quick-token")
+            main.require_ingest_token("Bearer server-ingest-token")
+            with self.assertRaises(HTTPException) as raised:
+                main.require_ingest_token(None, "server-ingest-token")
+
+        self.assertEqual(raised.exception.status_code, 401)
+
     async def submit(self, client: RecordingCloudClient, **overrides: object):
         arguments: dict[str, object] = {
             "image_bytes": b"image",

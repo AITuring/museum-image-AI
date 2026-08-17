@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 7001 --strictPort --mode gallery",
+    "dev:quick": "vite --host 0.0.0.0 --port 7002 --strictPort --mode quick --open /quick-entry.html",
     "dev:identify": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
