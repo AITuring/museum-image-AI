@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
   // CLOUD backend, not the local one. We proxy /api and /files server-side (just like
   // Vercel's rewrites), so the browser stays same-origin: no CORS, no cloud .env changes.
   const isGallery = mode === 'gallery'
-  const cloudBackend = env.VITE_CLOUD_BACKEND || 'https://image.aituring.xyz'
+  const cloudBackend = env.VITE_CLOUD_BACKEND || 'http://123.57.34.90:8000'
 
   return {
     plugins: [react()],

@@ -357,9 +357,8 @@ WEB_HEADLESS=false
 BACKEND_PLATFORM=linux/amd64        # Apple 芯片本机 Docker 需要强制 amd64，Chrome 才能在容器里安装
 IMPORT_DIR=/absolute/path/to/your/images  # 要批量识别的图片目录，会挂到容器 /data/import
 
-CLOUD_API_BASE_URL=https://image.aituring.xyz   # 生产 API 域名；不要直接填写裸 IP:8000
+CLOUD_API_BASE_URL=http://<公网IP>:8000   # 本地后端直连云端 API；不要填写图库预览域名
 INGEST_TOKEN=与云端完全相同的那串
-# 大于 4 MB 的原图会自动通过 3 MB 分块上传，不会压缩原图
 ```
 
 ### 3. 启动 / 停止（识图服务）
@@ -389,7 +388,7 @@ npm run dev        # 图库前端 http://localhost:7001
 ```
 
 - `npm run dev` 用 `--mode gallery` 启动：`VITE_CLOUD_ONLY=true` 只显示图库检索，固定端口 `7001`。
-- 它对 `/api`、`/files` 发**同源**请求，由 Vite dev proxy（`frontend/vite.config.ts`）反代到生产域名 `VITE_CLOUD_BACKEND=https://image.aituring.xyz`（在 `frontend/.env.gallery` 配置）。做法与 Vercel 选项 A 完全一致，因此**无需云端配 CORS**。
+- 它对 `/api`、`/files` 发**同源**请求，由 Vite dev proxy（`frontend/vite.config.ts`）反代到云端后端 `VITE_CLOUD_BACKEND`（默认 `http://123.57.34.90:8000`，在 `frontend/.env.gallery` 配置）。做法与 Vercel 选项 A 完全一致，因此**无需云端配 CORS**。
 - 换云端服务器时只改 `frontend/.env.gallery` 里的 `VITE_CLOUD_BACKEND` 一处。
 - 端口为什么是 7001：macOS 的「隔空播放接收器（AirPlay Receiver）」默认占用 `7000`。要改回 7000，先在「系统设置 → 通用 → 隔空投送与接力」关闭隔空播放接收器，再把 `frontend/package.json` 里 `dev` 脚本的 `--port 7001` 改成 `7000`。
 
@@ -399,7 +398,7 @@ npm run dev        # 图库前端 http://localhost:7001
 
 | 环节 | 地址 | 连哪个后端 | 说明 |
 | --- | --- | --- | --- |
-| 云端后端 | `https://image.aituring.xyz` | 自身 | 通过生产域名反代到云端容器 |
+| 云端后端 | `http://<公网IP>:8000` | 自身 | 安全组+防火墙放行 8000 |
 | 健康检查 | `GET /api/health` | — | 返回 ok |
 | 云端入库 | `POST /api/ingest/artifacts` | — | Bearer `INGEST_TOKEN` |
 | Vercel 图库 | `https://<app>.vercel.app` | 云端 | 选项 A 反代 / 选项 B 直连 |
