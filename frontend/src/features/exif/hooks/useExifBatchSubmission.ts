@@ -2,6 +2,12 @@ import type { Dispatch, SetStateAction } from "react"
 import { changedParts } from "../lib/exifFormDomain"
 import type { ExifWorkbenchItem, SubmitNotice, WritableDirectoryHandle } from "../components/types"
 
+// The cloud backend deliberately admits one full-size ingest at a time to keep
+// OSS upload, hashing, and image processing within the small production host's
+// memory budget. Keep the browser queue aligned with that contract; competing
+// workers only turn the second request into a 429 and add retry latency.
+const SUBMISSION_WORKER_COUNT = 1
+
 type Options = {
   items: ExifWorkbenchItem[]
   directoryHandle: WritableDirectoryHandle | null
@@ -27,17 +33,17 @@ export function useExifBatchSubmission({ items, directoryHandle, setItems, setSe
       return
     }
 
-    // The first two workers will update their own rows synchronously. Marking
-    // them here also makes the click visible before the first async recovery
-    // check starts; remaining rows stay queued until a worker is available.
-    const activeIds = new Set(pendingItems.slice(0, 2).map((item) => item.id))
+    // Mark the first worker synchronously so the click is visible before the
+    // first async recovery check starts; remaining rows stay queued until the
+    // single cloud-ingest slot is available.
+    const activeIds = new Set(pendingItems.slice(0, SUBMISSION_WORKER_COUNT).map((item) => item.id))
     setItems((current) => current.map((item) => activeIds.has(item.id)
       ? { ...item, submitState: "submitting", submitMessage: null, uploadProgress: 3, uploadStage: "正在准备提交" }
       : item))
 
     let succeeded = 0; let failed = 0; const queue = [...pendingItems]
     const worker = async () => { while (queue.length > 0) { const item = queue.shift(); if (!item) return; if (await submitOne(item.id)) succeeded += 1; else failed += 1 } }
-    await Promise.all(Array.from({ length: Math.min(2, pendingItems.length) }, () => worker()))
+    await Promise.all(Array.from({ length: Math.min(SUBMISSION_WORKER_COUNT, pendingItems.length) }, () => worker()))
     if (succeeded > 0) clearHistory()
     setSubmittingAll(false)
     setNotice(failed > 0 ? { type: "error", text: `批量提交完成：${succeeded} 张成功，${failed} 张失败。可在队列中点击“重试”后再次提交。` } : { type: "success", text: `已完成批量提交：${succeeded} 张图片已入库。` })
