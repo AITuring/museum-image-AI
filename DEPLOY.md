@@ -14,6 +14,23 @@
 > - Docker（识图控制台 `:5173` + 本地后端 `:8000`）只负责识别和入库到云端，互不掺和图库。
 > - 图库（Vercel 线上、本地 `npm run dev` 的 `:7001`）都只读云端后端，且都用「同源 + 服务端反代」的方式连接（Vercel 用 `vercel.json` rewrites，本地用 Vite dev proxy），所以**不需要给云端配 CORS**。
 
+### 修改与发布防护（必须保留）
+
+运行地址不是普通文案，必须按契约修改：
+
+- `CLOUD_API_BASE_URL` 是本地入库后端地址，必须指向云端 `:8000`，不能指向仅用于预览的 `image.aituring.xyz`。
+- `frontend/.env.gallery`、`frontend/vite.config.ts` 和 `frontend/vercel.json` 必须保持同一个云端后端地址。
+- `image.aituring.xyz` 只承载前端页面；`/api`、`/files` 由 Vercel 服务端转发到云端后端。
+- 高德 SDK 是浏览器直连依赖；代理规则应将 `*.amap.com`、`*.autonavi.com` 和云端 IP 设为直连，不要通过改入库地址来解决网络问题。
+
+每次修改上述配置，先运行：
+
+```bash
+python3 scripts/check_runtime_contracts.py
+```
+
+GitHub Actions 的 `Verify Runtime Contracts` 会在 PR 和 `main` 推送时再次检查，并构建前端；`Deploy Cloud Backend` 在构建镜像前也会执行契约检查。仓库设置还应启用分支保护：禁止直接推送 `main`，要求 PR 通过 `Verify Runtime Contracts / verify`，生产环境保留 reviewer 审批。
+
 数据流：本地扫描目录 → 通义识别 → 人工核对 → 带 `INGEST_TOKEN` 提交到云端 `/api/ingest/artifacts` → 云端图片入 OSS、元数据入库 → Vercel / 本地 `:7001` 图库检索云端。
 
 ---

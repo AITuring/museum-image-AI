@@ -13,6 +13,7 @@ on:
       - "scripts/docker_cleanup.sh"
       - "scripts/install_docker_cleanup_timer.sh"
       - "scripts/rollback_cloud.sh"
+      - "scripts/check_runtime_contracts.py"
       - ".env.example"
   workflow_dispatch:
     inputs:
@@ -28,7 +29,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check routing and proxy contracts
+        run: python3 scripts/check_runtime_contracts.py
+
+      - name: Check Python syntax
+        run: python3 -m compileall -q backend/app backend/tests scripts
+
   build:
+    needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
