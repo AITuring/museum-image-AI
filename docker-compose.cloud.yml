@@ -52,10 +52,12 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://museum:museum123@postgres:5432/museum_image_db}
       EXHIBITION_DATABASE_URL: ${EXHIBITION_DATABASE_URL:-postgresql+psycopg://museum:museum123@exhibitions-postgres:5432/museum_exhibition_db}
       APP_ENV: ${APP_ENV:-production}
+      APP_REVISION: ${APP_REVISION:-unknown}
+      CLOUD_INGEST_CONCURRENCY: ${CLOUD_INGEST_CONCURRENCY:-1}
       IMAGE_VARIANT_CONCURRENCY: ${IMAGE_VARIANT_CONCURRENCY:-1}
       EXHIBITION_SYNC_ENABLED: "false"
     # Cloud role does not need Chrome/Xvfb — run uvicorn directly.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 10 --timeout-graceful-shutdown 150
     volumes:
       - backend_data:/data
     ports:
@@ -67,6 +69,13 @@ services:
     mem_limit: ${BACKEND_MEMORY_LIMIT:-1100m}
     memswap_limit: ${BACKEND_MEMORY_SWAP_LIMIT:-2500m}
     cpus: ${BACKEND_CPU_LIMIT:-1.5}
+    stop_grace_period: 180s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy

@@ -18,6 +18,8 @@ type SubmitOptions = {
   responseErrorMessage: (response: Response, prefix?: string) => Promise<string>
 }
 
+const CLOUD_SUBMIT_MAX_ATTEMPTS = 2
+
 function getHttpRequestError(error: unknown) {
   return error && typeof error === "object" ? error as HttpRequestError : null
 }
@@ -35,6 +37,12 @@ function shouldAttemptCloudRecovery(error: unknown) {
   if (requestError?.code === "cloud_ingest_endpoint_missing") return false
   const status = requestError?.status
   return status === undefined || status === 408 || status === 425 || status === 429 || status >= 500
+}
+
+function cloudRetryDelayMs(error: unknown, attempt: number) {
+  const serverDelay = getHttpRequestError(error)?.retryAfterMs ?? 0
+  const clientDelay = 900 * (2 ** (attempt - 1)) + Math.round(Math.random() * 250)
+  return Math.max(serverDelay, clientDelay)
 }
 
 export function useExifSubmitOne({
@@ -251,11 +259,11 @@ export function useExifSubmitOne({
         formData.append("exif_prepared", "true")
         if (sourceHash) formData.append("source_hash", sourceHash)
         let result: ArtifactSubmitResult | null = null
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
+        for (let attempt = 1; attempt <= CLOUD_SUBMIT_MAX_ATTEMPTS; attempt += 1) {
           try {
             updateItem(itemId, (item) => ({
               ...item,
-              uploadStage: `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
+              uploadStage: `正在上传 OSS 并写入档案（第 ${attempt}/${CLOUD_SUBMIT_MAX_ATTEMPTS} 次）`,
             }))
             result = await postFormDataWithProgress<ArtifactSubmitResult>(
               `${apiBaseUrl}/api/artifacts/exif-submit-file`,
@@ -266,7 +274,7 @@ export function useExifSubmitOne({
                   uploadProgress: progress,
                   uploadStage: progress >= 95
                     ? "图片已上传，正在等待云端入库确认"
-                    : `正在上传 OSS 并写入档案（第 ${attempt}/3 次）`,
+                    : `正在上传 OSS 并写入档案（第 ${attempt}/${CLOUD_SUBMIT_MAX_ATTEMPTS} 次）`,
                 }))
               },
             )
@@ -279,14 +287,16 @@ export function useExifSubmitOne({
               }
               break
             }
-            if (attempt === 3 || !shouldRetryCloudSubmit(error)) {
+            if (attempt === CLOUD_SUBMIT_MAX_ATTEMPTS || !shouldRetryCloudSubmit(error)) {
               const message = error instanceof Error ? error.message : "未知错误"
               throw new Error(
-                attempt === 3 ? `云端提交已重试 3 次：${message}` : message,
+                attempt === CLOUD_SUBMIT_MAX_ATTEMPTS
+                  ? `云端提交已尝试 ${CLOUD_SUBMIT_MAX_ATTEMPTS} 次：${message}`
+                  : message,
                 { cause: error },
               )
             }
-            await waitForRetry(700 * attempt)
+            await waitForRetry(cloudRetryDelayMs(error, attempt))
           }
         }
         if (!result) throw new Error("云端提交失败")

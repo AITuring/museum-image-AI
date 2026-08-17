@@ -3,6 +3,8 @@ import type { ExifWorkbenchItem, PersistedExifDraftItem } from "../components/ty
 export type HttpRequestError = Error & {
   status?: number
   code?: string
+  requestId?: string
+  retryAfterMs?: number
 }
 
 const SOURCE_HASH_LOOKUP_COOLDOWN_MS = 45_000
@@ -25,23 +27,44 @@ export function waitForRetry(delayMs: number) {
   })
 }
 
+function retryAfterMilliseconds(value: string | null) {
+  if (!value) return undefined
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(30_000, Math.round(seconds * 1000))
+  }
+  const retryAt = Date.parse(value)
+  if (!Number.isFinite(retryAt)) return undefined
+  return Math.min(30_000, Math.max(0, retryAt - Date.now()))
+}
+
 export function postFormDataWithProgress<T>(url: string, formData: FormData, onProgress: (progress: number) => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     request.open("POST", url)
-    request.timeout = 150_000
+    // The local backend can make two bounded cloud attempts. Keep the browser
+    // alive long enough for that contract so it does not start a duplicate
+    // upload while the first request is still committing on the server.
+    request.timeout = 270_000
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.min(95, 45 + Math.round((event.loaded / event.total) * 50)))
     }
     request.onerror = () => reject(new Error("图片上传连接失败"))
+    request.onabort = () => reject(new Error("图片上传已取消"))
     request.ontimeout = () => reject(new Error("等待云端入库确认超时"))
     request.onload = () => {
       let payload: { detail?: string } | T | null = null
       try { payload = JSON.parse(request.responseText) as { detail?: string } | T } catch { /* non-json error */ }
       if (request.status < 200 || request.status >= 300) {
-        const error = new Error((payload as { detail?: string } | null)?.detail || `HTTP ${request.status}`) as HttpRequestError
+        const requestId = request.getResponseHeader("X-Request-ID") || undefined
+        const detail = (payload as { detail?: string } | null)?.detail || `HTTP ${request.status}`
+        const error = new Error(
+          requestId ? `${detail}（请求编号 ${requestId.slice(0, 12)}）` : detail,
+        ) as HttpRequestError
         error.status = request.status
         error.code = request.getResponseHeader("X-Error-Code") || undefined
+        error.requestId = requestId
+        error.retryAfterMs = retryAfterMilliseconds(request.getResponseHeader("Retry-After"))
         reject(error)
         return
       }

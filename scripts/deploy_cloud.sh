@@ -8,6 +8,7 @@ DEPLOY_REF="${DEPLOY_REF:-}"
 BACKEND_IMAGE="${BACKEND_IMAGE:?BACKEND_IMAGE is required}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.cloud.yml}"
 HEALTHCHECK_URL="${HEALTHCHECK_URL:-http://127.0.0.1:8000/api/health}"
+OPENAPI_URL="${OPENAPI_URL:-${HEALTHCHECK_URL%/api/health}/openapi.json}"
 HEALTHCHECK_RETRIES="${HEALTHCHECK_RETRIES:-30}"
 HEALTHCHECK_INTERVAL="${HEALTHCHECK_INTERVAL:-5}"
 GHCR_USERNAME="${GHCR_USERNAME:-}"
@@ -73,12 +74,25 @@ login_ghcr() {
 }
 
 wait_for_healthcheck() {
+  local expected_revision="$1"
+  local allow_legacy_health="${2:-false}"
   local attempt
+  local health_document
 
   for attempt in $(seq 1 "$HEALTHCHECK_RETRIES"); do
-    if curl -fsS "$HEALTHCHECK_URL" >/dev/null; then
-      log "Healthcheck passed: $HEALTHCHECK_URL"
-      return 0
+    health_document=""
+    if health_document="$(curl -fsS "$HEALTHCHECK_URL")"; then
+      if [[ "$health_document" == *"\"revision\":\"$expected_revision\""* ]] \
+        && [[ "$health_document" == *"\"ingest\":\"ready\""* ]]; then
+        log "Healthcheck passed for revision $expected_revision: $HEALTHCHECK_URL"
+        return 0
+      fi
+      if [ "$allow_legacy_health" = "true" ] \
+        && [[ "$health_document" == *"\"status\":\"ok\""* ]]; then
+        log "Legacy healthcheck passed while restoring revision $expected_revision"
+        return 0
+      fi
+      log "Health endpoint responded, but target revision/ingest readiness is not active yet"
     fi
 
     log "Healthcheck not ready ($attempt/$HEALTHCHECK_RETRIES)"
@@ -86,6 +100,26 @@ wait_for_healthcheck() {
   done
 
   return 1
+}
+
+verify_required_routes() {
+  local openapi_document
+  local route
+  local required_routes=(
+    "/api/ingest/artifacts"
+    "/api/artifact-images/by-source-hash"
+    "/api/artifacts/{artifact_id}"
+  )
+
+  log "Verifying required cloud API routes from $OPENAPI_URL"
+  openapi_document="$(curl -fsS "$OPENAPI_URL")"
+  for route in "${required_routes[@]}"; do
+    if [[ "$openapi_document" != *"\"$route\""* ]]; then
+      printf 'Required cloud route is missing after deployment: %s\n' "$route" >&2
+      return 1
+    fi
+  done
+  log "Required cloud API routes are available"
 }
 
 ensure_repo() {
@@ -156,8 +190,10 @@ load_release_state() {
 deploy_release() {
   local release_commit="$1"
   local image="$2"
+  local allow_legacy_health="${3:-false}"
 
   export BACKEND_IMAGE="$image"
+  export APP_REVISION="$release_commit"
 
   # A historical exhibition backfill is intentionally not part of an API
   # release. Stop a worker left running by an older compose definition before
@@ -171,7 +207,8 @@ deploy_release() {
   docker compose -f "$COMPOSE_FILE" up -d --wait postgres exhibitions-postgres
   log "Starting backend API"
   docker compose -f "$COMPOSE_FILE" up -d --no-deps backend
-  wait_for_healthcheck
+  wait_for_healthcheck "$release_commit" "$allow_legacy_health"
+  verify_required_routes
 
   if [ "$DEPLOY_EXHIBITION_SYNC_WORKER" = "true" ]; then
     log "Starting opt-in exhibition sync worker"
@@ -231,7 +268,7 @@ main() {
   rollback_ref="$previous_commit"
   checkout_ref "$rollback_ref"
 
-  if deploy_release "$previous_commit" "$previous_image"; then
+  if deploy_release "$previous_commit" "$previous_image" true; then
     log "Rollback succeeded, current release restored"
   else
     log "Automatic rollback failed"

@@ -141,7 +141,7 @@ docker compose up --build
 
 Frontend: <http://localhost:5173\>
 
-Backend health: <http://localhost:8000/api/health\>
+Backend health: <http://localhost:8000/api/health\>（会实际探测数据库；云端角色还会校验入库 Token、OSS 配置和当前发布版本）
 
 ## Current Scope
 
@@ -398,7 +398,9 @@ GOOGLE_PHOTOS_REDIRECT_URI=http://localhost:8000/api/google-photos/callback
 
 ```bash
 APP_ROLE=cloud
+APP_REVISION=<由部署脚本自动注入的 Git 提交号>
 INGEST_TOKEN=<与本地相同的字符串>
+CLOUD_INGEST_CONCURRENCY=1
 DATABASE_URL=postgresql+psycopg://...
 OSS_ACCESS_KEY_ID=...
 OSS_ACCESS_KEY_SECRET=...

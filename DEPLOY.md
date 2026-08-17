@@ -102,6 +102,8 @@ vi .env
 ```bash
 APP_ROLE=cloud
 APP_ENV=production
+# 发布脚本会在启动容器时覆盖为本次 Git 提交号
+APP_REVISION=development
 
 POSTGRES_DB=museum_image_db
 POSTGRES_USER=museum
@@ -110,6 +112,7 @@ DATABASE_URL=postgresql+psycopg://museum:改成强密码@postgres:5432/museum_im
 
 BACKEND_PORT=8000
 INGEST_TOKEN=与本地完全一致
+CLOUD_INGEST_CONCURRENCY=1  # 小规格主机建议保持 1，超出的提交会返回可重试的 429
 
 OSS_ACCESS_KEY_ID=你的AK
 OSS_ACCESS_KEY_SECRET=你的SK
@@ -186,10 +189,11 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
    - `ghcr.io/<owner>/museum-image-backend:main`
 3. SSH 登录服务器
 4. 拉取对应镜像并执行 `docker compose up -d`
-5. 调用健康检查
-6. 失败时自动回滚到上一版成功镜像
-7. 把 deployment 状态写进 GitHub
-8. 在本次 Actions 页面写入 Job Summary
+5. 调用健康检查：实际执行数据库探测、校验云端入库配置，并确认返回的是本次 Git 提交号
+6. 校验 `/api/ingest/artifacts` 与幂等恢复所需路由都已出现在 OpenAPI 中
+7. 失败时自动回滚到上一版成功镜像
+8. 把 deployment 状态写进 GitHub
+9. 在本次 Actions 页面写入 Job Summary
 
 #### 手动重部署
 

@@ -160,6 +160,7 @@ deploy_release() {
   local image="$2"
 
   export BACKEND_IMAGE="$image"
+  export APP_REVISION="$release_commit"
   log "Stopping exhibition sync worker before rollback"
   docker compose -f "$COMPOSE_FILE" stop exhibition-sync-worker || true
   docker compose -f "$COMPOSE_FILE" pull backend
