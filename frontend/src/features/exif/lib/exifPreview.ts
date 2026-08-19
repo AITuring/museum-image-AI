@@ -45,7 +45,7 @@ async function createRasterPreviewUrl(file: File) {
 
 async function createPlaceholder(file: File) {
   const canvas = document.createElement("canvas"); canvas.width = 640; canvas.height = 400; const context = canvas.getContext("2d"); if (!context) throw new Error("浏览器无法生成文件占位图")
-  context.fillStyle = "#f5f5f4"; context.fillRect(0, 0, 640, 400); context.fillStyle = "#d6d3d1"; context.fillRect(48, 48, 104, 128); context.fillStyle = "#44403c"; context.font = "600 34px system-ui, sans-serif"; context.fillText((file.name.split(".").pop() || "IMG").toUpperCase(), 48, 232); context.font = "500 24px system-ui, sans-serif"; context.fillText(file.name.length > 34 ? `${file.name.slice(0, 31)}...` : file.name, 48, 286); context.fillStyle = "#78716c"; context.font = "22px system-ui, sans-serif"; context.fillText(formatFileSize(file.size), 48, 326); return canvasToPreviewUrl(canvas)
+  context.fillStyle = "#f6f7f8"; context.fillRect(0, 0, 640, 400); context.fillStyle = "#d9efed"; context.fillRect(48, 48, 104, 128); context.fillStyle = "#147f79"; context.font = "600 34px system-ui, sans-serif"; context.fillText((file.name.split(".").pop() || "IMG").toUpperCase(), 48, 232); context.font = "500 24px system-ui, sans-serif"; context.fillText(file.name.length > 34 ? `${file.name.slice(0, 31)}...` : file.name, 48, 286); context.fillStyle = "#6f747a"; context.font = "22px system-ui, sans-serif"; context.fillText(formatFileSize(file.size), 48, 326); return canvasToPreviewUrl(canvas)
 }
 
 export async function createFallbackPreviewUrl(file: File) { try { return isTiffFile(file) ? await createTiffPreviewUrl(file) : await createRasterPreviewUrl(file) } catch { return createPlaceholder(file) } }

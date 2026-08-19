@@ -11,7 +11,7 @@
 
 .exhibition-sync-card {
   border: 1px solid var(--ui-line-subtle);
-  background: rgb(255 253 249 / 0.86);
+  background: var(--ui-surface-default);
   box-shadow: var(--ui-shadow-card);
 }
 
@@ -26,7 +26,7 @@
 
 .exhibition-kicker {
   display: none;
-  color: #8a6e48;
+  color: var(--ui-text-tertiary);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -49,14 +49,13 @@
 .exhibition-sync-card {
   width: min(440px, 48vw);
   padding: 8px 10px;
-  /* border: 1px solid rgb(123 101 69 / 0.16); */
   border-radius: 11px;
-  background: rgb(255 255 255 / 0.78);
-  box-shadow: 0 10px 34px rgb(58 46 30 / 0.055);
+  background: var(--ui-surface-default);
+  box-shadow: var(--ui-shadow-card);
   color: var(--ui-text-tertiary);
   font-size: 10px;
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .exhibition-sync-card-toggle {
@@ -91,8 +90,8 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #8c9a80;
-  box-shadow: 0 0 0 3px rgb(140 154 128 / 0.13);
+  background: var(--ui-primary);
+  box-shadow: 0 0 0 3px rgb(20 127 121 / 0.13);
 }
 
 .exhibition-sync-card.running .exhibition-sync-state i {
@@ -150,7 +149,7 @@
 }
 
 .exhibition-sync-progress-overall span {
-  background: linear-gradient(90deg, #84623a, #bd8e52 72%, #d2ac76);
+  background: var(--ui-primary);
 }
 
 .exhibition-sync-card-panel {
@@ -220,7 +219,7 @@
 .exhibition-sync-batch {
   padding: 9px 10px 8px;
   border-radius: 8px;
-  background: rgb(123 101 69 / 0.055);
+  background: var(--ui-surface-muted);
 }
 
 .exhibition-sync-progress-head {
@@ -232,14 +231,14 @@
   height: 4px;
   overflow: hidden;
   border-radius: 99px;
-  background: rgb(114 97 73 / 0.12);
+  background: var(--ui-surface-accent-strong);
 }
 
 .exhibition-sync-progress span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, #9b7544, #c29a62);
+  background: var(--ui-primary);
   transition: width 320ms ease;
 }
 
@@ -331,7 +330,7 @@
   border: 0;
   border-radius: 12px;
   background: var(--ui-surface-default);
-  box-shadow: 0 8px 26px rgb(48 38 29 / 0.055);
+  box-shadow: var(--ui-shadow-card);
   gap: 8px;
 }
 
@@ -375,7 +374,8 @@
 }
 
 .exhibition-year-heading button.active {
-  color: var(--ui-text-primary);
+  color: var(--ui-primary-deep);
+  font-weight: 650;
 }
 
 .exhibition-year-list {
@@ -397,11 +397,11 @@
 }
 
 .exhibition-year-list button:hover {
-  background: rgb(255 255 255 / 0.65);
+  background: var(--ui-surface-muted);
 }
 
 .exhibition-year-list button.active {
-  background: var(--ui-text-primary);
+  background: var(--ui-primary);
   color: white;
 }
 
@@ -415,4 +415,3 @@
   opacity: 0.6;
   font-size: 10px;
 }
-

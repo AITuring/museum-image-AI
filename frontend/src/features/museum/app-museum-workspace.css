@@ -94,7 +94,7 @@
   border-width: 1px;
   border-style: solid;
   border-color: color-mix(in oklch, var(--app-border) 75%, white);
-  background: #fafaf9;
+  background: var(--ui-surface-wash);
 }
 
 .exif-form-card .gps-map-wrap {
@@ -282,7 +282,7 @@
   padding: 12px;
   border: 1px solid var(--app-border);
   border-radius: 10px;
-  background: #fafaf9;
+  background: var(--ui-surface-wash);
   color: var(--app-fg);
   font-size: 12px;
   line-height: 1.55;
@@ -488,4 +488,3 @@
   display: grid;
   gap: 12px;
 }
-

@@ -12,7 +12,7 @@
   --app-radius: var(--ui-radius-md);
   --app-shadow: 0 1px 2px rgb(0 0 0 / 0.02);
   --app-panel-shadow: 0 1px 2px rgb(0 0 0 / 0.035), 0 10px 30px rgb(0 0 0 / 0.025);
-  --app-ring: 0 0 0 2px rgb(17 17 17 / 0.05);
+  --app-ring: 0 0 0 2px rgb(20 127 121 / 0.13);
 }
 
 .app-shell {

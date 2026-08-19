@@ -1,8 +1,9 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
 import { App as AntApp, AutoComplete, Button, Input, Select, Tabs, Tag } from "antd"
-import { Camera, Check, ChevronRight, CloudUpload, ImagePlus, RefreshCw, ScanSearch, Trash2 } from "lucide-react"
+import { Camera, Check, ChevronRight, CloudUpload, ImagePlus, KeyRound, RefreshCw, ScanSearch, Trash2 } from "lucide-react"
 import "./App.css"
+import "./App.quick-entry.css"
 import { OperationHistoryControls, useOperationHistory } from "./OperationHistory"
 
 const BatchConsole = lazy(() => import("./features/batch/BatchConsole"))
@@ -62,12 +63,12 @@ async function createUploadPlaceholder(file: File) {
   canvas.height = 400
   const context = canvas.getContext("2d")
   if (!context) return null
-  context.fillStyle = "#f5f5f4"
+  context.fillStyle = "#f6f7f8"
   context.fillRect(0, 0, canvas.width, canvas.height)
-  context.fillStyle = "#44403c"
+  context.fillStyle = "#147f79"
   context.font = "600 30px system-ui, sans-serif"
   context.fillText(file.name.length > 32 ? `${file.name.slice(0, 29)}...` : file.name, 42, 188)
-  context.fillStyle = "#78716c"
+  context.fillStyle = "#6f747a"
   context.font = "22px system-ui, sans-serif"
   const size = file.size >= 1024 ** 2
     ? `${(file.size / 1024 ** 2).toFixed(1)} MB`
@@ -888,7 +889,9 @@ function App() {
       try {
         await loadHealth()
         if (quickEntryOnly) return
-        await loadWebBridgeStatus()
+        if (!cloudOnly) {
+          await loadWebBridgeStatus()
+        }
         await loadEraOptions()
       } catch (err) {
         setArtifactError(err instanceof Error ? err.message : "初始化失败")
@@ -1308,7 +1311,7 @@ function App() {
           : "待上传"
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${quickEntryOnly ? " quick-entry-shell" : ""}`}>
       <a className="skip-link" href="#main-content">跳到主要内容</a>
       <header className="topbar">
         <div className="brand">
@@ -1347,19 +1350,20 @@ function App() {
             />
           ) : null}
           {quickEntryOnly ? (
-            <>
+            <div className="quick-entry-connection" aria-label="云端录入连接">
               <label className={`quick-entry-token-control${quickEntryToken.trim() ? "" : " is-missing"}`}>
                 <span className="sr-only">云端快速录入令牌</span>
                 <Input.Password
                   aria-label="云端快速录入令牌"
                   autoComplete="off"
+                  prefix={<KeyRound size={14} strokeWidth={1.8} aria-hidden="true" />}
                   placeholder="填写云端录入令牌"
                   size="small"
                   value={quickEntryToken}
                   onChange={(event) => setQuickEntryToken(event.target.value)}
                 />
               </label>
-              <div className={`health-pill ${health ? "online" : "offline"}`}>
+              <div className={`health-pill ${health ? "online" : "offline"}`} role="status" aria-live="polite">
                 <span className="status-dot" />
                 <span className="health-pill-text">
                   {loadingHealth
@@ -1369,7 +1373,7 @@ function App() {
                       : "云端未连通"}
                 </span>
               </div>
-            </>
+            </div>
           ) : import.meta.env.DEV ? (
             <label className={`backend-target-select-wrap ${health ? "online" : "offline"}`}>
               <span className="sr-only">后端环境</span>

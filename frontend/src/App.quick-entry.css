@@ -1,0 +1,199 @@
+/* 快速录入是桌面高频工作台。这里仅收敛 7002 页头，避免影响图库与识别页面。 */
+.quick-entry-shell {
+  --quick-entry-header-height: 56px;
+}
+
+.quick-entry-shell .topbar {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  min-height: var(--quick-entry-header-height);
+  align-items: center;
+  gap: clamp(14px, 2vw, 28px);
+  padding: 6px clamp(12px, 1.5vw, 22px);
+  background: var(--ui-surface-default);
+  box-shadow: 0 1px 0 var(--ui-line-subtle);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.quick-entry-shell .brand {
+  align-items: center;
+  gap: 8px;
+}
+
+.quick-entry-shell .brand-mark {
+  width: 24px;
+  height: 24px;
+}
+
+.quick-entry-shell .brand-copy {
+  gap: 8px;
+}
+
+.quick-entry-shell .brand h1 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.quick-entry-shell .brand-lead {
+  font-size: 10px;
+}
+
+.quick-entry-shell .topbar-actions {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, max-content);
+  min-width: 0;
+  align-items: center;
+  justify-content: end;
+  gap: 8px;
+}
+
+.quick-entry-shell .app-tabs .ant-tabs-tab {
+  min-height: 34px;
+  margin-right: 0 !important;
+  padding: 6px 9px !important;
+  border-radius: var(--ui-radius-sm) var(--ui-radius-sm) 2px 2px;
+  font-size: var(--ui-type-label);
+}
+
+.quick-entry-shell .operation-history-controls {
+  padding: 1px;
+  border-radius: var(--ui-radius-sm);
+}
+
+.quick-entry-shell .operation-history-controls .ant-btn {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+}
+
+.quick-entry-connection {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.quick-entry-shell .quick-entry-token-control {
+  width: clamp(174px, 16vw, 210px);
+  min-width: 0;
+}
+
+.quick-entry-shell .quick-entry-token-control .ant-input-affix-wrapper {
+  min-height: 32px;
+  border-color: var(--ui-line-strong);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-default);
+  box-shadow: none;
+}
+
+.quick-entry-shell .quick-entry-token-control .ant-input-prefix {
+  color: var(--ui-text-tertiary);
+}
+
+.quick-entry-shell .quick-entry-token-control.is-missing .ant-input-affix-wrapper {
+  border-color: color-mix(in oklch, var(--ui-warning) 52%, var(--ui-line-strong));
+  background: var(--ui-surface-default);
+}
+
+.quick-entry-shell .health-pill {
+  min-height: 32px;
+  padding-inline: 9px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-default);
+  font-variant-numeric: tabular-nums;
+}
+
+.quick-entry-shell .health-pill-text {
+  overflow: hidden;
+  font-size: var(--ui-type-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-entry-shell .health-pill .status-dot {
+  width: 6px;
+  height: 6px;
+}
+
+@media (max-width: 1120px) {
+  .quick-entry-shell .topbar {
+    gap: 12px;
+  }
+
+  .quick-entry-shell .brand-lead {
+    display: none;
+  }
+
+  .quick-entry-shell .quick-entry-token-control {
+    width: 174px;
+  }
+}
+
+@media (max-width: 960px) {
+  .quick-entry-shell .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: auto;
+    align-items: center;
+    gap: 4px;
+    padding-block: 7px;
+  }
+
+  .quick-entry-shell .brand,
+  .quick-entry-shell .brand-copy,
+  .quick-entry-shell .topbar-actions {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .quick-entry-shell .brand {
+    width: auto;
+  }
+
+  .quick-entry-shell .topbar-actions {
+    grid-template-columns: max-content max-content minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .quick-entry-shell .quick-entry-connection {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 560px) {
+  .quick-entry-shell .topbar-actions {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+
+  .quick-entry-shell .topbar .topbar-nav,
+  .quick-entry-shell .topbar .topbar-nav .app-tabs {
+    width: auto;
+    min-width: 0;
+  }
+
+  .quick-entry-shell .topbar .topbar-nav {
+    overflow: visible;
+  }
+
+  .quick-entry-shell .quick-entry-connection {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .quick-entry-shell .quick-entry-token-control {
+    width: auto;
+    flex: 1 1 auto;
+  }
+
+  .quick-entry-shell .health-pill {
+    max-width: 158px;
+    flex: 0 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-entry-shell .app-content > section {
+    animation: none;
+  }
+}

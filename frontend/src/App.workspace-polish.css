@@ -136,7 +136,7 @@
 }
 
 .app-tabs .ant-tabs-tab:hover {
-  background: var(--ui-surface-accent);
+  background: var(--ui-brand-wash);
 }
 
 .app-tabs .ant-tabs-tab:focus-visible {
@@ -372,7 +372,7 @@ textarea:not([class*="ant-"]) {
 .exif-editor-form {
   border: 0;
   border-radius: 14px;
-  box-shadow: 0 8px 26px rgb(48 38 29 / 0.055);
+  box-shadow: var(--ui-shadow-card);
 }
 
 .exif-editor-form {

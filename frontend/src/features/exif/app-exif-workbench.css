@@ -1,0 +1,354 @@
+/* 快速录入工作台的最终规范层。所有规则均限定在 quick-entry-shell 内。 */
+.quick-entry-shell .exif-console {
+  height: calc(100dvh - var(--quick-entry-header-height));
+  padding: 8px 10px 10px;
+  overflow: hidden;
+}
+
+.quick-entry-shell .exif-layout,
+.quick-entry-shell .exif-layout-wide {
+  display: grid;
+  grid-template-columns: clamp(400px, 32vw, 448px) minmax(0, 1fr);
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.quick-entry-shell .exif-sidebar,
+.quick-entry-shell .exif-main {
+  min-width: 0;
+  min-height: 0;
+}
+
+.quick-entry-shell .exif-main {
+  container: quick-exif-main / inline-size;
+}
+
+.quick-entry-shell .exif-queue-panel,
+.quick-entry-shell .exif-editor-form,
+.quick-entry-shell .exif-main-empty {
+  overflow: hidden;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface-default);
+  box-shadow: none;
+}
+
+.quick-entry-shell .exif-queue-panel .section-heading,
+.quick-entry-shell .exif-editor-heading {
+  min-height: 48px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ui-line-subtle);
+  background: var(--ui-surface-wash);
+}
+
+.quick-entry-shell .exif-editor-heading {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding-inline: 14px;
+}
+
+.quick-entry-shell .exif-editor-heading h2,
+.quick-entry-shell .exif-queue-panel .exif-sidebar-head h2 {
+  margin: 0;
+  font-size: var(--ui-type-section);
+  font-weight: 650;
+  letter-spacing: -0.012em;
+  line-height: var(--ui-leading-tight);
+}
+
+.quick-entry-shell .exif-sidebar-scroll,
+.quick-entry-shell .exif-editor-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-line-strong) transparent;
+}
+
+.quick-entry-shell .exif-editor-scroll {
+  gap: 0;
+  padding: 0 14px 16px;
+  background: var(--ui-surface-default);
+}
+
+.quick-entry-shell .exif-editor-scroll > .exif-shared-section {
+  margin-top: 10px;
+}
+
+.quick-entry-shell .exif-preview-card,
+.quick-entry-shell .exif-form-card {
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-wash);
+  box-shadow: none;
+}
+
+.quick-entry-shell .exif-preview-card {
+  margin-top: 8px;
+}
+
+.quick-entry-shell .exif-preview-card .ant-card-body {
+  padding: 14px;
+}
+
+.quick-entry-shell .exif-form-card-grid {
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.quick-entry-shell .exif-form-card + .exif-form-card {
+  margin-top: 0;
+}
+
+.quick-entry-shell .exif-form-card .ant-card-head {
+  min-height: 42px;
+  padding-inline: 13px;
+  border-bottom: 1px solid var(--ui-line-subtle);
+  background: transparent;
+}
+
+.quick-entry-shell .exif-form-card .ant-card-body {
+  padding: 12px 13px 14px;
+}
+
+.quick-entry-shell .exif-section-title {
+  font-size: var(--ui-type-label);
+  font-weight: 650;
+}
+
+.quick-entry-shell .exif-form-card .form-section-body {
+  gap: 12px;
+}
+
+.quick-entry-shell .exif-form-card .form-section-body .field-row {
+  gap: 12px;
+}
+
+.quick-entry-shell .exif-form-card .field {
+  gap: 6px;
+}
+
+.quick-entry-shell .exif-form-card .field > span:first-child {
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-caption);
+  font-weight: 600;
+}
+
+.quick-entry-shell .exif-selected-head {
+  grid-template-columns: 156px minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+.quick-entry-shell .exif-selected-preview {
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-surface-accent);
+}
+
+.quick-entry-shell .exif-file-block {
+  gap: 7px;
+}
+
+.quick-entry-shell .exif-file-name {
+  margin: 0;
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-label);
+  line-height: 1.5;
+}
+
+.quick-entry-shell .exif-file-rename {
+  gap: 6px;
+  align-items: end;
+}
+
+.quick-entry-shell .exif-file-rename > span {
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-caption);
+  font-weight: 600;
+}
+
+.quick-entry-shell .exif-file-rename em {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  padding-inline: 9px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-accent);
+  color: var(--ui-text-secondary);
+  font-size: var(--ui-type-label);
+  font-style: normal;
+}
+
+.quick-entry-shell .exif-inline-batch-rename {
+  margin-top: 3px;
+  padding: 0 11px;
+  border: 1px solid var(--ui-line-subtle);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface-default);
+}
+
+.quick-entry-shell .exif-inline-batch-rename > summary {
+  min-height: 38px;
+}
+
+.quick-entry-shell .exif-inline-batch-rename[open] {
+  padding-bottom: 11px;
+}
+
+.quick-entry-shell .exif-inline-batch-rename[open] > summary {
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--ui-line-subtle);
+}
+
+.quick-entry-shell .exif-batch-rename-fields .ant-input {
+  padding-bottom: 22px;
+  line-height: 1.5;
+}
+
+.quick-entry-shell .exif-batch-rename-fields .ant-input-data-count {
+  color: var(--ui-text-tertiary);
+  font-size: 10px;
+}
+
+.quick-entry-shell .exif-editor-form .exif-form-footer {
+  min-height: 58px;
+  padding: 8px 14px;
+  border-top-color: var(--ui-line-subtle);
+  background: var(--ui-surface-default);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.quick-entry-shell .exif-form-footer-actions {
+  gap: 8px;
+}
+
+.quick-entry-shell .exif-form-footer-actions .ant-btn {
+  min-width: 104px;
+}
+
+.quick-entry-shell .exif-queue-item-shell:has(.exif-queue-item.is-selected) {
+  box-shadow: inset 0 0 0 1px var(--ui-line-accent);
+}
+
+.quick-entry-shell .exif-main-empty {
+  place-content: center;
+  gap: 10px;
+  padding: clamp(28px, 5vw, 56px);
+  background: color-mix(in oklch, var(--ui-surface-default) 88%, var(--ui-surface-wash));
+  text-align: center;
+}
+
+.quick-entry-shell .exif-empty-symbol {
+  width: 40px;
+  height: 40px;
+  margin-inline: auto;
+  border-color: var(--ui-line-subtle);
+  border-radius: var(--ui-radius-sm);
+  box-shadow: none;
+}
+
+.quick-entry-shell .exif-main-empty h2 {
+  margin: 0;
+  font-size: var(--ui-type-section);
+  font-weight: 650;
+}
+
+.quick-entry-shell .exif-empty-actions {
+  justify-content: center;
+}
+
+.quick-entry-shell .exif-empty-note {
+  max-width: 430px;
+  margin: 2px auto 0;
+  color: var(--ui-text-tertiary);
+  font-size: var(--ui-type-caption);
+  line-height: 1.55;
+  text-wrap: balance;
+}
+
+@container quick-exif-main (max-width: 540px) {
+  .quick-entry-shell .exif-selected-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quick-entry-shell .exif-selected-preview {
+    max-height: 260px;
+  }
+
+  .quick-entry-shell .exif-form-card .field-row,
+  .quick-entry-shell .exif-capture-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .quick-entry-shell .exif-captured-at-field {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 960px) {
+  .quick-entry-shell .exif-console {
+    height: auto;
+    min-height: calc(100dvh - 104px);
+    padding: 8px;
+    overflow: visible;
+  }
+
+  .quick-entry-shell .exif-layout,
+  .quick-entry-shell .exif-layout-wide {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+  }
+
+  .quick-entry-shell .exif-sidebar {
+    min-height: 360px;
+    max-height: min(54dvh, 540px);
+  }
+
+  .quick-entry-shell .exif-main {
+    min-height: 68dvh;
+  }
+}
+
+@media (max-width: 560px) {
+  .quick-entry-shell .exif-console {
+    padding: 6px;
+  }
+
+  .quick-entry-shell .exif-sidebar {
+    min-height: 420px;
+    max-height: none;
+  }
+
+  .quick-entry-shell .exif-editor-form,
+  .quick-entry-shell .exif-main-empty {
+    min-height: 560px;
+  }
+
+  .quick-entry-shell .exif-editor-scroll {
+    overflow: visible;
+    padding-inline: 10px;
+  }
+
+  .quick-entry-shell .exif-editor-form {
+    overflow: visible;
+  }
+
+  .quick-entry-shell .exif-editor-form .exif-form-footer {
+    position: static;
+  }
+
+  .quick-entry-shell .exif-empty-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: min(100%, 280px);
+    margin-inline: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-entry-shell .exif-inline-batch-rename .exif-tool-summary-meta svg {
+    transition: none;
+  }
+}

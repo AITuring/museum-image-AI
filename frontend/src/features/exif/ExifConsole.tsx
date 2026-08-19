@@ -1,4 +1,5 @@
 import "./ExifConsole.css"
+import "./app-exif-workbench.css"
 import { ExifArtifactReviewModal } from "./components/ExifArtifactReviewModal"
 import { ExifEditorSection } from "./components/ExifEditorSection"
 import { ExifMetadataSyncModal } from "./components/ExifMetadataSyncModal"

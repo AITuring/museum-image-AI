@@ -20,7 +20,7 @@
 .museum-history-panel {
   padding: 14px 16px;
   border-block: 1px solid var(--ui-line-subtle);
-  background: #f8f8f6;
+  background: var(--ui-surface-wash);
 }
 
 .museum-history-head,
@@ -69,7 +69,7 @@
   padding: 0 10px;
   border: 1px solid var(--ui-line-subtle);
   border-radius: 999px;
-  background: #fff;
+  background: var(--ui-surface-default);
   color: var(--ui-text-secondary);
   cursor: pointer;
   font-size: 0.72rem;
@@ -78,8 +78,8 @@
 }
 
 .museum-history-toggle:hover {
-  border-color: rgba(138, 110, 72, 0.45);
-  background: #fffdf9;
+  border-color: var(--ui-line-strong);
+  background: var(--ui-surface-muted);
 }
 
 .museum-history-toggle:active {
@@ -97,16 +97,16 @@
   gap: 10px;
   margin-bottom: 10px;
   padding: 11px 12px;
-  border: 1px solid rgba(138, 110, 72, 0.16);
+  border: 1px solid var(--ui-line-subtle);
   border-radius: 10px;
-  background: linear-gradient(110deg, #fffdf9, #f5f1e9);
+  background: var(--ui-surface-default);
 }
 
 .museum-current-year-timeline-head {
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  color: #765b39;
+  color: var(--ui-text-secondary);
   font-size: 0.76rem;
 }
 
@@ -132,9 +132,9 @@
 .museum-current-year-month {
   display: grid;
   place-items: center;
-  border-right: 1px solid rgba(138, 110, 72, 0.13);
-  border-bottom: 1px solid rgba(138, 110, 72, 0.2);
-  color: #836b4d;
+  border-right: 1px solid var(--ui-line-subtle);
+  border-bottom: 1px solid var(--ui-line-strong);
+  color: var(--ui-text-tertiary);
   font-size: 0.72rem;
   font-weight: 700;
 }
@@ -166,17 +166,17 @@
   box-shadow: 0 5px 12px rgba(31, 38, 40, 0.16);
 }
 
-.museum-current-year-timeline-bar.tone-0 { background: #9b6d52; }
+.museum-current-year-timeline-bar.tone-0 { background: #607d8b; }
 .museum-current-year-timeline-bar.tone-1 { background: #5f8b7a; }
 .museum-current-year-timeline-bar.tone-2 { background: #7885a4; }
-.museum-current-year-timeline-bar.tone-3 { background: #b17d5f; }
-.museum-current-year-timeline-bar.tone-4 { background: #80705f; }
+.museum-current-year-timeline-bar.tone-3 { background: #8a7897; }
+.museum-current-year-timeline-bar.tone-4 { background: #69737d; }
 .museum-current-year-timeline-bar.tone-5 { background: #8c6e95; }
 
 .museum-current-year-timeline-bar:focus-visible {
   outline: 2px solid #fff;
   outline-offset: -3px;
-  box-shadow: 0 0 0 3px rgba(101, 78, 49, 0.42);
+  box-shadow: 0 0 0 3px rgb(20 127 121 / 0.38);
 }
 
 .museum-current-year-empty {
@@ -215,7 +215,7 @@
   position: sticky;
   top: 0;
   padding-top: 9px;
-  color: #8a6e48;
+  color: var(--ui-text-secondary);
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
 }
@@ -238,7 +238,7 @@
 }
 
 .museum-history-item:active {
-  background: rgba(132, 98, 58, 0.08);
+  background: var(--ui-surface-accent);
 }
 
 .museum-history-status {
@@ -256,8 +256,8 @@
 }
 
 .museum-history-status.upcoming {
-  background: rgba(167, 122, 64, 0.11);
-  color: #92682f;
+  background: var(--ui-brand-wash);
+  color: var(--ui-primary-deep);
 }
 
 .museum-history-status.ended {

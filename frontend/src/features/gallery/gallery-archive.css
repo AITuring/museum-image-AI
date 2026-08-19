@@ -79,7 +79,7 @@
 }
 
 .gallery-actions a.primary {
-  background: linear-gradient(145deg, #98483a, #783328);
+  background: var(--ui-primary);
   letter-spacing: 0.06em;
 }
 
@@ -122,7 +122,7 @@
 .gallery-meta {
   border: 1px solid var(--ui-line-subtle);
   border-radius: 7px;
-  background: #fbfbfa;
+  background: var(--ui-surface-wash);
   box-shadow: none;
 }
 
@@ -131,7 +131,7 @@
   padding: 0 7px;
   border: 1px solid var(--ui-line-subtle);
   border-radius: 999px;
-  background: #f3f3f1;
+  background: var(--ui-surface-muted);
   color: var(--ui-text-secondary);
   font-size: 0.68rem;
   font-weight: 600;
@@ -155,7 +155,7 @@
 .gallery-edit-form .field > textarea:not(.ant-input):focus,
 .gallery-edit-form .field > select:focus,
 .gallery-edit-form .field > .tag-editor:focus-within {
-  border-color: rgba(17, 17, 17, 0.32);
+  border-color: var(--ui-primary);
   background: #ffffff;
   box-shadow: var(--ui-ring);
 }
@@ -171,9 +171,9 @@
 .gallery-form-actions .primary,
 .gallery-primary-button {
   min-height: 34px;
-  border: 1px solid #111111;
+  border: 1px solid var(--ui-primary);
   border-radius: 7px;
-  background: #111111;
+  background: var(--ui-primary);
   color: #ffffff !important;
   -webkit-text-fill-color: #ffffff;
   box-shadow: none;
@@ -184,8 +184,8 @@
 .gallery-actions a.primary:hover,
 .gallery-form-actions .primary:hover:not(:disabled),
 .gallery-primary-button:hover:not(:disabled) {
-  border-color: #1f1f1f;
-  background: #1f1f1f;
+  border-color: var(--ui-primary-hover);
+  background: var(--ui-primary-hover);
   box-shadow: none;
   transform: none;
 }
@@ -227,7 +227,7 @@
 .gallery-location-map-shell {
   border: 1px solid var(--ui-line-subtle);
   border-radius: 7px;
-  background: #f1f1ef;
+  background: var(--ui-surface-accent);
   box-shadow: none;
 }
 
@@ -271,7 +271,7 @@
 .gallery-thumb {
   height: auto;
   aspect-ratio: 4 / 3;
-  background: #f1f1ef;
+  background: var(--ui-surface-accent);
 }
 
 .gallery-meta {
@@ -336,7 +336,7 @@
 
 .gallery-modal-media,
 .gallery-modal-preview {
-  background: #f6f6f4;
+  background: var(--ui-surface-muted);
 }
 
 .gallery-modal-main-stage,
@@ -366,7 +366,7 @@
 .gallery-detail-line {
   border: 1px solid var(--ui-line-subtle);
   border-radius: 7px;
-  background: #fbfbfa;
+  background: var(--ui-surface-wash);
   box-shadow: none;
 }
 
@@ -383,10 +383,9 @@
 }
 
 .gallery-thumb {
-  background: #f1f1ef;
+  background: var(--ui-surface-accent);
 }
 
 .gallery-modal-main-img {
   background: #111111;
 }
-

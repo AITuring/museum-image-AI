@@ -67,7 +67,7 @@
   padding: 0 7px;
   border: 1px solid var(--ui-line-subtle);
   border-radius: 999px;
-  background: #f3f3f1;
+  background: var(--ui-surface-muted);
   color: var(--ui-text-secondary);
   font-size: 0.68rem;
   font-weight: 600;
@@ -78,7 +78,7 @@
 .museum-summary-card {
   border: 1px solid transparent;
   border-radius: 6px;
-  background: #ffffff;
+  background: var(--ui-surface-default);
   box-shadow: none;
 }
 
@@ -86,7 +86,7 @@
 .museum-summary-card:hover,
 .museum-folder-card:hover {
   border-color: var(--ui-line-subtle);
-  background: #f7f7f5;
+  background: var(--ui-surface-muted);
   box-shadow: none;
   transform: none;
 }
@@ -95,7 +95,7 @@
   min-height: 34px;
   border: 1px solid var(--ui-line-subtle);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--ui-surface-default);
   color: var(--ui-text-primary) !important;
   -webkit-text-fill-color: var(--ui-text-primary);
   box-shadow: none;
@@ -105,7 +105,7 @@
 
 .museum-detail-modal-close:hover {
   border-color: var(--ui-line-strong);
-  background: #f7f7f5;
+  background: var(--ui-surface-muted);
   color: var(--ui-text-primary) !important;
   -webkit-text-fill-color: var(--ui-text-primary);
   box-shadow: none;
@@ -121,7 +121,7 @@
 .museum-map-canvas {
   border: 1px solid var(--ui-line-subtle);
   border-radius: 7px;
-  background: #f1f1ef;
+  background: var(--ui-surface-muted);
   box-shadow: none;
 }
 
@@ -130,7 +130,7 @@
   padding: 12px;
   border: 1px solid var(--ui-line-subtle);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--ui-surface-default);
 }
 
 .museum-console-head,
@@ -149,13 +149,13 @@
   padding: 10px;
   border-color: var(--ui-line-subtle);
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--ui-surface-default);
 }
 
 .museum-summary-card:hover,
 .museum-summary-card.active {
-  border-color: var(--ui-line-strong);
-  background: #f8f8f6;
+  border-color: var(--ui-line-accent);
+  background: var(--ui-brand-wash);
   box-shadow: none;
   transform: none;
 }
@@ -167,7 +167,7 @@
 .museum-summary-photo {
   width: 112px;
   height: 84px;
-  border: 2px solid #ffffff;
+  border: 2px solid var(--ui-surface-default);
   border-radius: 7px;
   box-shadow: 0 8px 18px rgba(16, 16, 16, 0.10);
 }
@@ -178,13 +178,13 @@
 .museum-image-panel,
 .museum-detail-modal-body {
   border-radius: 7px;
-  background: #ffffff;
+  background: var(--ui-surface-default);
 }
 
 .museum-folder-column,
 .museum-image-panel {
   border: 1px solid var(--ui-line-subtle);
-  background: #f8f8f6;
+  background: var(--ui-surface-muted);
 }
 
 .museum-folder-card,
@@ -203,10 +203,9 @@
 
 .museum-folder-icon,
 .museum-folder-icon::before {
-  background: #8a8177;
+  background: var(--ui-primary);
 }
 
 .museum-map-frame {
-  background: #f1f1ef;
+  background: var(--ui-surface-muted);
 }
-

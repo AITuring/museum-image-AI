@@ -22,7 +22,7 @@ export function ExifArtifactReviewModal({
     centered
     width={780}
     closable={false}
-    maskClosable={false}
+    mask={{ closable: false }}
     keyboard={false}
     destroyOnHidden
     footer={[

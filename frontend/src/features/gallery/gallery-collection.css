@@ -109,14 +109,12 @@
 
 .gallery-card:hover {
   background: var(--ui-surface-accent);
-  box-shadow: 0 8px 22px rgb(64 47 33 / 0.08);
+  box-shadow: var(--ui-shadow-hover);
   transform: translateY(-1px);
 }
 
 .gallery-thumb {
-  background:
-    radial-gradient(circle at 50% 12%, rgb(160 126 89 / 0.13), transparent 48%),
-    var(--ui-surface-accent);
+  background: var(--ui-surface-muted);
 }
 
 .gallery-meta {

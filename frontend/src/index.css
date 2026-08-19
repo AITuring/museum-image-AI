@@ -1,52 +1,55 @@
 :root {
   color-scheme: light;
-  --ui-canvas: var(--museum-color-bg-layout, #f3f0ea);
-  --ui-surface-default: var(--museum-color-bg-container, #fffdf9);
-  --ui-surface-muted: #f7f4ee;
-  --ui-surface-accent: #f1ece4;
-  --ui-surface-accent-strong: #e8e0d5;
-  --ui-surface-wash: #faf8f3;
-  --ui-surface-tint: #eee7de;
-  --ui-text-primary: var(--museum-color-text, #24221f);
-  --ui-text-secondary: var(--museum-color-text-secondary, #66615a);
-  --ui-text-tertiary: #756f68;
-  --ui-text-muted: #756f68;
-  --ui-text-on-accent: #fffdf9;
-  --ui-primary: var(--museum-color-primary, #70543b);
-  --ui-primary-hover: #5f452f;
-  --ui-primary-strong: #503824;
-  --ui-primary-deep: #3f2b1d;
-  --ui-secondary-bg: #f4efe8;
-  --ui-secondary-hover: #eae2d8;
-  --ui-secondary-text: #302b26;
-  --ui-human: #70543b;
-  --ui-human-wash: #f8f3ec;
-  --ui-line-subtle: rgb(75 61 48 / 0.065);
-  --ui-line-strong: rgb(75 61 48 / 0.14);
-  --ui-line-accent: rgb(112 84 59 / 0.13);
+  --ui-canvas: var(--museum-color-bg-layout, #ffffff);
+  --ui-surface-default: var(--museum-color-bg-container, #ffffff);
+  --ui-surface-muted: #f6f7f8;
+  --ui-surface-accent: #f1f2f4;
+  --ui-surface-accent-strong: #e5e7ea;
+  --ui-surface-wash: #fafafa;
+  --ui-surface-tint: #eceef0;
+  --ui-text-primary: var(--museum-color-text, #202124);
+  --ui-text-secondary: var(--museum-color-text-secondary, #5f6368);
+  --ui-text-tertiary: #6f747a;
+  --ui-text-muted: #6f747a;
+  --ui-text-on-accent: #ffffff;
+  --ui-brand-wash: #edf8f7;
+  --ui-brand-muted: #d9efed;
+  --ui-brand-soft: #bfe3df;
+  --ui-primary: var(--museum-color-primary, #147f79);
+  --ui-primary-hover: #0f716c;
+  --ui-primary-strong: #0b5f5b;
+  --ui-primary-deep: #084a47;
+  --ui-secondary-bg: #f4f5f6;
+  --ui-secondary-hover: #e9ebed;
+  --ui-secondary-text: #2b2f34;
+  --ui-human: #147f79;
+  --ui-human-wash: #edf8f7;
+  --ui-line-subtle: rgb(32 35 40 / 0.075);
+  --ui-line-strong: rgb(32 35 40 / 0.16);
+  --ui-line-accent: rgb(20 127 121 / 0.22);
   --ui-danger: var(--museum-color-error, #b94d45);
   --ui-success: var(--museum-color-success, #48745b);
   --ui-success-muted: #edf5ef;
   --ui-warning: var(--museum-color-warning, #a56c23);
   --ui-warning-muted: #fbf3e5;
-  --ui-overlay: rgb(35 28 22 / 0.52);
-  --ui-media-dark: #1d1b19;
-  --ui-shadow-soft: 0 1px 2px rgb(48 38 29 / 0.05);
-  --ui-shadow-card: 0 10px 28px rgb(48 38 29 / 0.07);
-  --ui-shadow-float: 0 22px 64px rgb(48 38 29 / 0.16);
-  --ui-shadow-accent: 0 4px 12px rgb(79 57 40 / 0.18);
-  --ui-shadow-accent-hover: 0 7px 18px rgb(79 57 40 / 0.2);
-  --ui-shadow-hover: 0 12px 26px rgb(48 38 29 / 0.1);
-  --ui-shadow-selected: 0 8px 22px rgb(48 38 29 / 0.1);
-  --ui-ring: 0 0 0 3px rgb(112 84 59 / 0.14);
+  --ui-overlay: rgb(18 21 25 / 0.5);
+  --ui-media-dark: #181a1d;
+  --ui-shadow-soft: 0 1px 2px rgb(17 24 39 / 0.045);
+  --ui-shadow-card: 0 1px 3px rgb(17 24 39 / 0.055);
+  --ui-shadow-float: 0 16px 44px rgb(17 24 39 / 0.14);
+  --ui-shadow-accent: 0 2px 8px rgb(20 127 121 / 0.16);
+  --ui-shadow-accent-hover: 0 3px 10px rgb(20 127 121 / 0.2);
+  --ui-shadow-hover: 0 6px 18px rgb(17 24 39 / 0.08);
+  --ui-shadow-selected: 0 3px 10px rgb(20 127 121 / 0.1);
+  --ui-ring: 0 0 0 3px rgb(20 127 121 / 0.18);
   /* 圆角按元素尺寸分五档，嵌套时永远由外到内递减：
-     面板 14 → 分块 12 → 控件 10 → 小方块 8 → 标签 6。
+     面板 12 → 分块 10 → 控件 8 → 小方块 6 → 标签 4。
      Ant Design 侧的对应值在 main.tsx 的 theme 里同步。 */
-  --ui-radius-xs: 6px;
-  --ui-radius-sm: 8px;
-  --ui-radius-md: 10px;
-  --ui-radius-lg: 12px;
-  --ui-radius-xl: 14px;
+  --ui-radius-xs: 4px;
+  --ui-radius-sm: 6px;
+  --ui-radius-md: 8px;
+  --ui-radius-lg: 10px;
+  --ui-radius-xl: 12px;
   --ui-radius-pill: 999px;
   --ui-type-caption: 11px;
   --ui-type-label: 12px;
@@ -81,11 +84,9 @@ body,
 
 body {
   min-width: 320px;
-  background:
-    radial-gradient(circle at 12% -10%, rgb(139 108 75 / 0.09), transparent 30rem),
-    var(--ui-canvas);
+  background: var(--ui-canvas);
   color: var(--ui-text-primary);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  font-family: "Avenir Next", "SF Pro Text", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
   line-height: 1.5;
   font-synthesis: none;
@@ -110,7 +111,7 @@ a {
 }
 
 ::selection {
-  background: rgb(112 84 59 / 0.18);
+  background: rgb(20 127 121 / 0.18);
 }
 
 .sr-only {
@@ -158,8 +159,8 @@ a {
 }
 
 .ant-btn-primary:not(:disabled):hover {
-  box-shadow: var(--ui-shadow-accent);
-  transform: translateY(-1px);
+  box-shadow: none;
+  transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

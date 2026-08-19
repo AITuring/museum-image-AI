@@ -195,7 +195,7 @@
 .single-candidate.is-selected {
   border-color: var(--app-primary);
   box-shadow: 0 0 0 1px var(--app-primary);
-  background: color-mix(in srgb, var(--app-card) 92%, #111111 8%);
+  background: var(--ui-brand-wash);
 }
 
 .single-candidate strong,
@@ -504,4 +504,3 @@
 .single-advanced[open] .single-advanced-affordance svg {
   transform: rotate(90deg);
 }
-
