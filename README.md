@@ -458,12 +458,12 @@ systemctl status museum-image-docker-cleanup.timer
 
 - Root Directory：`frontend`
 - Framework：Vite（自动识别）；Build：`npm run build`，Output：`dist`
-- 环境变量：`VITE_CLOUD_ONLY=true`（只显示图库检索页）
+- 环境变量：复制 `frontend/.env.vercel.example`：`VITE_CLOUD_ONLY=true`、`VITE_API_BASE_URL=https://api.aituring.xyz`
 
-前端如何连到后端，二选一：
+生产环境当前使用前端直连 API 域名；`frontend/vercel.json` 的 `/api`、`/files` rewrite 仅为快速录入页面保留：
 
-- **A（推荐，免 CORS / 免后端 HTTPS）**：把 `frontend/vercel.json.example` 复制为 `frontend/vercel.json`，把 `YOUR_BACKEND_HOST` 换成你的服务器（如 `1.2.3.4:8000`）。Vercel 会在服务端把 `/api`、`/files` 反代到后端，浏览器始终同源。此时 `VITE_API_BASE_URL` 留空。
-- **B（前端直连后端域名）**：设 `VITE_API_BASE_URL=https://api.你的域名`。⚠️ Vercel 是 HTTPS 页面，**后端必须也是 HTTPS**（否则浏览器拦截 mixed content），并在服务器 `.env` 的 `CORS_ORIGINS` 加上你的 Vercel 域名（逗号分隔）。给后端上 HTTPS 最省事的是在服务器前面挂一层带证书的反向代理（如 Caddy 自动签发）。
+- `api.aituring.xyz` 的 DNS A 记录指向 `123.57.34.90` 后，在服务器运行 `sudo ./scripts/configure_api_https.sh --install-caddy --restart-backend`。
+- ⚠️ Vercel 是 HTTPS 页面，后端必须也是 HTTPS，并在服务器 `.env` 的 `CORS_ORIGINS` 中包含 `https://image.aituring.xyz`；脚本会自动追加。Caddy 会负责证书和反向代理。
 
 > 说明：文物图片走阿里云 OSS（绝对 https URL），前端直接从 OSS 加载，不依赖后端转发。
 

@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_HOST = "image.aituring.xyz"
+PUBLIC_API_ORIGIN = "https://api.aituring.xyz"
 ENV_LINE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 
 
@@ -37,6 +38,7 @@ def require(condition: bool, message: str) -> None:
 def main() -> int:
     example = read_env(ROOT / ".env.example")
     gallery = read_env(ROOT / "frontend/.env.gallery")
+    vercel_example = read_env(ROOT / "frontend/.env.vercel.example")
     quick_example = read_env(ROOT / "frontend/.env.quick.example")
     cloud_api = example.get("CLOUD_API_BASE_URL", "").rstrip("/")
     require(cloud_api, ".env.example must define CLOUD_API_BASE_URL")
@@ -76,6 +78,11 @@ def main() -> int:
     require(
         gallery.get("VITE_CLOUD_BACKEND", "").rstrip("/") == cloud_api,
         "gallery VITE_CLOUD_BACKEND must match CLOUD_API_BASE_URL",
+    )
+    require(
+        vercel_example.get("VITE_CLOUD_ONLY", "") == "true"
+        and vercel_example.get("VITE_API_BASE_URL", "").rstrip("/") == PUBLIC_API_ORIGIN,
+        "Vercel production example must use the HTTPS public API origin",
     )
     require(
         quick_example.get("QUICK_ENTRY_API_BASE_URL", "") == "",
@@ -152,6 +159,11 @@ def main() -> int:
     )
 
     vercel = json.loads((ROOT / "frontend/vercel.json").read_text(encoding="utf-8"))
+    require(
+        "api.aituring.xyz" in vercel.get("$comment", "")
+        and "quick-entry" in vercel.get("$comment", ""),
+        "Vercel config must document direct production API access and the quick-entry rewrite exception",
+    )
     rewrites = vercel.get("rewrites", [])
     destinations = {rewrite.get("source"): rewrite.get("destination") for rewrite in rewrites}
     require(

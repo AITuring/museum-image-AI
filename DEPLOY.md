@@ -13,15 +13,17 @@
 > 关键原则：**「识图」永远连本地后端，「图库」永远连云端后端**。 
 >
 > - Docker（识图控制台 `:5173` + 本地后端 `:8000`）只负责识别和入库到云端，互不掺和图库。
-> - 图库（Vercel 线上、本地 `npm run dev` 的 `:7001`）都只读云端后端，且都用「同源 + 服务端反代」的方式连接（Vercel 用 `vercel.json` rewrites，本地用 Vite dev proxy），所以**不需要给云端配 CORS**。
+> - 图库（Vercel 线上、本地 `npm run dev` 的 `:7001`）都只读云端后端；本地预览继续使用 Vite dev proxy，Vercel 线上图库直连 `https://api.aituring.xyz`。
+> - 快速录入仍保持同源 `/api` 路径，由 Vercel/Vite 代理处理；这条路径与线上图库直连 API 是两套明确的运行契约。
 
 ### 修改与发布防护（必须保留）
 
 运行地址不是普通文案，必须按契约修改：
 
 - `CLOUD_API_BASE_URL` 是本地入库后端地址，必须指向云端 `:8000`，不能指向仅用于预览的 `image.aituring.xyz`。
-- `frontend/.env.gallery`、`frontend/vite.config.ts` 和 `frontend/vercel.json` 必须保持同一个云端后端地址。
-- `image.aituring.xyz` 只承载前端页面；`/api`、`/files` 由 Vercel 服务端转发到云端后端。
+- `frontend/.env.gallery`、`frontend/vite.config.ts` 继续保持本地预览到 `http://123.57.34.90:8000` 的代理契约。
+- Vercel 生产环境使用 `frontend/.env.vercel.example` 中的 `VITE_API_BASE_URL=https://api.aituring.xyz`；`frontend/vercel.json` 的 `/api`、`/files` rewrite 仅为快速录入保留。
+- `image.aituring.xyz` 只承载前端页面；线上图库浏览器请求直接发往 `api.aituring.xyz`。
 - 高德 SDK 是浏览器直连依赖；代理规则应将 `*.amap.com`、`*.autonavi.com` 和云端 IP 设为直连，不要通过改入库地址来解决网络问题。
 
 每次修改上述配置，先运行：
@@ -162,7 +164,7 @@ OSS_BUCKET=你的bucket名
 OSS_KEY_PREFIX=artifacts/
 
 # 仅当前端直连后端时需要：
-# CORS_ORIGINS=https://your-app.vercel.app
+# CORS_ORIGINS=https://image.aituring.xyz
 ```
 
 注意：
@@ -171,6 +173,23 @@ OSS_KEY_PREFIX=artifacts/
 - `DATABASE_URL` 的主机固定写 `postgres`
 - `QUICK_ENTRY_TOKEN` 只给独立快速录入页面使用，不要与 `INGEST_TOKEN` 共用
 - `.env` 只放在服务器，不要提交到 Git
+
+### API 域名 HTTPS（首次配置或证书/反代变更）
+
+Cloudflare 的 `api.aituring.xyz` A 记录应指向 `123.57.34.90`。阿里云安全组需要放行 TCP `80`、`443`；后端仍监听 `8000`，`CLOUD_API_BASE_URL` 不变。
+
+仓库提供了幂等脚本，会校验 DNS、安装（可选）官方 Caddy 包、写入带备份的 Caddy 反代配置，并把 `https://image.aituring.xyz` 追加到云端 `.env` 的 `CORS_ORIGINS`：
+
+```bash
+cd /opt/museum-image
+sudo ./scripts/configure_api_https.sh --install-caddy --restart-backend
+```
+
+如果服务器已有未由脚本管理的 Caddy 站点，脚本会拒绝覆盖；请先把 API 站点合并到现有配置，或指定独立的 `--caddyfile`。首次配置完成后验证：
+
+```bash
+curl https://api.aituring.xyz/api/health
+```
 
 ### 3. GitHub Secrets 与权限
 
@@ -341,11 +360,16 @@ docker compose -f docker-compose.cloud.yml down -v
 
 - **Root Directory**：`frontend`
 - Framework：Vite（自动识别），Build：`npm run build`，Output：`dist`
-- 环境变量：`VITE_CLOUD_ONLY=true`
+- 环境变量：复制 `frontend/.env.vercel.example` 中的两个变量到 Vercel：
 
-连接后端二选一：
+```text
+VITE_CLOUD_ONLY=true
+VITE_API_BASE_URL=https://api.aituring.xyz
+```
 
-### 选项 A（推荐：免 CORS、免后端 HTTPS）
+当前生产环境采用选项 B：
+
+### 选项 A（备用：Vercel 服务端反代）
 
 ```bash
 # 在本地仓库里操作，然后提交
@@ -356,11 +380,11 @@ git add frontend/vercel.json && git commit -m "chore: vercel proxy" && git push
 
 Vercel 会在服务端把 `/api`、`/files` 反代到后端，浏览器始终同源。此时 `VITE_API_BASE_URL` 留空（不用设）。
 
-### 选项 B（前端直连后端域名）
+### 选项 B（当前：前端直连后端域名）
 
-- Vercel 环境变量加：`VITE_API_BASE_URL=https://api.你的域名`
+- Vercel 环境变量加：`VITE_API_BASE_URL=https://api.aituring.xyz`
 - ⚠️ 后端必须是 HTTPS（Vercel 是 HTTPS 页面，调 http 会被浏览器拦），需给后端挂带证书的反向代理。
-- 服务器 `.env` 加：`CORS_ORIGINS=https://your-app.vercel.app`，重启后端。
+- 服务器 `.env` 加：`CORS_ORIGINS=https://image.aituring.xyz`，重启后端；脚本可自动追加并重建后端容器。
 
 部署：`git push` 后 Vercel 自动构建；打开 Vercel 域名即图库检索页。
 

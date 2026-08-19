@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "$comment": "Production gallery calls https://api.aituring.xyz directly via VITE_API_BASE_URL. The API/files rewrites remain for the same-origin quick-entry page.",
   "rewrites": [
     { "source": "/api/:path*", "destination": "http://123.57.34.90:8000/api/:path*" },
     { "source": "/files/:path*", "destination": "http://123.57.34.90:8000/files/:path*" },
