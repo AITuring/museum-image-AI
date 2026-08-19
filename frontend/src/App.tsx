@@ -225,11 +225,24 @@ type BackendOption = {
 }
 
 const backendPreferenceStorageKey = "museum-backend-target"
+const quickEntryTokenStorageKey = "museum-quick-entry-token"
+const quickEntryOnly =
+  import.meta.env.MODE === "quick"
+  || document.documentElement.dataset.appEntry === "quick-entry"
 const localApiBaseUrl = (
   import.meta.env.VITE_API_BASE_URL
   ?? (import.meta.env.PROD ? "" : "http://localhost:8000")
 ).replace(/\/$/, "")
 const cloudApiBaseUrl = import.meta.env.DEV ? "/cloud-api" : ""
+// Quick entry must stay same-origin. Vite/Vercel selects the cloud target on
+// the server side; exposing that target here would bypass the proxy and CORS.
+const quickEntryApiBaseUrl = ""
+const quickEntryBackend: BackendOption = {
+  value: "cloud",
+  label: "云端后端",
+  detail: "当前站点代理",
+  apiBaseUrl: quickEntryApiBaseUrl,
+}
 const backendOptions: BackendOption[] = [
   {
     value: "local",
@@ -274,10 +287,12 @@ const NAV_ITEMS: Array<{ view: View; label: string; cloudVisible: boolean }> = [
 const HISTORY_VIEWS = new Set<View>(["exif", "single", "batch"])
 
 function isViewAvailable(view: View) {
+  if (quickEntryOnly) return view === "exif"
   return !cloudOnly || view === "gallery" || view === "museums" || view === "exhibitions" || view === "eras"
 }
 
 function getDefaultView(): View {
+  if (quickEntryOnly) return "exif"
   return cloudOnly ? "gallery" : "exif"
 }
 
@@ -307,7 +322,18 @@ function normalizeViewFromPath(pathname: string): View {
 }
 
 function getPathForView(view: View) {
+  if (quickEntryOnly) return window.location.pathname
   return VIEW_PATHS[isViewAvailable(view) ? view : getDefaultView()]
+}
+
+function initialQuickEntryToken() {
+  const configuredToken = (import.meta.env.VITE_QUICK_ENTRY_TOKEN ?? "").trim()
+  if (configuredToken) return configuredToken
+  try {
+    return window.sessionStorage.getItem(quickEntryTokenStorageKey) ?? ""
+  } catch {
+    return ""
+  }
 }
 
 const PIPELINE_STEPS = [
@@ -423,6 +449,9 @@ function App() {
   const { modal } = AntApp.useApp()
   const { hasChanges } = useOperationHistory()
   const [backendTarget, setBackendTarget] = useState<BackendTarget>(() => {
+    if (quickEntryOnly) {
+      return "cloud"
+    }
     if (!import.meta.env.DEV) {
       return "local"
     }
@@ -434,13 +463,18 @@ function App() {
     return storedValue === "cloud" ? "cloud" : "local"
   })
   const apiBaseUrl = useMemo(
-    () => backendOptions.find((option) => option.value === backendTarget)?.apiBaseUrl ?? localApiBaseUrl,
+    () => quickEntryOnly
+      ? quickEntryBackend.apiBaseUrl
+      : backendOptions.find((option) => option.value === backendTarget)?.apiBaseUrl ?? localApiBaseUrl,
     [backendTarget],
   )
   const activeBackend = useMemo(
-    () => backendOptions.find((option) => option.value === backendTarget) ?? backendOptions[0],
+    () => quickEntryOnly
+      ? quickEntryBackend
+      : backendOptions.find((option) => option.value === backendTarget) ?? backendOptions[0],
     [backendTarget],
   )
+  const [quickEntryToken, setQuickEntryToken] = useState(initialQuickEntryToken)
   const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loadingHealth, setLoadingHealth] = useState(true)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -853,6 +887,7 @@ function App() {
     async function loadInitialData() {
       try {
         await loadHealth()
+        if (quickEntryOnly) return
         await loadWebBridgeStatus()
         await loadEraOptions()
       } catch (err) {
@@ -863,7 +898,21 @@ function App() {
   }, [apiBaseUrl])
 
   useEffect(() => {
-    if (!import.meta.env.DEV) {
+    if (!quickEntryOnly) return
+    try {
+      const normalizedToken = quickEntryToken.trim()
+      if (normalizedToken) {
+        window.sessionStorage.setItem(quickEntryTokenStorageKey, normalizedToken)
+      } else {
+        window.sessionStorage.removeItem(quickEntryTokenStorageKey)
+      }
+    } catch {
+      // Session storage is optional; the token still remains available in memory.
+    }
+  }, [quickEntryToken])
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || quickEntryOnly) {
       return
     }
     window.localStorage.setItem(backendPreferenceStorageKey, backendTarget)
@@ -1281,7 +1330,9 @@ function App() {
             <Tabs
               activeKey={view}
               className="app-tabs"
-              items={NAV_ITEMS.filter((item) => item.cloudVisible || !cloudOnly).map((item) => ({
+              items={NAV_ITEMS.filter((item) =>
+                quickEntryOnly ? item.view === "exif" : item.cloudVisible || !cloudOnly,
+              ).map((item) => ({
                 key: item.view,
                 label: item.label,
               }))}
@@ -1295,7 +1346,31 @@ function App() {
               scopeLabel={NAV_ITEMS.find((item) => item.view === view)?.label ?? "当前 Tab"}
             />
           ) : null}
-          {import.meta.env.DEV ? (
+          {quickEntryOnly ? (
+            <>
+              <label className={`quick-entry-token-control${quickEntryToken.trim() ? "" : " is-missing"}`}>
+                <span className="sr-only">云端快速录入令牌</span>
+                <Input.Password
+                  aria-label="云端快速录入令牌"
+                  autoComplete="off"
+                  placeholder="填写云端录入令牌"
+                  size="small"
+                  value={quickEntryToken}
+                  onChange={(event) => setQuickEntryToken(event.target.value)}
+                />
+              </label>
+              <div className={`health-pill ${health ? "online" : "offline"}`}>
+                <span className="status-dot" />
+                <span className="health-pill-text">
+                  {loadingHealth
+                    ? "检查云端"
+                    : health
+                      ? `云端已连接 · ${health.environment}`
+                      : "云端未连通"}
+                </span>
+              </div>
+            </>
+          ) : import.meta.env.DEV ? (
             <label className={`backend-target-select-wrap ${health ? "online" : "offline"}`}>
               <span className="sr-only">后端环境</span>
               <select
@@ -1347,9 +1422,14 @@ function App() {
 
         {view === "batch" && !cloudOnly ? <BatchConsole apiBaseUrl={apiBaseUrl} /> : null}
 
-        {visitedViews.has("exif") && !cloudOnly ? (
+        {visitedViews.has("exif") && (!cloudOnly || quickEntryOnly) ? (
           <div className="persistent-view" hidden={view !== "exif"}>
-            <ExifConsole apiBaseUrl={apiBaseUrl} />
+            <ExifConsole
+              apiBaseUrl={apiBaseUrl}
+              directCloudIngest={quickEntryOnly}
+              enableAutomaticFilenameParsing={quickEntryOnly}
+              quickEntryToken={quickEntryToken}
+            />
           </div>
         ) : null}
       </Suspense>

@@ -155,6 +155,11 @@
     flex: 0 0 auto;
   }
 
+  .quick-entry-token-control {
+    width: 150px;
+    flex: 0 1 150px;
+  }
+
   .app-tabs .ant-tabs-tab {
     min-height: 44px;
     padding-inline: 9px !important;

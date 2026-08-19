@@ -1,6 +1,6 @@
 .PHONY: quick-entry identify
 
-# Fast path: only starts the small Vite page and sends uploads to the cloud API.
+# Fast path: starts the EXIF workbench only; its final upload goes straight to cloud.
 quick-entry:
 	npm --prefix frontend run dev:quick
 

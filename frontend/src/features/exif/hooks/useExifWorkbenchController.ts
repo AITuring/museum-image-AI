@@ -84,11 +84,15 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 
 type UseExifWorkbenchControllerOptions = {
   apiBaseUrl: string
+  directCloudIngest?: boolean
+  quickEntryToken?: string
   enableAutomaticFilenameParsing?: boolean
 }
 
 export function useExifWorkbenchController({
   apiBaseUrl,
+  directCloudIngest = false,
+  quickEntryToken = "",
   enableAutomaticFilenameParsing = true,
 }: UseExifWorkbenchControllerOptions) {
   const {
@@ -693,6 +697,8 @@ export function useExifWorkbenchController({
 
   const submitOne = useExifSubmitOne({
     apiBaseUrl,
+    directCloudIngest,
+    quickEntryToken,
     directoryHandle,
     itemsRef,
     updateItem,

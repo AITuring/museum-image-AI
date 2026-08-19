@@ -12,8 +12,9 @@ A local-first starter for building a museum artifact image library with React, F
 ## Architecture
 
 项目使用同一套 FastAPI 代码承担本地操作端与云端服务端，通过 `APP_ROLE`
-切换角色。快速录入是独立的轻量前端，直接把图片和人工文字推送到云端，不需要本地
-Docker；只有智能识别、EXIF 工作台和批量识别才启动本地 Docker。云端负责集中存储、
+切换角色。快速录入复用原来的 EXIF 工作台，但只启动本地 Vite：浏览器先申请文件夹
+写权限、改名、回写并校验 EXIF，最后直传云端，不需要本地 Docker；只有智能识别和
+批量识别才启动本地 Docker。云端负责集中存储、
 检索和对外提供图片。全球展览目录使用独立数据库与可选 Worker，避免历史同步任务
 影响核心文物 API。
 
@@ -89,8 +90,8 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph QuickFlow["快速录入 · 不启动 Docker"]
-        QuickImages["图片 + 人工文字"]
-        QuickPage["轻量 Vite 页面"]
+        QuickImages["本地照片文件夹"]
+        QuickPage["原 EXIF 工作台<br/>授权 · 改名 · 回写 · 校验"]
         QuickImages --> QuickPage --> CloudQuick["云端 /api/ingest/artifacts"]
     end
 
@@ -147,13 +148,14 @@ Backend health: <http://localhost:8000/api/health\>（会实际探测数据库�
 
 ```bash
 cp frontend/.env.quick.example frontend/.env.quick
-# 在 frontend/.env.quick 填 VITE_QUICK_ENTRY_TOKEN
+# 可在 frontend/.env.quick 填 VITE_QUICK_ENTRY_TOKEN，也可启动后在页头填写
 make quick-entry
 ```
 
-打开 <http://localhost:7002/quick-entry.html>，图片和人工文字会直接提交到云端后端。
+打开 <http://localhost:7002/quick-entry.html>，页面仍是原来的快速录入工作台。提交时会
+严格按“文件夹写权限 → 改名 → EXIF 回写 → 读取校验 → 云端上传”的顺序执行。
 
-智能识别、EXIF 工作台和批量相册同步才启动 Docker：
+智能识别和批量相册同步才启动 Docker：
 
 ```bash
 make identify

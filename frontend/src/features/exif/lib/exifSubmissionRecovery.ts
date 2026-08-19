@@ -38,13 +38,21 @@ function retryAfterMilliseconds(value: string | null) {
   return Math.min(30_000, Math.max(0, retryAt - Date.now()))
 }
 
-export function postFormDataWithProgress<T>(url: string, formData: FormData, onProgress: (progress: number) => void): Promise<T> {
+export function postFormDataWithProgress<T>(
+  url: string,
+  formData: FormData,
+  onProgress: (progress: number) => void,
+  headers: Record<string, string> = {},
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest()
     request.open("POST", url)
-    // The local backend can make two bounded cloud attempts. Keep the browser
-    // alive long enough for that contract so it does not start a duplicate
-    // upload while the first request is still committing on the server.
+    for (const [name, value] of Object.entries(headers)) {
+      request.setRequestHeader(name, value)
+    }
+    // Keep the browser alive while the cloud may still be uploading to OSS and
+    // committing the database transaction, so a timeout cannot trigger an
+    // unnecessary duplicate submission.
     request.timeout = 270_000
     request.upload.onprogress = (event) => {
       if (event.lengthComputable) onProgress(Math.min(95, 45 + Math.round((event.loaded / event.total) * 50)))

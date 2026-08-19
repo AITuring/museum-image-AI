@@ -78,7 +78,7 @@ def main() -> int:
         "gallery VITE_CLOUD_BACKEND must match CLOUD_API_BASE_URL",
     )
     require(
-        quick_example.get("VITE_QUICK_ENTRY_API_BASE_URL", "") == "",
+        quick_example.get("QUICK_ENTRY_API_BASE_URL", "") == "",
         "quick entry must use same-origin /api through the Vite or Vercel proxy",
     )
     require(
@@ -100,8 +100,55 @@ def main() -> int:
     require(
         "const isQuickEntry = mode === 'quick'" in vite_source
         and "isGallery || isQuickEntry" in vite_source
-        and "env.VITE_QUICK_ENTRY_API_BASE_URL || cloudBackend" in vite_source,
+        and "env.QUICK_ENTRY_API_BASE_URL || env.VITE_QUICK_ENTRY_API_BASE_URL || cloudBackend"
+        in vite_source,
         "vite quick entry must proxy /api to the cloud backend",
+    )
+
+    app_source = (ROOT / "frontend/src/App.tsx").read_text(encoding="utf-8")
+    require(
+        'const quickEntryApiBaseUrl = ""' in app_source
+        and "import.meta.env.VITE_QUICK_ENTRY_API_BASE_URL" not in app_source,
+        "quick-entry browser requests must remain same-origin and never bypass the proxy",
+    )
+    require(
+        "enableAutomaticFilenameParsing={quickEntryOnly}" in app_source,
+        "quick entry must automatically parse supported compound filenames",
+    )
+
+    quick_entry_html = (ROOT / "frontend/quick-entry.html").read_text(
+        encoding="utf-8"
+    )
+    require(
+        'data-app-entry="quick-entry"' in quick_entry_html
+        and 'src="/src/main.tsx"' in quick_entry_html,
+        "quick entry must render the original EXIF workbench application",
+    )
+    require(
+        not (ROOT / "frontend/src/features/quick-entry/QuickEntryPage.tsx").exists(),
+        "the rejected simplified quick-entry page must not replace the EXIF workbench",
+    )
+    exif_submission = (
+        ROOT / "frontend/src/features/exif/lib/exifSubmission.ts"
+    ).read_text(encoding="utf-8")
+    workflow_markers = [
+        "verifyWritablePermission(directoryHandle)",
+        "/api/artifacts/prepare-exif-file",
+        "getFileHandle(target.fileName, { create: true })",
+        "createWritable()",
+        "removeEntry(target.originalFileName)",
+        "/api/artifacts/extract-exif-file",
+        "/api/ingest/artifacts",
+    ]
+    marker_positions = [exif_submission.find(marker) for marker in workflow_markers]
+    require(
+        all(position >= 0 for position in marker_positions)
+        and marker_positions == sorted(marker_positions),
+        "quick entry order must remain permission -> prepare EXIF -> rename/write -> verify EXIF -> cloud upload",
+    )
+    require(
+        '"X-Quick-Entry-Token": cloudIngestToken' in exif_submission,
+        "quick entry direct cloud upload must use the dedicated browser token",
     )
 
     vercel = json.loads((ROOT / "frontend/vercel.json").read_text(encoding="utf-8"))
@@ -117,7 +164,7 @@ def main() -> int:
     )
     require(
         destinations.get("/quick-entry") == "/quick-entry.html",
-        "Vercel quick-entry route must serve the standalone upload page",
+        "Vercel quick-entry route must serve the EXIF quick-entry page",
     )
     require(
         destinations.get("/(.*)") == "/index.html",

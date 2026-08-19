@@ -8,6 +8,7 @@
 | **Vercel** | 线上图库前端（连云端后端，纯静态） | Vercel 项目，Root = `frontend` |
 | **本地机器 · Docker** | 识图服务（识别控制台 + 本地后端 + 本地库），通义网页桥 + Chrome | Docker `docker-compose.yml` |
 | **本地机器 · npm** | 线上图库前端的本地预览（连**云端**后端） | `cd frontend && npm run dev` |
+| **本地机器 · npm** | 原快速录入 / EXIF 工作台（连**云端**后端） | `make quick-entry` |
 
 > 关键原则：**「识图」永远连本地后端，「图库」永远连云端后端**。 
 >
@@ -33,19 +34,19 @@ GitHub Actions 的 `Verify Runtime Contracts` 会在 PR 和 `main` 推送时再�
 
 ### 两条运行命令（快速录入 / 智能识别）
 
-两条工作流刻意分开：快速录入只启动一个很小的 Vite 页面，图片和文字直接提交到阿里云后端；智能识别才启动本地 Docker、数据库和通义网页桥。
+两条工作流刻意分开：快速录入只启动 Vite，并恢复原来的 EXIF 工作台；智能识别才启动本地 Docker、数据库和通义网页桥。快速录入仍先在浏览器中申请文件夹写权限、改名、回写并读取校验 EXIF，完成后才把校验过的文件直传阿里云后端。
 
 首次使用快速录入：
 
 ```bash
 cp frontend/.env.quick.example frontend/.env.quick
-# 编辑 frontend/.env.quick：把 VITE_QUICK_ENTRY_TOKEN 填成服务器 .env 中的 QUICK_ENTRY_TOKEN
+# 可编辑 frontend/.env.quick 填写 VITE_QUICK_ENTRY_TOKEN，也可启动后在页头填写
 make quick-entry
 ```
 
-打开 <http://localhost:7002/quick-entry.html>。这个页面会立即显示本地图片预览，不请求本地 `:8000`；提交时通过 Vite 同源代理调用云端 `/api/ingest/artifacts`，按顺序上传，避免小服务器收到并发请求。
+打开 <http://localhost:7002/quick-entry.html>。这个页面不请求本地 `:8000`，EXIF 准备和读取接口以及最终 `/api/ingest/artifacts` 都通过 Vite 同源代理访问云端；批量提交仍按顺序执行，避免小服务器收到并发请求。
 
-需要识图、EXIF 工作台、批量相册同步时才运行：
+需要智能识别或批量相册同步时才运行：
 
 ```bash
 make identify

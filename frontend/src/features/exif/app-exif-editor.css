@@ -342,8 +342,17 @@
 }
 
 .exif-inline-batch-rename > .exif-tool-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.exif-batch-rename-fields .ant-input-textarea {
+  min-width: 0;
+}
+
+.exif-batch-rename-fields .ant-input {
+  overflow-wrap: anywhere;
+  resize: vertical;
 }
 
 .exif-inline-batch-rename > .exif-tool-actions {

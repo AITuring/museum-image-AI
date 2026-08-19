@@ -11,9 +11,17 @@ const EXIF_FILE_INPUT_ID = "exif-workbench-file-input"
 
 type ExifConsoleProps = {
   apiBaseUrl: string
+  directCloudIngest?: boolean
+  enableAutomaticFilenameParsing?: boolean
+  quickEntryToken?: string
 }
 
-function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
+function ExifConsole({
+  apiBaseUrl,
+  directCloudIngest = false,
+  enableAutomaticFilenameParsing = false,
+  quickEntryToken = "",
+}: ExifConsoleProps) {
   const {
     fileInputRef,
     queue,
@@ -24,7 +32,9 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     uploadPermission,
   } = useExifWorkbenchController({
     apiBaseUrl,
-    enableAutomaticFilenameParsing: false,
+    directCloudIngest,
+    quickEntryToken,
+    enableAutomaticFilenameParsing,
   })
 
   return (

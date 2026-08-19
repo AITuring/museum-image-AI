@@ -9,6 +9,8 @@ type FetchJson = <T>(input: string, init?: RequestInit) => Promise<T>
 
 type SubmitOptions = {
   apiBaseUrl: string
+  directCloudIngest?: boolean
+  quickEntryToken?: string
   directoryHandle: WritableDirectoryHandle | null
   itemsRef: { current: ExifWorkbenchItem[] }
   updateItem: (itemId: string, updater: (item: ExifWorkbenchItem) => ExifWorkbenchItem) => void
@@ -47,6 +49,8 @@ function cloudRetryDelayMs(error: unknown, attempt: number) {
 
 export function useExifSubmitOne({
   apiBaseUrl,
+  directCloudIngest = false,
+  quickEntryToken = "",
   directoryHandle,
   itemsRef,
   updateItem,
@@ -67,6 +71,13 @@ export function useExifSubmitOne({
         setNotice({ type: "success", text: "该图片已入库且没有新的修改，无需重复提交。" })
         clearHistory()
         return true
+      }
+      const cloudIngestToken = quickEntryToken.trim()
+      if (directCloudIngest && !cloudIngestToken) {
+        const message = "请先在页面右上角填写云端快速录入令牌。"
+        updateItem(itemId, (item) => ({ ...item, submitState: "error", submitMessage: message }))
+        setNotice({ type: "error", text: message })
+        return false
       }
       // Show feedback before any optional cloud recovery or file-system API
       // can await. A restored draft may have a source hash, and checking it
@@ -137,13 +148,25 @@ export function useExifSubmitOne({
         const latestLocalFile = await sourceHandle.getFile()
         const latitude = toNullableNumber(target.form.latitude)
         const longitude = toNullableNumber(target.form.longitude)
-        const appendMetadata = (data: FormData, includeArtifactLink = false) => {
+        const appendMetadata = (
+          data: FormData,
+          includeArtifactLink = false,
+          forDirectCloudIngest = false,
+        ) => {
           data.append("museum_name", target.form.museumName.trim())
           data.append("name", target.form.name.trim())
           data.append("era", target.form.era.trim() || "")
           data.append("Place_of_Excavation", target.form.placeOfExcavation.trim() || "")
           data.append("description", target.form.description.trim() || "")
-          data.append("display_location_name", target.form.displayLocationName.trim() || "")
+          const displayLocationName = target.form.displayLocationName.trim()
+          if (forDirectCloudIngest) {
+            if (displayLocationName) {
+              data.append("capture_museum_name", displayLocationName)
+              data.append("capture_location", displayLocationName)
+            }
+          } else {
+            data.append("display_location_name", displayLocationName)
+          }
           data.append("exhibition_name", target.form.exhibitionName.trim() || "常设")
           if (target.form.catalogExhibitionSourceId) {
             data.append("catalog_exhibition_source_id", target.form.catalogExhibitionSourceId)
@@ -253,10 +276,10 @@ export function useExifSubmitOne({
         updateItem(itemId, (item) => ({ ...item, uploadProgress: 45, uploadStage: "正在上传 OSS 并写入档案" }))
     
         const formData = new FormData()
-        formData.append("file", uploadFile)
-        appendMetadata(formData, true)
+        formData.append(directCloudIngest ? "image" : "file", uploadFile)
+        appendMetadata(formData, true, directCloudIngest)
         formData.append("tags", JSON.stringify(target.form.tags))
-        formData.append("exif_prepared", "true")
+        if (!directCloudIngest) formData.append("exif_prepared", "true")
         if (sourceHash) formData.append("source_hash", sourceHash)
         let result: ArtifactSubmitResult | null = null
         for (let attempt = 1; attempt <= CLOUD_SUBMIT_MAX_ATTEMPTS; attempt += 1) {
@@ -266,7 +289,9 @@ export function useExifSubmitOne({
               uploadStage: `正在上传 OSS 并写入档案（第 ${attempt}/${CLOUD_SUBMIT_MAX_ATTEMPTS} 次）`,
             }))
             result = await postFormDataWithProgress<ArtifactSubmitResult>(
-              `${apiBaseUrl}/api/artifacts/exif-submit-file`,
+              directCloudIngest
+                ? `${apiBaseUrl}/api/ingest/artifacts`
+                : `${apiBaseUrl}/api/artifacts/exif-submit-file`,
               formData,
               (progress) => {
                 updateItem(itemId, (item) => ({
@@ -277,6 +302,9 @@ export function useExifSubmitOne({
                     : `正在上传 OSS 并写入档案（第 ${attempt}/${CLOUD_SUBMIT_MAX_ATTEMPTS} 次）`,
                 }))
               },
+              directCloudIngest
+                ? { "X-Quick-Entry-Token": cloudIngestToken }
+                : undefined,
             )
             break
           } catch (error) {
@@ -330,5 +358,5 @@ export function useExifSubmitOne({
         }))
         return false
       }
-  }, [apiBaseUrl, clearHistory, directoryHandle, fetchJson, itemsRef, responseErrorMessage, setNotice, updateItem])
+  }, [apiBaseUrl, clearHistory, directCloudIngest, directoryHandle, fetchJson, itemsRef, quickEntryToken, responseErrorMessage, setNotice, updateItem])
 }

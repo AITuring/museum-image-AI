@@ -15,7 +15,10 @@ export default defineConfig(({ mode }) => {
   const isQuickEntry = mode === 'quick'
   const cloudBackend =
     env.VITE_CLOUD_BACKEND || env.CLOUD_API_BASE_URL || 'http://123.57.34.90:8000'
-  const quickEntryBackend = env.VITE_QUICK_ENTRY_API_BASE_URL || cloudBackend
+  // This value is consumed only by Vite's server-side proxy. Browser code
+  // always requests same-origin /api so localhost never depends on cloud CORS.
+  const quickEntryBackend =
+    env.QUICK_ENTRY_API_BASE_URL || env.VITE_QUICK_ENTRY_API_BASE_URL || cloudBackend
 
   return {
     plugins: [react()],

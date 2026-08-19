@@ -300,6 +300,20 @@ button.danger,
   font-size: 10px;
 }
 
+.quick-entry-token-control {
+  width: 180px;
+}
+
+.quick-entry-token-control .ant-input-affix-wrapper {
+  min-height: 32px;
+  border-radius: 999px;
+  background: var(--app-card);
+}
+
+.quick-entry-token-control.is-missing .ant-input-affix-wrapper {
+  border-color: color-mix(in oklch, var(--app-danger) 32%, var(--app-border));
+}
+
 .pulse.failed,
 .pulse.error {
   background: var(--app-danger);
@@ -590,4 +604,3 @@ label.field,
   gap: 0;
   background: var(--app-bg);
 }
-
