@@ -14,6 +14,7 @@ import type { ExifWorkbenchItem, MuseumOption } from "../components/types"
 
 type Options = {
   apiBaseUrl: string
+  enableAutomaticFilenameParsing: boolean
   ready: boolean
   items: ExifWorkbenchItem[]
   itemsRef: MutableRefObject<ExifWorkbenchItem[]>
@@ -36,6 +37,7 @@ type Options = {
 
 export function useExifEditorEffects({
   apiBaseUrl,
+  enableAutomaticFilenameParsing,
   ready,
   items,
   itemsRef,
@@ -134,9 +136,17 @@ export function useExifEditorEffects({
     if (!item?.fileName.trim() || item.parsedName?.original_name === item.fileName) {
       return
     }
+    if (!enableAutomaticFilenameParsing && !filenameHistory.current.has(item.id)) {
+      return
+    }
 
     let cancelled = false
     const timer = window.setTimeout(async () => {
+      const operationId = filenameHistory.current.get(item.id)
+      if (!enableAutomaticFilenameParsing && !operationId) {
+        return
+      }
+      filenameHistory.current.delete(item.id)
       setParsing(true)
       try {
         const parsed = await parseArtifactName(apiBaseUrl, item.fileName)
@@ -166,10 +176,11 @@ export function useExifEditorEffects({
           },
         }))
 
-        const operationId = filenameHistory.current.get(item.id)
         if (operationId) {
           updateAfter(operationId, createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm))
         }
+      } catch {
+        // Filename parsing is best-effort; do not retry it on unrelated queue updates.
       } finally {
         if (!cancelled) {
           setParsing(false)
@@ -181,5 +192,5 @@ export function useExifEditorEffects({
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [apiBaseUrl, filenameHistory, itemsRef, selectedId, selectedItem, setParsing, sharedForm, updateAfter, updateItem])
+  }, [apiBaseUrl, enableAutomaticFilenameParsing, filenameHistory, itemsRef, selectedId, selectedItem, setParsing, sharedForm, updateAfter, updateItem])
 }

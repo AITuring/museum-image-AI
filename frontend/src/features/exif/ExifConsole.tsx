@@ -22,7 +22,10 @@ function ExifConsole({ apiBaseUrl }: ExifConsoleProps) {
     metadataSync,
     artifactReview,
     uploadPermission,
-  } = useExifWorkbenchController({ apiBaseUrl })
+  } = useExifWorkbenchController({
+    apiBaseUrl,
+    enableAutomaticFilenameParsing: false,
+  })
 
   return (
     <section className="exif-console">

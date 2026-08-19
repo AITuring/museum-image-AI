@@ -25,6 +25,7 @@ type FetchJson = <T>(input: string, init?: RequestInit) => Promise<T>
 
 type UseExifFileIntakeOptions = {
   apiBaseUrl: string
+  enableAutomaticFilenameParsing: boolean
   fileInputRef: RefObject<HTMLInputElement | null>
   itemsRef: MutableRefObject<ExifWorkbenchItem[]>
   setItems: Dispatch<SetStateAction<ExifWorkbenchItem[]>>
@@ -71,6 +72,7 @@ async function mapWithConcurrency<T, R>(
 
 export function useExifFileIntake({
   apiBaseUrl,
+  enableAutomaticFilenameParsing,
   fileInputRef,
   itemsRef,
   setItems,
@@ -114,7 +116,9 @@ export function useExifFileIntake({
         body: exifForm,
       })
     })()
-    const parsedNameTask = parseArtifactName(apiBaseUrl, file.name)
+    const parsedNameTask = enableAutomaticFilenameParsing
+      ? parseArtifactName(apiBaseUrl, file.name)
+      : Promise.resolve<ParsedArtifactName | null>(null)
     const [metadataResult, parsedNameResult] = await Promise.allSettled([metadataTask, parsedNameTask])
 
     if (metadataResult.status === "fulfilled") {
@@ -133,7 +137,7 @@ export function useExifFileIntake({
       previewUrl = metadata.preview_data_url ?? ""
     }
 
-    if (parsedNameResult.status === "fulfilled") {
+    if (parsedNameResult.status === "fulfilled" && parsedNameResult.value) {
       parsedName = parsedNameResult.value
       form = {
         ...form,

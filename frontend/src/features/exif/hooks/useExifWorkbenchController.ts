@@ -84,9 +84,13 @@ async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
 
 type UseExifWorkbenchControllerOptions = {
   apiBaseUrl: string
+  enableAutomaticFilenameParsing?: boolean
 }
 
-export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchControllerOptions) {
+export function useExifWorkbenchController({
+  apiBaseUrl,
+  enableAutomaticFilenameParsing = true,
+}: UseExifWorkbenchControllerOptions) {
   const {
     record: recordOperation,
     updateAfter: updateOperationAfter,
@@ -312,6 +316,7 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
 
   useExifEditorEffects({
     apiBaseUrl,
+    enableAutomaticFilenameParsing,
     ready: draftStorageReady,
     items,
     itemsRef,
@@ -515,6 +520,7 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
       const fileName = normalizedFileName(baseName, current.fileName)
       if (fileName === current.fileName) return
 
+      batchRenameRevisionRef.current += 1
       const nextItems = itemsRef.current.map((item) =>
         item.id === selectedItem.id ? renameWorkbenchItem(item, fileName) : item,
       )
@@ -548,14 +554,16 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
       const changedItems = nextItems.filter((item, index) => item.fileName !== currentItems[index]?.fileName)
       if (changedItems.length === 0) return
 
+      changedItems.forEach((item) => filenameHistoryOperationRef.current.delete(item.id))
       const operationId = recordItemsChange({
         label: "批量修改目标文件名",
         detail: `前缀“${payload.batchPrefix || "无"}” · 后缀“${payload.batchSuffix || "无"}” · 影响 ${changedItems.length} 张`,
         nextItems,
         affected: changedItems.map((item) => item.fileName),
       })
+      setParsingFileName(true)
       void Promise.all(
-        renamed.map(async (entry) => {
+        changedItems.map(async (entry) => {
           try {
             const parsed = await parseArtifactName(apiBaseUrl, entry.fileName)
             updateItem(entry.id, (item) =>
@@ -578,6 +586,10 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
             createExifHistorySnapshot(itemsRef.current, selectedId, sharedForm),
           )
         }
+      }).finally(() => {
+        if (batchRenameRevisionRef.current === revision) {
+          setParsingFileName(false)
+        }
       })
       setSubmitNotice({ type: "success", text: `已按规则更新 ${changedItems.length} 个目标文件名，入库时将使用新名称` })
     },
@@ -592,6 +604,7 @@ export function useExifWorkbenchController({ apiBaseUrl }: UseExifWorkbenchContr
     clearAll: clearQueue,
   } = useExifFileIntake({
     apiBaseUrl,
+    enableAutomaticFilenameParsing,
     fileInputRef,
     itemsRef,
     setItems,
