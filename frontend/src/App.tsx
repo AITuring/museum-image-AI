@@ -891,8 +891,11 @@ function App() {
         if (quickEntryOnly) return
         if (!cloudOnly) {
           await loadWebBridgeStatus()
+          // Cloud-only views load their own option data. This list only backs
+          // the local identification form, so fetching it there duplicates the
+          // gallery request without providing data to the gallery.
+          await loadEraOptions()
         }
-        await loadEraOptions()
       } catch (err) {
         setArtifactError(err instanceof Error ? err.message : "初始化失败")
       }
